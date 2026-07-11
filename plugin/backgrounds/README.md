@@ -13,10 +13,17 @@ this folder at `GET /api/backgrounds` and serves each file at `/backgrounds/<nam
 
 ## The shipped set
 
-24 deep-space vistas rendered locally with FLUX (nebulae, galaxies, a ringed
-planet, deep fields, a supernova remnant, ...), then post-processed to
-dark + low-alpha RGBA. They are candidates, not commitments - delete any you
-dislike, or add your own.
+~38 backdrops rendered locally with FLUX, in two moods to pick favorites from:
+
+- **Deep-space** (24): nebulae, galaxies, a ringed planet, deep fields, a
+  supernova remnant, a comet, ...
+- **Anime / light-novel** (14): pastel nebulae, a great glowing moon, aurora, a
+  cherry-blossom cosmos, ink-wash sumi-e space, a celestial rift, a cosmic whale,
+  a torii gate against the galaxy, floating lanterns, ...
+
+All post-processed to brighter-but-low-alpha RGBA (colors pop, dark space fades
+to clear). They are candidates, not commitments - delete any you dislike, or add
+your own (any image type: png / jpg / webp / ...).
 
 ## Regenerating / adding your own
 
