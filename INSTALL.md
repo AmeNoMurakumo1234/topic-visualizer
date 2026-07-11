@@ -1,5 +1,10 @@
 # Install
 
+**Just browsing?** You can feel the whole thing in two minutes without installing
+anything: run `python plugin/server/server.py` and open the printed URL with
+`?demo=120` (any count up to 1500) - synthetic, deterministic, never stored. Full
+demo tour in the [README](README.md#try-it-in-two-minutes-demo-mode).
+
 The repo doubles as its own plugin marketplace (`.claude-plugin/marketplace.json` at
 the root, plugin source in `plugin/`). Two commands in any Claude Code session:
 
