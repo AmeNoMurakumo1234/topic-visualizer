@@ -38,29 +38,24 @@ window.TopicsRenderers.lineage = (function () {
   const apply = () => { if (world) world.style.transform =
     `translate(${tx}px,${ty}px) scale(${scale})`; };
 
-  function layout() {
-    let cursor = 0;
-    const walk = (n, depth) => {
-      if (n.open === undefined) n.open = true;
-      n.lx = 40 + depth * (W + GX);
-      const kids = n.open ? n.children : [];
-      if (!kids.length) { n.ly = 40 + cursor; cursor += ROWH + GY; return; }
-      kids.forEach(k => walk(k, depth + 1));
-      n.ly = kids.reduce((s, k) => s + k.ly, 0) / kids.length;
-    };
-    core.roots.forEach(r => walk(r, 0));
-  }
-
+  /* Two-pass layout: cards are VARIABLE height (wrapped titles, multi-line chips),
+   * so first build + MEASURE the real card heights, then stack rows on the measured
+   * heights - a fixed row slot is exactly the overlap bug we shipped once. */
   function render() {
     if (!stage) return;
-    layout();
     cards.innerHTML = ""; wires.innerHTML = "";
     const visible = [];
-    const collect = n => { visible.push(n); if (n.open) n.children.forEach(collect); };
-    core.roots.forEach(collect);
-    let maxX = 0, maxY = 0;
+    const collect = (n, depth) => {
+      if (n.open === undefined) n.open = true;
+      n.lx = 40 + depth * (W + GX);
+      visible.push(n);
+      if (n.open) n.children.forEach(c => collect(c, depth + 1));
+    };
+    core.roots.forEach(r => collect(r, 0));
+
+    // pass 1: build every card (position set later), measure real heights
+    const domOf = {};
     for (const n of visible) {
-      maxX = Math.max(maxX, n.lx + W + 60); maxY = Math.max(maxY, n.ly + ROWH + 60);
       const d = document.createElement("div");
       d.className = "tnode" + (n.parent ? "" : " root") + (core.selected === n ? " selected" : "")
         + (!n.children.length ? " leaf" : "")
@@ -69,7 +64,6 @@ window.TopicsRenderers.lineage = (function () {
         + (n.state === "pruned" || n.state === "expired" ? " archived" : "")
         + (core.searchDim(n) ? " searchdim" : "")
         + (n.critical && n.state !== "discussed" ? " critical" : "");
-      d.style.left = n.lx + "px"; d.style.top = n.ly + "px";
       if (n.parent && n.state !== "discussed") {
         d.style.borderLeft = `3px solid hsl(${(222 + (n.hue || 0)) % 360}, 70%, 62%)`;
       }
@@ -91,12 +85,44 @@ window.TopicsRenderers.lineage = (function () {
         core.select(n);
       });
       cards.appendChild(d);
+      domOf[n.slug] = d;
+    }
+    for (const n of visible) n.lh = domOf[n.slug].offsetHeight || ROWH;
+
+    // pass 2: stack rows on MEASURED heights; parents center on their children's
+    // span, a parent taller than that span pushes the next row down, and a
+    // per-column clamp keeps same-depth neighbors from ever touching
+    let cursor = 40;
+    const colBottom = {};
+    const settle = n => {
+      if (colBottom[n.lx] !== undefined) n.ly = Math.max(n.ly, colBottom[n.lx] + GY);
+      colBottom[n.lx] = n.ly + n.lh;
+    };
+    const place = n => {
+      const kids = n.open ? n.children : [];
+      if (!kids.length) {
+        n.ly = cursor; settle(n); cursor = Math.max(cursor, n.ly + n.lh + GY);
+        return;
+      }
+      kids.forEach(place);
+      const first = kids[0], last = kids[kids.length - 1];
+      n.ly = (first.ly + last.ly + last.lh) / 2 - n.lh / 2;
+      settle(n);
+      cursor = Math.max(cursor, n.ly + n.lh + GY);
+    };
+    core.roots.forEach(place);
+
+    let maxX = 0, maxY = 0;
+    for (const n of visible) {
+      maxX = Math.max(maxX, n.lx + W + 60); maxY = Math.max(maxY, n.ly + n.lh + 60);
+      const d = domOf[n.slug];
+      d.style.left = n.lx + "px"; d.style.top = n.ly + "px";
       if (n.parent) {
         const p = core.bySlug[n.parent];
         if (p) {
           const path = document.createElementNS(SVG_NS, "path");
-          const x1 = p.lx + W, y1 = p.ly + ROWH / 2 - 6, x2 = n.lx, y2 = n.ly + ROWH / 2 - 6,
-                mx = (x1 + x2) / 2;
+          const x1 = p.lx + W, y1 = p.ly + (p.lh || ROWH) / 2,
+                x2 = n.lx, y2 = n.ly + (n.lh || ROWH) / 2, mx = (x1 + x2) / 2;
           path.setAttribute("d", `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
           path.setAttribute("class", "wire");
           path.style.stroke = `hsl(${(222 + (n.hue || 0)) % 360}, 55%, 65%)`;
