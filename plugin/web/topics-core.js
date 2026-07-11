@@ -299,19 +299,35 @@ window.TopicsCore = (function () {
         ? `<span class="pill beacon">critical</span>` : "";
       const w = weight(n.title);
       const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-      // AVENUES IN: primary parent + every extra road that leads here (the DAG)
-      const avenue = (slug, note, extra) => {
+      // AVENUES IN: primary parent + every extra road that leads here. AVENUES OUT:
+      // primary children + every topic that lists THIS node as an extra parent -
+      // a cross-link has two endpoints, and BOTH panels must tell its story
+      // (owner-caught: clicking the parent end of a dashed wire showed nothing).
+      const avenue = (slug, note, extra, arrow, removable) => {
         const p2 = core.bySlug[slug];
         return `<div class="avenue" data-slug="${slug}">
-          <span class="ava${extra ? " x" : ""}">${extra ? "&#8618;" : "&#8593;"}</span>
+          <span class="ava${extra ? " x" : ""}">${arrow}</span>
           <span class="avt" title="${esc(slug)}">${p2 ? esc(short(p2.title)) : esc(slug)}</span>
           ${note ? `<span class="avn">${esc(note)}</span>` : ""}
-          ${extra && adapter.attach && adapter.attachRemove && !core.demo
+          ${removable && adapter.attach && adapter.attachRemove && !core.demo
             ? `<button class="avx" data-slug="${slug}" title="detach this avenue">&times;</button>` : ""}
         </div>`;
       };
-      const avenues = (n.parent ? avenue(n.parent, "", false) : "")
-        + n.extraParents.map(x => avenue(x.slug, x.note, true)).join("");
+      const avenuesIn = (n.parent ? avenue(n.parent, "", false, "&#8593;", false) : "")
+        + n.extraParents.map(x => avenue(x.slug, x.note, true, "&#8618;", true)).join("");
+      const crossKids = core.nodes.filter(
+        t => t !== n && t.extraParents.some(x => x.slug === n.slug));
+      const OUT_CAP = 8;
+      const outList = n.children.map(c => ({ slug: c.slug, note: "", extra: false }))
+        .concat(crossKids.map(c => ({
+          slug: c.slug,
+          note: (c.extraParents.find(x => x.slug === n.slug) || {}).note || "",
+          extra: true })));
+      const avenuesOut = outList.slice(0, OUT_CAP)
+        .map(o => avenue(o.slug, o.note, o.extra, o.extra ? "&#8618;" : "&#8595;", false))
+        .join("")
+        + (outList.length > OUT_CAP
+           ? `<div class="avmore">+ ${outList.length - OUT_CAP} more</div>` : "");
       dom.panel.className = "open";
       dom.panel.innerHTML = `
         <div class="phead">
@@ -322,7 +338,8 @@ window.TopicsCore = (function () {
           &middot; ${n.children.length} child(ren), ${kids} descendant(s)
           <span class="slugline">${esc(n.slug)}</span></div>
         <div class="body"></div>
-        ${avenues ? `<div class="avhead">avenues in</div>${avenues}` : ""}
+        ${avenuesIn ? `<div class="avhead">avenues in</div>${avenuesIn}` : ""}
+        ${avenuesOut ? `<div class="avhead">avenues out</div>${avenuesOut}` : ""}
         ${adapter.attach && !core.demo ? `
         <div class="avadd">
           <input class="av-in" type="text" list="tvSlugsAv" placeholder="+ add avenue (parent slug)"/>

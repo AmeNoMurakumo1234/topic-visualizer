@@ -221,3 +221,4 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
               stroke-width: 1.4; }
 .chip.xlink { color: #e2d1ff; border-color: #7a55c2; background: #241a3d;
               box-shadow: 0 0 9px #b48be04d; }
+#panel .avmore { color: #59607a; font-size: 11px; padding: 2px 8px; }
