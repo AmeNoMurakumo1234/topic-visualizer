@@ -173,7 +173,7 @@ window.TopicsRenderers.starchart = (function () {
       g.innerHTML = `
         ${n.tgt.hidden ? `<circle class="halo" r="${r + 7}"></circle>` : ""}
         ${beacon}${body}
-        ${label ? `<text class="label ${depth >= 2 ? "tiny" : ""}" y="${r + 12}" text-anchor="middle">${label.slice(0, cut)}${label.length > cut ? "..." : ""}</text>` : ""}
+        ${label ? `<text class="label ${depth >= 2 ? "tiny" : ""}" y="${r + 12}" text-anchor="middle">${core.esc(label.slice(0, cut))}${label.length > cut ? "..." : ""}</text>` : ""}
         ${n.tgt.hidden ? `<text class="more" y="${-r - 6}" text-anchor="middle">+${n.tgt.hidden} deeper</text>` : ""}`;
       const t = document.createElementNS(SVG_NS, "title");
       t.textContent = core.short(n.title); g.appendChild(t);
@@ -237,8 +237,8 @@ window.TopicsRenderers.starchart = (function () {
     path.forEach((n, i) => {
       const last = i === path.length - 1;
       html += ` <span class="sep">&gt;</span> ` +
-        (last ? `<span class="here">${core.short(n.title).slice(0, 34)}</span>`
-              : `<span data-c="${n.slug}">${core.short(n.title).slice(0, 26)}</span>`);
+        (last ? `<span class="here">${core.esc(core.short(n.title).slice(0, 34))}</span>`
+              : `<span data-c="${core.esc(n.slug)}">${core.esc(core.short(n.title).slice(0, 26))}</span>`);
     });
     crumbsEl.innerHTML = html;
     crumbsEl.querySelectorAll("span[data-c]").forEach(s => s.onclick = () =>
@@ -264,8 +264,12 @@ window.TopicsRenderers.starchart = (function () {
   }
   const scheduleLabels = () => { if (!labelRaf) labelRaf = requestAnimationFrame(updateLabels); };
 
-  function unmount() { cancelAnimationFrame(animId); focus = null;
-                       if (stage) stage.innerHTML = ""; stage = null; }
+  function unmount() {
+    cancelAnimationFrame(animId);
+    cancelAnimationFrame(labelRaf); labelRaf = null;
+    focus = null;
+    if (stage) stage.innerHTML = ""; stage = null;
+  }
 
   return { mount, render, unmount,
            legend: `<span style="color:#f0b24a">&#9679;</span> sun/root &nbsp;

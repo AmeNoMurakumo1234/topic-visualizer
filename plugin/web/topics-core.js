@@ -12,6 +12,12 @@ window.TopicsCore = (function () {
   "use strict";
 
   /* ---------- tiny utils ---------- */
+  // esc: the ONE HTML/attribute escape. Topic titles, bodies, and notes are
+  // AI-authored text from arbitrary conversations - every innerHTML
+  // interpolation in core AND the renderers must route through this (XSS
+  // audit 2026-07-11: six raw sinks shipped before this existed).
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const short = t => String(t || "").replace(/^OPEN THREAD:\s*/i, "")
                                     .replace(/\s*\([^)]*\)\s*$/, "");
   const weight = t => (String(t || "").match(/\(([^)]*)\)\s*$/) || [])[1] || "";
@@ -74,8 +80,18 @@ window.TopicsCore = (function () {
                                                extraParents: r.extraParents || [] }));
     nodes.forEach(n => { bySlug[n.slug] = n; });
     nodes.forEach(n => {
-      if (n.parent && bySlug[n.parent]) bySlug[n.parent].children.push(n);
-      else n.parent = null;
+      if (!n.parent || !bySlug[n.parent]) { n.parent = null; return; }
+      // cycle cut: walking up from the would-be parent must never reach n -
+      // a cyclic store (hostile adapter, corrupted db) used to hang every view
+      let cur = bySlug[n.parent], hops = 0, cyclic = false;
+      while (cur && hops++ < nodes.length) {
+        if (cur.slug === n.slug) { cyclic = true; break; }
+        cur = cur.parent ? bySlug[cur.parent] : null;
+      }
+      if (cyclic) { n.parent = null; return; }
+      bySlug[n.parent].children.push(n);
+    });
+    nodes.forEach(n => {
       // extra avenues (multi-parent DAG): keep only edges whose parent is loaded
       n.extraParents = n.extraParents.filter(x => bySlug[x.slug] && x.slug !== n.slug);
     });
@@ -325,7 +341,7 @@ window.TopicsCore = (function () {
       nodes: [], bySlug: {}, roots: [],
       selected: null,
       onChange: () => {},          // shell sets this: re-render the active renderer
-      short, weight, subtree, demoData,
+      short, weight, subtree, demoData, esc,
       labelBudget, labelAllowedSet, styleLabel, paintStars,
     };
 
@@ -384,8 +400,12 @@ window.TopicsCore = (function () {
         core.nodes.push({ slug: "demo-q" + core.nodes.length, title: title.trim(),
           body: "", author: "human", created: "", parentSlug: parentSlug || null,
           state: "open", critical: false, children: [], parent: parentSlug || null });
-        const t = TopicsCore.buildTree(core.nodes.map(n => ({ ...n, parentSlug: n.parent })));
+        const pos = {};
+        core.nodes.forEach(o => { pos[o.slug] = { x: o.x, y: o.y, vx: o.vx, vy: o.vy }; });
+        const t = TopicsCore.buildTree(core.nodes.map(n2 => ({ ...n2, parentSlug: n2.parent })));
         core.nodes = t.nodes; core.bySlug = t.bySlug; core.roots = t.roots;
+        core.xlinks = t.xlinks;
+        core.nodes.forEach(o => { if (pos[o.slug]) Object.assign(o, pos[o.slug]); });
         core.onChange(); return;
       }
       if (adapter.create) {
@@ -410,7 +430,14 @@ window.TopicsCore = (function () {
     };
 
     core.load = async function () {
-      const raw = core.demo ? demoData(core.demo) : await adapter.load(core.showArchive);
+      let raw;
+      try {
+        raw = core.demo ? demoData(core.demo) : await adapter.load(core.showArchive);
+      } catch (e) {
+        if (dom.statEl) dom.statEl.textContent = "could not reach the topics store";
+        core.onChange();
+        return;
+      }
       const t = buildTree(raw);
       core.nodes = t.nodes; core.bySlug = t.bySlug; core.roots = t.roots;
       core.xlinks = t.xlinks;
@@ -460,12 +487,20 @@ window.TopicsCore = (function () {
       return { prune: set, spared };
     };
 
-    core.pruneSubtree = async function (n) {
+    core.pruneSubtree = async function (n, shownSlugs) {
       const { prune } = core.pruneSet(n);
       if (!core.demo) {
-        await adapter.prune(prune.map(t => t.slug), core.actor);
+        const res = await adapter.prune(shownSlugs || prune.map(t => t.slug), core.actor);
         core.closePanel();
         await core.load();          // survivors were re-parented server-side; reload
+        if (res && res.error) {     // e.g. "subtree changed since the confirm dialog"
+          dom.confirmBox.innerHTML = `<h3>Prune refused</h3>
+            <p>${esc(res.error)}</p><button class="no">OK</button>`;
+          dom.confirmModal.className = "open";
+          dom.confirmBox.querySelector(".no").onclick = () => {
+            dom.confirmModal.className = "";
+          };
+        }
         return;
       }
       const gone = new Set(prune.map(t => t.slug));
@@ -483,6 +518,8 @@ window.TopicsCore = (function () {
       dom.panel.className = ""; core.selected = null;
     };
     core.select = function (n, extraButtons) {
+      n = core.bySlug[n.slug] || n;   // re-resolve: renderer closures may hold
+                                      // node objects replaced by core.load()
       core.selected = n;
       const kids = subtree(n).length - 1;
       const archived = n.state === "pruned" || n.state === "expired";
@@ -493,7 +530,6 @@ window.TopicsCore = (function () {
       const beacon = (n.critical && !archived)
         ? `<span class="pill beacon">critical</span>` : "";
       const w = weight(n.title);
-      const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
       // AVENUES IN: primary parent + every extra road that leads here. AVENUES OUT:
       // primary children + every topic that lists THIS node as an extra parent -
       // a cross-link has two endpoints, and BOTH panels must tell its story.
@@ -517,13 +553,13 @@ window.TopicsCore = (function () {
         const p2 = core.bySlug[slug];
         const handled = p2 && (p2.state === "discussed" || p2.state === "pruned"
                                || p2.state === "expired");
-        return `<div class="avenue${handled ? " dimrow" : ""}" data-slug="${slug}">
+        return `<div class="avenue${handled ? " dimrow" : ""}" data-slug="${esc(slug)}">
           <span class="ava${extra ? " x" : ""}">${arrow}</span>
           <span class="avt" title="${esc(slug)}">${p2 ? esc(short(p2.title)) : esc(slug)}</span>
           ${farPills(p2)}
           ${note ? `<span class="avn">${esc(note)}</span>` : ""}
           ${removable && adapter.attach && adapter.attachRemove && !core.demo
-            ? `<button class="avx" data-slug="${slug}" title="detach this avenue">&times;</button>` : ""}
+            ? `<button class="avx" data-slug="${esc(slug)}" title="detach this avenue">&times;</button>` : ""}
         </div>`;
       };
       const expanded = !!core._avenuesExpandOnce;
@@ -567,7 +603,7 @@ window.TopicsCore = (function () {
         <div class="avadd">
           <input class="av-in" type="text" list="tvSlugsAv" placeholder="+ add avenue (parent slug)"/>
           <datalist id="tvSlugsAv">${core.nodes.filter(t => t.slug !== n.slug)
-            .map(t => `<option value="${t.slug}">`).join("")}</datalist>
+            .map(t => `<option value="${esc(t.slug)}">`).join("")}</datalist>
         </div>` : ""}
         <div class="pactions">
           <span class="extra"></span>
@@ -648,7 +684,7 @@ window.TopicsCore = (function () {
     core.editPanel = function (n) {
       const options = core.nodes
         .filter(t => t.slug !== n.slug)
-        .map(t => `<option value="${t.slug}">`).join("");
+        .map(t => `<option value="${esc(t.slug)}">`).join("");
       dom.panel.innerHTML = `<h2>Edit topic</h2>
         <div class="editform">
           <label>Title</label><input class="e-title" type="text" maxlength="200"/>
@@ -689,7 +725,8 @@ window.TopicsCore = (function () {
     /* --- prune-with-consequence (descendant count, honest reversibility) --- */
     core.confirmPrune = function (n) {
       const { prune: all, spared } = core.pruneSet(n);
-      dom.confirmBox.innerHTML = `<h3>Prune "${short(n.title).slice(0, 60)}"?</h3>
+      const shown = all.map(t => t.slug);        // what the human is confirming
+      dom.confirmBox.innerHTML = `<h3>Prune "${esc(short(n.title).slice(0, 60))}"?</h3>
         <p>This prunes <b>${all.length} topic(s)</b> (this node + ${all.length - 1} descendant(s)).
         ${spared.length ? `<br/><b>${spared.length} topic(s) SURVIVE</b> - they are also
           reachable via another avenue, which becomes their home.` : ""}
@@ -700,7 +737,7 @@ window.TopicsCore = (function () {
       dom.confirmBox.querySelector(".no").onclick = () => { dom.confirmModal.className = ""; };
       dom.confirmBox.querySelector(".go").onclick = async () => {
         dom.confirmModal.className = "";
-        await core.pruneSubtree(n);
+        await core.pruneSubtree(n, shown);
       };
     };
 

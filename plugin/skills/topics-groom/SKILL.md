@@ -36,7 +36,7 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    map to real thematic families; re-parent the strays.
 
 6. **Calibration feedback (the loop teaching both minds).** topic_groom_report
-   returns per-actor capture outcomes ("of your last 20 captures: 14 became topics,
+   returns per-actor capture outcomes where the backend records them - the sqlite store does; the board backend reports only state counts ("of your last 20 captures: 14 became topics,
    3 expired, 3 pruned"). READ YOURS and tune your capture threshold against the
    human's actual behavior - high expiry rate means you are planting below the bar;
    near-zero expiry with a tiny tree may mean you are missing captures. No scolding

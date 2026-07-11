@@ -1,5 +1,5 @@
 {
-  "description": "The Seam's structural nets - mechanism at the discipline-decay points (docs/2026-07-11-seam-design.md). NOTE: scaffolded on the dev machine where the plugin is not installed; validate on first real install (ROADMAP).",
+  "description": "The Seam's structural nets - mechanism at the discipline-decay points (docs/2026-07-11-seam-design.md). SessionStart serves the first-of-day card (direct-sqlite fallback, works without the server). Stop runs a ONE-per-session capture sweep via the decision-block contract. NOTE: PreCompact has no model-visible hook channel, so the pre-compaction MORTALITY sweep lives in the topics-capture skill's threshold rule, not here (audit 2026-07-11).",
   "hooks": {
     "SessionStart": [
       {
@@ -18,18 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/sweep_reminder.py\" stop"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/sweep_reminder.py\" precompact"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/sweep_reminder.py\""
           }
         ]
       }

@@ -241,7 +241,9 @@ class BoardBackend:
             lines = []
             if it.get("parent_slug"):
                 lines.append(f"parent: {it['parent_slug']}")
-            if it.get("state") == "seedling":
+            # parity with the sqlite store: captures default to SEEDLING unless
+            # explicitly planted open (the capture skill promises this)
+            if it.get("state", "seedling") == "seedling":
                 lines.append("stage: seedling")
             if it.get("priority") == "critical":
                 lines.append("priority: critical")
@@ -296,8 +298,18 @@ class BoardBackend:
             created = r if not ref else {"issue": ref}
             if not ref:
                 return {"error": "issue create failed", "detail": r}
-        res = self.state(slug, "discussed", f"converted -> {kind}: {ref}"
-                         + (f" | {note}" if note else ""))
+        # the resolve can fail AFTER the issue was minted - report honestly so a
+        # blind retry never mints a duplicate issue (audit MED-5)
+        try:
+            res = self.state(slug, "discussed", f"converted -> {kind}: {ref}"
+                             + (f" | {note}" if note else ""))
+        except Unreachable as e:
+            return {"error": f"issue minted but the thread resolve failed: {e}. "
+                             "Do NOT retry the convert - resolve the thread manually.",
+                    "created": created, "ref": ref}
+        if isinstance(res, dict) and res.get("error"):
+            return {"error": "issue minted but the thread resolve failed",
+                    "created": created, "ref": ref, "resolve": res}
         return {"ok": True, "kind": kind, "ref": ref, "created": created,
                 "resolve": res}
 
@@ -313,8 +325,18 @@ class BoardBackend:
                 "beacon_ratio_warn": bool(live and beacons / live > 0.10)}
 
 
+_BACKEND = None
+
+
 def _backend():
-    return BoardBackend() if os.environ.get("TOPICS_BACKEND") == "board" else ServerBackend()
+    """Singleton: a fresh backend per call would rebuild the direct-sqlite
+    fallback's connection every time (leaking the previous one) and re-run the
+    expiry job per tool call (audit MED-7)."""
+    global _BACKEND
+    if _BACKEND is None:
+        _BACKEND = (BoardBackend() if os.environ.get("TOPICS_BACKEND") == "board"
+                    else ServerBackend())
+    return _BACKEND
 
 
 # ------------------------------------------------------------ MCP plumbing ----
@@ -432,6 +454,8 @@ def main() -> None:
             msg = json.loads(line)
         except Exception:
             continue
+        if not isinstance(msg, dict):
+            continue          # a JSON array/scalar line must not kill the process
         mid = msg.get("id")
         method = msg.get("method") or ""
         resp: dict | None = None
@@ -439,7 +463,7 @@ def main() -> None:
             resp = {"protocolVersion": (msg.get("params") or {}).get(
                         "protocolVersion", "2024-11-05"),
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "topic-visualizer", "version": "0.3.0"}}
+                    "serverInfo": {"name": "topic-visualizer", "version": "0.4.1"}}
         elif method == "tools/list":
             resp = {"tools": TOOLS}
         elif method == "tools/call":

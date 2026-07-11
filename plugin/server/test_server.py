@@ -192,6 +192,38 @@ class SeamTests(unittest.TestCase):
                   {"actor": "ai", "parent_slug": a2, "remove": True})
         self.assertEqual(rm.get("removed"), 1)
 
+    def test_11_refused_prune_leaves_dag_untouched(self):
+        # audit HIGH-1: a prune refused by the cascade check must not mutate the
+        # DAG (survivor promotion used to run BEFORE verification, and error
+        # returns left uncommitted writes to ride out on the next commit)
+        r = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "tocc: doomed"}, {"title": "tocc: haven"}]})
+        doomed, haven = [x["slug"] for x in r["results"]]
+        r2 = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "tocc: both ways", "parent_slug": doomed}]})
+        both = r2["results"][0]["slug"]
+        call(f"/api/topics/{both}/attach", {"actor": "ai", "parent_slug": haven})
+        # stale cascade (pretends 'both' would be pruned) -> refusal
+        bad = call(f"/api/topics/{doomed}/state",
+                   {"actor": "human", "state": "pruned", "cascade": [doomed, both]})
+        self.assertIn("subtree changed", str(bad.get("error", "")))
+        live = {t["slug"]: t for t in call("/api/topics")["topics"]}
+        self.assertEqual(live[both]["parent_slug"], doomed,
+                         "refused prune must NOT promote the extra avenue")
+        self.assertEqual([x["slug"] for x in live[both]["extra_parents"]], [haven],
+                         "refused prune must NOT consume the extra edge")
+
+    def test_12_convert_is_atomic_on_bad_link(self):
+        r = call("/api/topics", {"actor": "ai", "topics": [{"title": "atomic convert"}]})
+        slug = r["results"][0]["slug"]
+        bad = call(f"/api/topics/{slug}/links",
+                   {"actor": "ai", "links": [
+                       {"kind": "decision", "ref": "good"}, {"kind": "bogus"}]})
+        self.assertIn("error", bad)
+        t = next(x for x in call("/api/topics")["topics"] if x["slug"] == slug)
+        self.assertEqual(t["links"], [], "no phantom link from the failed batch")
+        self.assertNotEqual(t["state"], "discussed")
+
     def test_10_prune_spares_multi_parent_survivors(self):
         r = call("/api/topics", {"actor": "ai", "topics": [
             {"title": "spare: doomed branch"}, {"title": "spare: safe branch"}]})

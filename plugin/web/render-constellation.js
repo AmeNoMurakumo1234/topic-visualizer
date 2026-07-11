@@ -156,7 +156,7 @@ window.TopicsRenderers.constellation = (function () {
            </circle>` : "";
       const label = core.short(n.title);
       g.innerHTML = `${beacon}${body}
-        <text class="label" y="${R + 13}" text-anchor="middle">${label.slice(0, 42)}${label.length > 42 ? "..." : ""}</text>
+        <text class="label" y="${R + 13}" text-anchor="middle">${core.esc(label.slice(0, 42))}${label.length > 42 ? "..." : ""}</text>
         ${leaf ? "" : `<text class="count" y="4" text-anchor="middle">${n.children.length}</text>`}`;
       g.addEventListener("click", ev => { ev.stopPropagation(); core.select(n); });
       nodesG.appendChild(g);
@@ -241,7 +241,12 @@ window.TopicsRenderers.constellation = (function () {
   }
   const scheduleLabels = () => { if (!labelRaf) labelRaf = requestAnimationFrame(updateLabels); };
 
-  function unmount() { cancelAnimationFrame(animId); if (stage) stage.innerHTML = ""; stage = null; }
+  function unmount() {
+    cancelAnimationFrame(animId);
+    cancelAnimationFrame(labelRaf); labelRaf = null;
+    if (stage) stage.innerHTML = "";
+    stage = null;
+  }
 
   return { mount, render, unmount,
            legend: `<span style="color:#f0b24a">&#9679;</span> root sun &nbsp;

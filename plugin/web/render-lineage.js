@@ -80,20 +80,20 @@ window.TopicsRenderers.lineage = (function () {
         d.style.borderLeft = `3px solid hsl(${(222 + (n.hue || 0)) % 360}, 70%, 62%)`;
       }
       const s = core.short(n.title), w = core.weight(n.title);
-      d.innerHTML = `<div class="sum">${s.slice(0, 72)}${s.length > 72 ? "..." : ""}</div>
-        <div class="chips">${w ? `<span class="chip">${w}</span>` : ""}
+      d.innerHTML = `<div class="sum">${core.esc(s.slice(0, 72))}${s.length > 72 ? "..." : ""}</div>
+        <div class="chips">${w ? `<span class="chip">${core.esc(w)}</span>` : ""}
           ${n.children.length ? `<span class="chip kids">${n.children.length} child(ren)</span>`
                               : `<span class="chip frontier">frontier</span>`}
           ${n.critical ? `<span class="chip crit">critical</span>` : ""}
           ${n.state === "discussed" ? `<span class="chip done">discussed</span>` : ""}
           ${n.state === "seedling" ? `<span class="chip seed">seedling</span>` : ""}
           ${n.extraParents && n.extraParents.length
-            ? `<span class="chip xlink" title="also reachable via ${n.extraParents
-                 .map(x => x.slug).join(", ")}">&#8618; ${n.extraParents.length
+            ? `<span class="chip xlink" title="also reachable via ${core.esc(n.extraParents
+                 .map(x => x.slug).join(", "))}">&#8618; ${n.extraParents.length
                  + (n.parent ? 1 : 0)} in</span>` : ""}
           ${(core.xlinks || []).some(x => x.to === n)
-            ? `<span class="chip xlink" title="extra avenue INTO ${(core.xlinks || [])
-                 .filter(x => x.to === n).map(x => x.from.slug).join(", ")}">&#8618; ${
+            ? `<span class="chip xlink" title="extra avenue INTO ${core.esc((core.xlinks || [])
+                 .filter(x => x.to === n).map(x => x.from.slug).join(", "))}">&#8618; ${
                  (core.xlinks || []).filter(x => x.to === n).length} out</span>` : ""}
         </div>
         ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;

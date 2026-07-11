@@ -20,15 +20,18 @@ Validate the manifest any time with `claude plugin validate ./plugin`.
 ## What you get, immediately
 
 - **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`,
-  `topic_state`, `topic_convert`, `topic_groom_report`. No server needs to be
+  `topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. No server needs to be
   running: the tools fall back to direct SQLite at `${CLAUDE_PLUGIN_DATA}/topics.db`
   (survives plugin updates). If the topics server IS running they pass through it -
   same store, same behavior.
 - **Skills**: `topics-capture` (silent capture at the fork; mortality-aware near
   compaction), `topics-serve` (one card, first session of the day), `topics-groom`
   (the gardener's round, evidence-calibrated).
-- **Hooks**: SessionStart serves the first-of-day card; Stop and PreCompact remind
-  the AI to sweep unplanted seedlings - the mechanism at the discipline-decay points.
+- **Hooks**: SessionStart serves the first-of-day card (works with no server
+  running - direct sqlite fallback); Stop runs a ONE-per-session capture sweep.
+  The pre-compaction mortality sweep lives in the topics-capture skill (the
+  PreCompact hook event has no model-visible channel).
+- **Prerequisite**: `python` (3.10+) on PATH - the MCP server and hooks run it.
 
 ## Seeing the tree (the human half)
 

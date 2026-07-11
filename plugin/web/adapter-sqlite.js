@@ -35,14 +35,16 @@ window.TopicsAdapter = (function () {
       return await r.json();
     },
     async setState(slug, state, actor, note) {
-      await fetch(`/api/topics/${encodeURIComponent(slug)}/state`, {
+      const r = await fetch(`/api/topics/${encodeURIComponent(slug)}/state`, {
         method: "POST", headers: HDRS,
         body: JSON.stringify({ state, actor, note }),
       });
+      return await r.json();
     },
     async create(items) {
-      await fetch("/api/topics", { method: "POST", headers: HDRS,
+      const r = await fetch("/api/topics", { method: "POST", headers: HDRS,
         body: JSON.stringify({ actor: "human", topics: items }) });
+      return await r.json();
     },
     async search(q) {
       const r = await fetch(`/api/topics/search?q=${encodeURIComponent(q)}`);
@@ -55,11 +57,12 @@ window.TopicsAdapter = (function () {
     async prune(slugs, actor) {
       // client-confirmed, server-verified cascade (see server spec): send the subtree
       // the human saw in the consequence dialog; the server checks it still matches.
-      await fetch(`/api/topics/${encodeURIComponent(slugs[0])}/state`, {
+      const r = await fetch(`/api/topics/${encodeURIComponent(slugs[0])}/state`, {
         method: "POST", headers: HDRS,
         body: JSON.stringify({ state: "pruned", actor, cascade: slugs,
                                note: "pruned from the topic tree" }),
       });
+      return await r.json();   // the TOCTOU refusal must reach the human
     },
   };
 })();

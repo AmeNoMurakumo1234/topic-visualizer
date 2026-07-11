@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.4.1 - 2026-07-11 - The hardening: 3-lane audit, verified and fixed
+
+A parallel adversarial audit (server/MCP, web, plugin-form/docs) followed by a
+verify-and-fix pass. The load-bearing fixes:
+
+- SERVER DATA INTEGRITY: error returns now ROLL BACK (a refused action used to
+  leave uncommitted writes that rode out on the next unrelated commit); the prune
+  cascade TOCTOU check runs BEFORE survivor promotion (a REFUSED prune used to
+  permanently re-parent survivors); convert validates the whole link batch before
+  writing any of it; slug mint+insert under one lock (concurrent-capture race);
+  archived topics rejected as new parents; extra_parents joined to LIVE parents
+  in the live view. Regression tests for all of it (13 server / 7 MCP).
+- HTTP: top-level handler guard (malformed input -> JSON error, never a dropped
+  connection), dict-body enforcement, content-length clamp, static-route
+  precedence fix; GET /serve no longer graduates seedlings (resurface != touch).
+- MCP: a valid-JSON non-object line (e.g. a JSON-RPC batch array) no longer kills
+  the process; backend singleton (the per-call fallback leaked a sqlite connection
+  and re-ran expiry every call); board convert reports honestly when the issue
+  minted but the resolve failed (a blind retry used to mint duplicates); board
+  captures default to seedling (skill parity); default DB path unified.
+- WEB XSS: shared esc() now guards EVERY innerHTML interpolation - renderer
+  labels, lineage cards + chip titles, star-chart crumbs, confirm dialog,
+  datalists (titles are AI-authored conversation text; six raw sinks shipped).
+- WEB correctness: primary-parent cycles from a hostile/corrupt store are cut at
+  buildTree instead of hanging every view; the prune dialog sends the cascade the
+  human SAW (the recomputed set was defeating the server's own TOCTOU guard) and
+  server refusals now surface in the dialog; stale node objects re-resolve on
+  select; adapter load failures show "could not reach the topics store"; Esc
+  closes the confirm modal before the panel; label-rAF canceled on unmount; demo
+  quick-add keeps settled constellation positions.
+- HOOKS (contract fixes): Stop now uses the decision-block contract and fires
+  ONCE per session with a loop guard (the old additionalContext emission was a
+  silent no-op); the PreCompact hook is REMOVED - that event has no model-visible
+  channel, so the mortality sweep lives in the topics-capture skill; the
+  first-of-day card gained the direct-sqlite fallback (works with no server).
+- DOCS trued to the code: server README rewritten from "not yet implemented" spec
+  to the shipped surface; seam-design stamped historical; tool listings include
+  topic_attach; versions aligned; skill claims hedged to backend reality.
+
 ## 0.4.0 - 2026-07-11 - Multi-parent DAG + the panel beauty pass
 
 - MULTI-PARENT (owner insight: two conversations can lead to the same child topic).

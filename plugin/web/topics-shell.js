@@ -53,6 +53,11 @@
     if (e.key !== "Escape") return;
     const el = document.activeElement;
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+    const confirmEl = document.getElementById("confirm");
+    if (confirmEl && confirmEl.classList.contains("open")) {
+      confirmEl.className = "";        // the modal owns Esc while it is up
+      return;
+    }
     if (core.selected) { core.closePanel(); core.onChange(); }
   });
   // quick-add: the human's two-second door (Enter plants an open root topic;

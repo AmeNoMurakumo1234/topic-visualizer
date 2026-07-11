@@ -29,7 +29,7 @@ so they can accept, defer, or say "next" for the second card.
 ## Ranking (which card is on top)
 
 Critical beacons first; then topics whose territory is hot in current work; then age
-and time-weight fit. A groomed tree (see topics-groom) keeps this ranking honest.
+resurfacing. Time-weight is not a ranking input - read it off the card when matching the human's available time. A groomed tree (see topics-groom) keeps this ranking honest.
 
 ## The exit doors (every served topic ends one of three ways)
 

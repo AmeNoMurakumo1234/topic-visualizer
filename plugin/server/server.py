@@ -6,7 +6,7 @@ mcp_tools.py, which imports the same operations. Localhost only; zero heavy deps
 
     python server.py [--db topics.db] [--port 8991] [--web ../web]
 
-Design: docs/2026-07-11-seam-design.md. Schema: schema.sql (v2).
+Design: docs/2026-07-11-seam-design.md. Schema: schema.sql (v3).
 """
 from __future__ import annotations
 
@@ -40,13 +40,16 @@ def open_db(path: str) -> sqlite3.Connection:
     return conn
 
 
-def _slugify(title: str) -> str:
+def _slugify_locked(title: str, salt: int = 0) -> str:
+    """Mint a free slug. CALLER MUST HOLD _lock - minting and inserting under one
+    lock hold closes the check-then-act race two concurrent captures had."""
     base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "topic"
+    if salt:
+        base = f"{base}-r{salt}"
     slug, n = base, 1
-    with _lock:
-        while _conn.execute("SELECT 1 FROM topic WHERE slug=?", (slug,)).fetchone():
-            n += 1
-            slug = f"{base}-{n}"
+    while _conn.execute("SELECT 1 FROM topic WHERE slug=?", (slug,)).fetchone():
+        n += 1
+        slug = f"{base}-{n}"
     return slug
 
 
@@ -71,10 +74,12 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
         rows = _conn.execute(q).fetchall()
         link_rows = _conn.execute(
             "SELECT topic_id, kind, ref, note FROM topic_link").fetchall()
-        xp_rows = _conn.execute(
-            """SELECT tp.topic_id, tp.note, tp.added_by, tp.added_at,
-                      p.slug AS parent_slug
-               FROM topic_parent tp JOIN topic p ON p.id = tp.parent_id""").fetchall()
+        xpq = """SELECT tp.topic_id, tp.note, tp.added_by, tp.added_at,
+                        p.slug AS parent_slug
+                 FROM topic_parent tp JOIN topic p ON p.id = tp.parent_id"""
+        if not include_archive:
+            xpq += " WHERE p.state IN ('seedling','open','discussed')"
+        xp_rows = _conn.execute(xpq).fetchall()
     links: dict = {}
     for lr in link_rows:
         links.setdefault(lr["topic_id"], []).append(
@@ -89,6 +94,16 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
         t = _row_to_topic(r, links)
         t["extra_parents"] = xparents.get(r["id"], [])
         out.append(t)
+    return out
+
+
+def _fail(msg: str, **extra) -> dict:
+    """Error return from inside an action: roll back any pending writes FIRST -
+    on a shared autocommit-off connection they would otherwise be committed by
+    whichever unrelated action commits next (audit 2026-07-11, HIGH)."""
+    _conn.rollback()
+    out = {"error": msg}
+    out.update(extra)
     return out
 
 
@@ -114,13 +129,18 @@ import urllib.request
 
 EMBED_URL = (os.environ.get("TOPICS_EMBED_URL", "http://127.0.0.1:8082")).rstrip("/")
 _embed_up = None
+_embed_failed_at = 0.0
 _embed_cache = {}
 
 
 def _embed(texts):
     global _embed_up
-    if not EMBED_URL or _embed_up is False:
+    if not EMBED_URL:
         return None
+    if _embed_up is False and time.time() - _embed_failed_at < 60:
+        return None                      # re-probe after a minute, never latch forever
+    if len(_embed_cache) > 4000:
+        _embed_cache.clear()             # crude bound beats an unbounded leak
     todo = [x for x in texts if x not in _embed_cache]
     if todo:
         try:
@@ -135,6 +155,7 @@ def _embed(texts):
             _embed_up = True
         except Exception:
             _embed_up = False
+            globals()["_embed_failed_at"] = time.time()
             return None
     return [_embed_cache[x] for x in texts]
 
@@ -215,7 +236,6 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
             results.append({"error": "title required"})
             continue
         dups = _near_duplicates(title, str(it.get("body") or ""))
-        slug = _slugify(title)
         with _lock:
             parent_id = None
             if it.get("parent_slug"):
@@ -225,13 +245,26 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
             state = it.get("state") or "seedling"
             if state not in ("seedling", "open"):
                 state = "seedling"
-            cur = _conn.execute(
-                """INSERT INTO topic (slug, title, body, parent_id, state, priority,
-                                      tags, created_by, provenance)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (slug, title, str(it.get("body") or ""), parent_id, state,
-                 "critical" if it.get("priority") == "critical" else "normal",
-                 str(it.get("tags") or ""), actor, str(it.get("provenance") or "")))
+            # mint + INSERT under ONE lock hold; retry on the (now rare) collision
+            for attempt in range(4):
+                slug = _slugify_locked(title, attempt)
+                try:
+                    cur = _conn.execute(
+                        """INSERT INTO topic (slug, title, body, parent_id, state, priority,
+                                              tags, created_by, provenance)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (slug, title, str(it.get("body") or ""), parent_id, state,
+                         "critical" if it.get("priority") == "critical" else "normal",
+                         str(it.get("tags") or ""), actor, str(it.get("provenance") or "")))
+                    break
+                except sqlite3.IntegrityError:
+                    if attempt == 3:
+                        _conn.rollback()
+                        results.append({"error": "slug collision", "near_duplicates": dups})
+                        slug = None
+                        break
+            if slug is None:
+                continue
             _event(cur.lastrowid, "created", actor, f"as {state}")
             _conn.commit()
         results.append({"slug": slug, "near_duplicates": dups})
@@ -248,7 +281,7 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
     with _lock:
         row = _conn.execute("SELECT id, state FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
-            return {"error": "not found"}
+            return _fail("not found")
         ids = [row["id"]]
         if state == "pruned":
             # collect the live PRIMARY subtree
@@ -289,19 +322,21 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
                 keep = set(closure([tid2]))
                 subtree = [i for i in subtree if i not in keep]
                 promoted.append((tid2, new_pid))
-            for tid2, new_pid in promoted:
-                _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (new_pid, tid2))
-                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
-                              (tid2, new_pid))
-                _event(tid2, "reparented", actor, "promoted surviving avenue on prune")
+            # verify the client-confirmed cascade BEFORE any promotion writes:
+            # a REFUSED prune must leave the DAG untouched (audit HIGH-1)
             if cascade is not None:
                 slugs = set(cascade)
                 actual = {r2["slug"] for r2 in _conn.execute(
                     f"SELECT slug FROM topic WHERE id IN ({','.join('?' for _ in subtree)})",
                     subtree)}
                 if actual != slugs:
-                    return {"error": "subtree changed since the confirm dialog; reload",
-                            "expected": sorted(slugs), "actual": sorted(actual)}
+                    return _fail("subtree changed since the confirm dialog; reload",
+                                 expected=sorted(slugs), actual=sorted(actual))
+            for tid2, new_pid in promoted:
+                _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (new_pid, tid2))
+                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                              (tid2, new_pid))
+                _event(tid2, "reparented", actor, "promoted surviving avenue on prune")
             ids = subtree
         ev = {"open": "reopened", "discussed": "discussed", "pruned": "pruned"}[state]
         for tid in ids:
@@ -320,10 +355,14 @@ def convert(slug: str, links: list[dict], actor: str, note: str = "") -> dict:
     with _lock:
         row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
-            return {"error": "not found"}
+            return _fail("not found")
+        # validate the WHOLE batch before writing any of it (atomic conversion)
         for l in links:
-            if l.get("kind") not in ("decision", "work_item", "document"):
-                return {"error": f"bad link kind {l.get('kind')!r}"}
+            if not isinstance(l, dict) or l.get("kind") not in (
+                    "decision", "work_item", "document"):
+                kind = l.get("kind") if isinstance(l, dict) else l
+                return _fail(f"bad link kind {kind!r}")
+        for l in links:
             _conn.execute(
                 "INSERT INTO topic_link (topic_id, kind, ref, note) VALUES (?,?,?,?)",
                 (row["id"], l["kind"], str(l.get("ref") or ""), str(l.get("note") or "")))
@@ -343,7 +382,7 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
     with _lock:
         row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
-            return {"error": "not found"}
+            return _fail("not found")
         tid = row["id"]
         if title is not None:
             _conn.execute("UPDATE topic SET title=? WHERE id=?", (title, tid))
@@ -354,16 +393,19 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                 _conn.execute("UPDATE topic SET parent_id=NULL WHERE id=?", (tid,))
                 _event(tid, "reparented", actor, "-> root")
             else:
-                p = _conn.execute("SELECT id FROM topic WHERE slug=?", (parent_slug,)).fetchone()
+                p = _conn.execute("SELECT id, state FROM topic WHERE slug=?",
+                                  (parent_slug,)).fetchone()
                 if not p:
-                    return {"error": "parent not found"}
+                    return _fail("parent not found")
+                if p["state"] in ("pruned", "expired"):
+                    return _fail("parent is archived - resurrect it first")
                 # cycle guard over the FULL DAG: walk every ancestor path (primary +
                 # extra edges) up from the new parent; hitting this topic = a cycle
                 frontier, seen = [p["id"]], set()
                 while frontier:
                     cur = frontier.pop()
                     if cur == tid:
-                        return {"error": "cycle: parent is inside this subtree"}
+                        return _fail("cycle: parent is inside this subtree")
                     if cur in seen:
                         continue
                     seen.add(cur)
@@ -397,10 +439,13 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
     with _lock:
         row = _conn.execute(
             "SELECT id, parent_id, body FROM topic WHERE slug=?", (slug,)).fetchone()
-        p = _conn.execute("SELECT id FROM topic WHERE slug=?", (parent_slug,)).fetchone()
+        p = _conn.execute("SELECT id, state FROM topic WHERE slug=?",
+                          (parent_slug,)).fetchone()
         if not row or not p:
-            return {"error": "topic or parent not found"}
+            return _fail("topic or parent not found")
         tid, pid = row["id"], p["id"]
+        if not remove and p["state"] in ("pruned", "expired"):
+            return _fail("parent is archived - resurrect it first")
         if remove:
             n = _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
                               (tid, pid)).rowcount
@@ -410,9 +455,9 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
             _conn.commit()
             return {"ok": True, "removed": n}
         if tid == pid:
-            return {"error": "a topic cannot parent itself"}
+            return _fail("a topic cannot parent itself")
         if row["parent_id"] == pid:
-            return {"error": "already the primary parent"}
+            return _fail("already the primary parent")
         # cycle guard over the FULL DAG: the new parent must not sit anywhere inside
         # this topic's descendant closure (primary + extra edges both count)
         frontier, seen = [tid], {tid}
@@ -425,13 +470,13 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
             frontier = [k for k in kids if k not in seen]
             seen.update(frontier)
             if pid in seen:
-                return {"error": "cycle: that parent is inside this topic's subtree"}
+                return _fail("cycle: that parent is inside this topic's subtree")
         try:
             _conn.execute(
                 "INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
                 "VALUES (?,?,?,?)", (tid, pid, note, actor))
         except sqlite3.IntegrityError:
-            return {"error": "already attached to that parent"}
+            return _fail("already attached to that parent")
         # rediscovery enrichment: the later avenue leaves a visible trace on the topic
         stamp = time.strftime("%Y-%m-%d")
         addendum = f"\n\n[rediscovered {stamp} via {parent_slug}]" + (f" {note}" if note else "")
@@ -519,7 +564,8 @@ def serve_card(context: str = "") -> dict:
     card = cands[0][1]
     with _lock:
         _event(card["id"], "served", "server", f"context={context[:60]}")
-        _touch(card["id"], "server", "served")
+        _conn.execute("UPDATE topic SET touched_at = datetime('now') WHERE id=?",
+                      (card["id"],))          # resurface clock resets; NO graduation
         _conn.commit()
     return {"card": card, "alternates": [c[1] for c in cands[1:3]]}
 
@@ -607,13 +653,25 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        n = max(0, int(self.headers.get("Content-Length") or 0))
+        body = json.loads(self.rfile.read(n) or b"{}")
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        return body
 
     def log_message(self, *a):  # quiet
         pass
 
     def do_GET(self):
+        try:
+            return self._get()
+        except Exception as e:
+            try:
+                self._json(500, {"error": str(e)})
+            except Exception:
+                pass
+
+    def _get(self):
         u = urlparse(self.path)
         qs = parse_qs(u.query)
         if u.path == "/api/topics":
@@ -631,7 +689,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.web_root:
             rel = "index.html" if u.path == "/" else u.path.lstrip("/")
             f = (self.web_root / rel).resolve()
-            if f.is_file() and self.web_root.resolve() in f.parents or f == (self.web_root / "index.html").resolve():
+            if f == (self.web_root / "index.html").resolve():
+                f = f if f.is_file() else None
+            elif not (f.is_file() and self.web_root.resolve() in f.parents):
+                f = None
+            if f is not None:
                 ctype = {"html": "text/html", "js": "text/javascript",
                          "css": "text/css"}.get(f.suffix.lstrip("."), "application/octet-stream")
                 data = f.read_bytes()
@@ -644,6 +706,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        try:
+            return self._post()
+        except Exception as e:
+            try:
+                self._json(500, {"error": str(e)})
+            except Exception:
+                pass
+
+    def _post(self):
         u = urlparse(self.path)
         try:
             body = self._body()
@@ -677,7 +748,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     global _conn, DB_PATH
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default="topics.db")
+    ap.add_argument("--db", default=str(HERE / "topics.db"))
     ap.add_argument("--port", type=int, default=8991)
     ap.add_argument("--web", default=str(HERE.parent / "web"))
     args = ap.parse_args()

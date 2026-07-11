@@ -1,5 +1,10 @@
 # The Seam: frictionless capture + serving between a human mind and an AI mind
 
+> HISTORICAL SPEC (ratified 2026-07-11). The CODE is current where they differ:
+> schema is v3 (multi-parent), beacons are set via /edit not /beacon, the tool set
+> grew topic_attach, serve ranking has no time-weight input, and the PreCompact
+> mortality sweep lives in the topics-capture skill (no hook channel exists).
+
 Design spec, 2026-07-11. Brainstormed owner + Joule (superpowers:brainstorming), all
 keystone decisions owner-ratified same day. This document is the WHY and WHAT; the
 implementation plan derives from it.

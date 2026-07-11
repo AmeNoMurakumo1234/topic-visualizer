@@ -1,20 +1,41 @@
 #!/usr/bin/env python3
-"""Stop / PreCompact hook: the capture sweep - the structural net for the two ways an
-AI session dies (chosen and unchosen). Emits a sweep instruction as context; the
-PreCompact form is the MORTALITY sweep (capture liberally - seedling expiry makes
-over-capture cheap). Fails silent."""
-import json, sys
+"""Stop hook: the session-end capture sweep (the structural net for the CHOSEN way a
+session ends). Contract note (audit 2026-07-11): Stop hooks do NOT support
+additionalContext - the only model-visible channel is {"decision": "block",
+"reason": ...}, which asks the model to continue once with the reason in context.
+So: fire ONCE per session (stamp file keyed by session_id), guard on
+stop_hook_active so we can never loop, and keep the reason gentle - sweep if
+needed, then finish.
 
-MODE = sys.argv[1] if len(sys.argv) > 1 else "stop"
-MSG = {
-    "stop": ("SESSION-END TOPIC SWEEP: before closing - any topic-worthy threads from "
-             "this session not yet planted? Plant them now via topic_add (batch; they "
-             "enter as seedlings). One soft line if you plant."),
-    "precompact": ("PRE-COMPACTION MORTALITY SWEEP: context is about to be summarized "
-                   "and unplanted ideas will be LOST. Capture liberally NOW via "
-                   "topic_add (batch) - lower the bar deliberately; seedling expiry "
-                   "makes over-capture cheap, lost ideas are not recoverable."),
-}[MODE]
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "Stop" if MODE == "stop" else "PreCompact",
-    "additionalContext": MSG}}))
+(The PreCompact mortality sweep has NO model-visible hook channel at all; that
+duty lives in the topics-capture skill's MORTALITY-AWARE THRESHOLD rule.)"""
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    payload = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    payload = {}
+
+# never loop: if this stop was already caused by a hook block, let it through
+if payload.get("stop_hook_active"):
+    sys.exit(0)
+
+session = str(payload.get("session_id") or "unknown")
+stamp = Path(tempfile.gettempdir()) / f"topic-visualizer-sweep-{session}"
+if stamp.exists():
+    sys.exit(0)                      # one sweep per session, not one per turn
+try:
+    stamp.write_text("swept")
+except Exception:
+    sys.exit(0)
+
+print(json.dumps({
+    "decision": "block",
+    "reason": ("SESSION-END TOPIC SWEEP (once per session): if any topic-worthy "
+               "threads surfaced this session and were not planted, plant them now "
+               "via topic_add (batch; they enter as seedlings) and mention it in one "
+               "soft line. If there is nothing to plant, simply finish."),
+}))

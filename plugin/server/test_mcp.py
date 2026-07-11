@@ -90,6 +90,15 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         cls.srv.wait(timeout=5)
         cls.tmp.cleanup()
 
+    def test_00_hostile_lines_do_not_kill_the_process(self):
+        # audit HIGH-2: a valid-JSON non-object line (e.g. a JSON-RPC batch array)
+        # used to AttributeError out of main() and kill the server for the session
+        self.mcp.p.stdin.write(b'[{"jsonrpc":"2.0","id":99,"method":"ping"}]\n')
+        self.mcp.p.stdin.write(b'"just a string"\n')
+        self.mcp.p.stdin.flush()
+        r = self.mcp.rpc("ping")          # still alive and answering
+        self.assertEqual(r, {})
+
     def test_01_handshake_and_list(self):
         init = self.mcp.rpc("initialize", {"protocolVersion": "2024-11-05"})
         self.assertEqual(init["serverInfo"]["name"], "topic-visualizer")

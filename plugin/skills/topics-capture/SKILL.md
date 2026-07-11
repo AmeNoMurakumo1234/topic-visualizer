@@ -46,7 +46,7 @@ LOWER the capture bar deliberately - plant liberally, annotate less. The seedlin
 expiry valve is what licenses this aggression: over-capture near death costs almost
 nothing, but a lost idea is gone. When a pre-compaction signal fires (hook or your own
 awareness of a very long session), sweep NOW: "ideas at risk of being lost to
-summarization - plant them."'
+summarization - plant them."
 
 **Never speculatively farm topics.** Generating topic lists ("here are 50 things we
 could discuss about cars") is forbidden - the tree grows only by walked paths. This
