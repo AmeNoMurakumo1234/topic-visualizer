@@ -222,4 +222,15 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .xport { fill: #b48be0; stroke: #0a0f1f; stroke-width: 1.5; }
 .chip.xlink { color: #e2d1ff; border-color: #7a55c2; background: #241a3d;
               box-shadow: 0 0 9px #b48be04d; }
-#panel .avmore { color: #59607a; font-size: 11px; padding: 2px 8px; }
+#panel .avmore { display: block; background: none; border: 1px dashed #2a3558;
+                 color: #7d8ab0; font-size: 11px; padding: 4px 10px; margin: 4px 0 2px;
+                 border-radius: 8px; cursor: pointer; }
+#panel .avmore:hover { color: var(--ink); border-color: #3d4d80; }
+/* far-node state on avenue rows: important up top and lit, handled lower and dim */
+#panel .avenue.dimrow { opacity: 0.55; }
+.avpill { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+          padding: 0 6px; border-radius: 999px; border: 1px solid; flex-shrink: 0; }
+.avpill.crit { color: #ffb35c; border-color: #8a5a22; }
+.avpill.seed { color: #9fd49f; border-color: #2e5a3a; }
+.avpill.done { color: #9aa3c0; border-color: #333c5c; }
+.avpill.arch { color: #8a92ad; border-color: #3a4055; text-decoration: line-through; }

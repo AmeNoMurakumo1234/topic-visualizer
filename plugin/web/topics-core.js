@@ -301,33 +301,59 @@ window.TopicsCore = (function () {
       const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
       // AVENUES IN: primary parent + every extra road that leads here. AVENUES OUT:
       // primary children + every topic that lists THIS node as an extra parent -
-      // a cross-link has two endpoints, and BOTH panels must tell its story
-      // (owner-caught: clicking the parent end of a dashed wire showed nothing).
+      // a cross-link has two endpoints, and BOTH panels must tell its story.
+      // TRIAGED (owner): each row shows the FAR node's state, lists sort by
+      // importance (critical > open > seedling > discussed > archived; handled
+      // rows dim), and long lists cap at 8 with a click-to-expand.
+      const AV_CAP = 8;
+      const farRank = t => !t ? 5
+        : (t.state === "pruned" || t.state === "expired") ? 4
+        : t.state === "discussed" ? 3
+        : (t.critical ? 0 : t.state === "seedling" ? 2 : 1);
+      const farPills = t => {
+        if (!t) return "";
+        const arch = t.state === "pruned" || t.state === "expired";
+        return (t.critical && !arch ? `<span class="avpill crit">critical</span>` : "")
+          + (t.state === "seedling" ? `<span class="avpill seed">seedling</span>` : "")
+          + (t.state === "discussed" ? `<span class="avpill done">discussed</span>` : "")
+          + (arch ? `<span class="avpill arch">${t.state}</span>` : "");
+      };
       const avenue = (slug, note, extra, arrow, removable) => {
         const p2 = core.bySlug[slug];
-        return `<div class="avenue" data-slug="${slug}">
+        const handled = p2 && (p2.state === "discussed" || p2.state === "pruned"
+                               || p2.state === "expired");
+        return `<div class="avenue${handled ? " dimrow" : ""}" data-slug="${slug}">
           <span class="ava${extra ? " x" : ""}">${arrow}</span>
           <span class="avt" title="${esc(slug)}">${p2 ? esc(short(p2.title)) : esc(slug)}</span>
+          ${farPills(p2)}
           ${note ? `<span class="avn">${esc(note)}</span>` : ""}
           ${removable && adapter.attach && adapter.attachRemove && !core.demo
             ? `<button class="avx" data-slug="${slug}" title="detach this avenue">&times;</button>` : ""}
         </div>`;
       };
+      const expanded = !!core._avenuesExpandOnce;
+      core._avenuesExpandOnce = false;
+      const capList = (rows, renderRow) => {
+        const shown = expanded ? rows : rows.slice(0, AV_CAP);
+        return shown.map(renderRow).join("")
+          + (rows.length > shown.length
+             ? `<button class="avmore">show ${rows.length - shown.length} more
+                (important first, handled last)</button>` : "");
+      };
+      const inExtras = n.extraParents.slice()
+        .sort((a, b) => farRank(core.bySlug[a.slug]) - farRank(core.bySlug[b.slug]));
       const avenuesIn = (n.parent ? avenue(n.parent, "", false, "&#8593;", false) : "")
-        + n.extraParents.map(x => avenue(x.slug, x.note, true, "&#8618;", true)).join("");
+        + capList(inExtras, x => avenue(x.slug, x.note, true, "&#8618;", true));
       const crossKids = core.nodes.filter(
         t => t !== n && t.extraParents.some(x => x.slug === n.slug));
-      const OUT_CAP = 8;
       const outList = n.children.map(c => ({ slug: c.slug, note: "", extra: false }))
         .concat(crossKids.map(c => ({
           slug: c.slug,
           note: (c.extraParents.find(x => x.slug === n.slug) || {}).note || "",
-          extra: true })));
-      const avenuesOut = outList.slice(0, OUT_CAP)
-        .map(o => avenue(o.slug, o.note, o.extra, o.extra ? "&#8618;" : "&#8595;", false))
-        .join("")
-        + (outList.length > OUT_CAP
-           ? `<div class="avmore">+ ${outList.length - OUT_CAP} more</div>` : "");
+          extra: true })))
+        .sort((a, b) => farRank(core.bySlug[a.slug]) - farRank(core.bySlug[b.slug]));
+      const avenuesOut = capList(outList,
+        o => avenue(o.slug, o.note, o.extra, o.extra ? "&#8618;" : "&#8595;", false));
       dom.panel.className = "open";
       dom.panel.innerHTML = `
         <div class="phead">
@@ -374,6 +400,11 @@ window.TopicsCore = (function () {
           const p2 = core.bySlug[el.closest(".avenue").dataset.slug];
           if (p2) core.select(p2);
         };
+      });
+      // "+N more" expands the capped avenue lists in place (collapses again on
+      // the next selection)
+      dom.panel.querySelectorAll(".avmore").forEach(el => {
+        el.onclick = () => { core._avenuesExpandOnce = true; core.select(n, extraButtons); };
       });
       dom.panel.querySelectorAll(".avx").forEach(el => {
         el.onclick = async () => {
