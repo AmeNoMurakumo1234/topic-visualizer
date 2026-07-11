@@ -110,6 +110,16 @@ also run vendored against a message-board backend (the birthplace instance) - th
 adapter law keeps the views storage-blind. [ROADMAP.md](ROADMAP.md) has the full
 built/next ledger.
 
+## Integrating into your own app
+
+The views run inside ANY web app that can serve six static files and write one
+adapter file - storage stays yours (the birthplace instance runs them against a
+message board whose post bodies are immutable, and the views never noticed).
+[INTEGRATING.md](INTEGRATING.md) is the complete contract, written so you can hand
+it to your own AI assistant and say *"integrate this"*: file manifest, the exact
+adapter interface with capability detection, the host-page skeleton, the real
+board adapter as a worked example, and an acceptance checklist.
+
 ## Contents
 
 - [CHARTER.md](CHARTER.md) - the philosophy; read before adopting
@@ -118,7 +128,7 @@ built/next ledger.
   [plugin/web/](plugin/web/) (the three views + adapters)
 - [docs/](docs/) - the ratified Seam design + the prototype snapshot with provenance
 - [ROADMAP.md](ROADMAP.md) - what's built, what's next
-- [INSTALL.md](INSTALL.md) | [CONTRIBUTING.md](CONTRIBUTING.md)
+- [INSTALL.md](INSTALL.md) | [INTEGRATING.md](INTEGRATING.md) | [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Provenance
 

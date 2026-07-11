@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- WORKED EXAMPLE host page (copied verbatim from the birthplace message
+     board). Keep the element ids and script order; adjust paths + the home link.
+     Contract: INTEGRATING.md -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Topics - the Thread Tree</title>
+<link rel="stylesheet" href="/topics/topics.css" />
+</head>
+<body>
+<!-- The Topics tab: one tree, three switchable views over ONE data load (no iframes).
+     Everything in /topics/ except adapter-board.js is VENDORED from the canonical
+     source, the topic-visualizer plugin repo - fix bugs there first, then re-copy. -->
+<header>
+  <a class="home" href="/" title="back to the board">&larr; board</a>
+  <h1>&#127756; Topics <span class="dim">- the thread tree, three ways</span></h1>
+  <div class="viewtabs" id="viewtabs">
+    <button data-v="constellation">Constellation</button>
+    <button data-v="lineage">Lineage</button>
+    <button data-v="starchart">Star Chart</button>
+  </div>
+  <input id="search" class="seambox" type="text" placeholder="search topics... (Esc clears)" />
+  <input id="quickadd" class="seambox" type="text" placeholder="+ quick add (Enter; child of selection)" />
+  <label class="archchip" title="show discarded threads as ghosts (everything is resurrectable)">
+    <input id="archive" type="checkbox" /> archive</label>
+  <span class="hud"><b id="stat"></b><span id="hint" class="dim"></span></span>
+</header>
+<div id="legend" class="legend"></div>
+<div id="seamhealth" class="seamhealth"></div>
+<main>
+  <div id="stage" class="stage"><canvas id="stars"></canvas><div id="renderer"></div></div>
+  <div id="panel"></div>
+</main>
+<div id="confirm"><div class="box" id="confirmBox"></div></div>
+
+<script src="/topics/topics-core.js"></script>
+<script src="/topics/adapter-board.js"></script>
+<script src="/topics/render-constellation.js"></script>
+<script src="/topics/render-lineage.js"></script>
+<script src="/topics/render-starchart.js"></script>
+<script src="/topics/topics-shell.js"></script>
+</body>
+</html>
