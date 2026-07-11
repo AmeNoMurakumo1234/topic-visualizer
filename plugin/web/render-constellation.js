@@ -155,7 +155,11 @@ window.TopicsRenderers.constellation = (function () {
              <animate attributeName="stroke-opacity" values="0.9;0.15;0.9" dur="1.8s" repeatCount="indefinite"/>
            </circle>` : "";
       const label = core.short(n.title);
-      g.innerHTML = `${beacon}${body}
+      // invisible catch circle: forgiving hit target (>= 18px) without changing
+      // the visible star size - drawn FIRST so it sits under the art, transparent
+      // fill still receives clicks (fill:none would not)
+      const hit = Math.max(R + 10, 18);
+      g.innerHTML = `<circle class="hit" r="${hit}"></circle>${beacon}${body}
         <text class="label" y="${R + 13}" text-anchor="middle">${core.esc(label.slice(0, 42))}${label.length > 42 ? "..." : ""}</text>
         ${leaf ? "" : `<text class="count" y="4" text-anchor="middle">${n.children.length}</text>`}`;
       g.addEventListener("click", ev => { ev.stopPropagation(); core.select(n); });

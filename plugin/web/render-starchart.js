@@ -171,6 +171,7 @@ window.TopicsRenderers.starchart = (function () {
       const label = depth <= 2 || isFocus ? core.short(n.title) : "";
       const cut = depth <= 1 ? 46 : 30;
       g.innerHTML = `
+        <circle class="hit" r="${Math.max(r + 10, 18)}"></circle>
         ${n.tgt.hidden ? `<circle class="halo" r="${r + 7}"></circle>` : ""}
         ${beacon}${body}
         ${label ? `<text class="label ${depth >= 2 ? "tiny" : ""}" y="${r + 12}" text-anchor="middle">${core.esc(label.slice(0, cut))}${label.length > cut ? "..." : ""}</text>` : ""}

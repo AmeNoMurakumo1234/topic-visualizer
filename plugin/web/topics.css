@@ -44,6 +44,9 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .edge { stroke: #7f9dff; stroke-opacity: 0.26; stroke-width: 1.2; fill: none; }
 .fog { pointer-events: none; }
 .node { cursor: pointer; }
+/* forgiving click target: transparent fill still catches the pointer (unlike
+   fill:none), so a click "close enough" to a small star still lands */
+.node circle.hit { fill: transparent; }
 .node circle.core { fill: url(#tvStarGrad); stroke: none; }
 #renderer .node circle.core[fill] { /* suns carry their own fill attr */ }
 .node.selected circle.core, .node.selected path.leafstar { stroke: #cfe0ff; stroke-width: 1.5; }
