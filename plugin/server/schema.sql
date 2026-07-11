@@ -1,4 +1,4 @@
--- Topic Visualizer: topics.db schema (v2 - the Seam design, 2026-07-11)
+-- Topic Visualizer: topics.db schema (v3 - multi-parent DAG, 2026-07-11)
 -- One local SQLite file = one topic tree. The server owns all writes; the web views
 -- and MCP tools go through the API, never the file directly.
 
@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS topic (
   slug             TEXT NOT NULL UNIQUE,
   title            TEXT NOT NULL,                    -- the question/tension, w/ (time-weight)
   body             TEXT NOT NULL DEFAULT '',         -- self-contained context + THE QUESTION:
-  parent_id        INTEGER REFERENCES topic(id),     -- one parent max; NULL = root
+  parent_id        INTEGER REFERENCES topic(id),     -- PRIMARY parent (first discovery
+                                                     -- avenue; the layout spine); NULL =
+                                                     -- root. Extra avenues: topic_parent.
   state            TEXT NOT NULL DEFAULT 'seedling'
                      CHECK (state IN ('seedling', 'open', 'discussed', 'pruned', 'expired')),
   priority         TEXT NOT NULL DEFAULT 'normal'
@@ -30,6 +32,22 @@ CREATE TABLE IF NOT EXISTS topic (
 );
 CREATE INDEX IF NOT EXISTS idx_topic_parent ON topic(parent_id);
 CREATE INDEX IF NOT EXISTS idx_topic_state  ON topic(state);
+
+-- Multi-parent: the same semantic topic reached from a SECOND conversational avenue.
+-- The tree stays the layout spine (topic.parent_id); these are the extra edges that
+-- make it a DAG - one topic, many roads in, never a duplicated subtree. The note
+-- records what the later discovery added (the rediscovery enrichment).
+CREATE TABLE IF NOT EXISTS topic_parent (
+  id        INTEGER PRIMARY KEY,
+  topic_id  INTEGER NOT NULL REFERENCES topic(id),
+  parent_id INTEGER NOT NULL REFERENCES topic(id),
+  note      TEXT NOT NULL DEFAULT '',                -- what this avenue added
+  added_by  TEXT NOT NULL DEFAULT '',
+  added_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (topic_id, parent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tparent_topic  ON topic_parent(topic_id);
+CREATE INDEX IF NOT EXISTS idx_tparent_parent ON topic_parent(parent_id);
 
 -- The conversion moment: EXPLORING -> DECIDED/ACTING, the only bridge, always recorded.
 CREATE TABLE IF NOT EXISTS topic_link (
@@ -58,4 +76,4 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');
+INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');

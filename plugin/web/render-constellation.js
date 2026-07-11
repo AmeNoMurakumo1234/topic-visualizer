@@ -128,6 +128,14 @@ window.TopicsRenderers.constellation = (function () {
       g.addEventListener("click", ev => { ev.stopPropagation(); core.select(n); });
       nodesG.appendChild(g);
     }
+    // cross-links (multi-parent DAG): the extra avenues into a topic - dashed,
+    // quieter than tree edges, drawn under the nodes
+    for (const x of core.xlinks || []) {
+      const e = document.createElementNS(SVG_NS, "path");
+      e.setAttribute("class", "edge xlink");
+      e.dataset.a = x.from.slug; e.dataset.b = x.to.slug;
+      edgesG.appendChild(e);
+    }
     position(); scheduleLabels(); settle();
   }
 
@@ -160,6 +168,13 @@ window.TopicsRenderers.constellation = (function () {
       for (const n of nodes) if (n.parent && core.bySlug[n.parent]) {
         const p = core.bySlug[n.parent], dx = p.x - n.x, dy = p.y - n.y,
               d = Math.sqrt(dx * dx + dy * dy) || 1, pull = (d - 140) * 0.02;
+        n.vx += dx / d * pull; n.vy += dy / d * pull;
+        p.vx -= dx / d * pull * 0.5; p.vy -= dy / d * pull * 0.5;
+      }
+      // extra avenues tug gently (a third of a tree edge) so linked families drift closer
+      for (const x of core.xlinks || []) {
+        const n = x.from, p = x.to, dx = p.x - n.x, dy = p.y - n.y,
+              d = Math.sqrt(dx * dx + dy * dy) || 1, pull = (d - 190) * 0.007;
         n.vx += dx / d * pull; n.vy += dy / d * pull;
         p.vx -= dx / d * pull * 0.5; p.vy -= dy / d * pull * 0.5;
       }

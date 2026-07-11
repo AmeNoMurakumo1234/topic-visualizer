@@ -96,7 +96,7 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         tools = self.mcp.rpc("tools/list")["tools"]
         self.assertEqual({t["name"] for t in tools},
                          {"topic_add", "topic_serve", "topic_search", "topic_state",
-                          "topic_convert", "topic_groom_report"})
+                          "topic_convert", "topic_attach", "topic_groom_report"})
 
     def test_02_lifecycle(self):
         out, err = self.mcp.tool("topic_add", {"items": [
@@ -125,6 +125,23 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         g, _ = self.mcp.tool("topic_groom_report", {})
         self.assertIn("health", g)                  # plugin-server groom shape
         self.assertIn("capture_calibration", g)
+
+    def test_03_attach_multi_parent(self):
+        out, _ = self.mcp.tool("topic_add", {"items": [
+            {"title": "avenue A"}, {"title": "avenue B"},
+            {"title": "the shared child", "parent_slug": None}]})
+        a, bslug, child = [r["slug"] for r in out["results"]]
+        # child's primary parent = A; then B discovers the same topic
+        ed, _ = self.mcp.tool("topic_state", {"slug": child, "state": "open"})
+        at, err = self.mcp.tool("topic_attach",
+                                {"slug": child, "parent_slug": bslug,
+                                 "note": "reached again while exploring B"})
+        self.assertTrue(at.get("ok"), at)
+        # duplicate attach rejected; self-cycle rejected
+        dup, _ = self.mcp.tool("topic_attach", {"slug": child, "parent_slug": bslug})
+        self.assertIn("error", dup)
+        cyc, _ = self.mcp.tool("topic_attach", {"slug": bslug, "parent_slug": bslug})
+        self.assertIn("error", cyc)
 
 
 class TestMCPServerBackendDirect(unittest.TestCase):
@@ -193,6 +210,33 @@ class TestMCPBoardBackend(unittest.TestCase):
         pr, _ = self.mcp.tool("topic_state", {"slug": slug2, "state": "pruned",
                                               "note": "e2e cleanup"})
         self.assertFalse(pr.get("error"), pr)
+
+    def test_02_board_attach_reply(self):
+        out, _ = self.mcp.tool("topic_add", {"items": [
+            {"title": "sandbox avenue"}, {"title": "sandbox destination"}]})
+        av, dest = [r["slug"] for r in out["results"]]
+        at, _ = self.mcp.tool("topic_attach",
+                              {"slug": dest, "parent_slug": av,
+                               "note": "board rediscovery via reply"})
+        self.assertTrue(at.get("ok"), at)
+        res, _ = self.mcp.tool("topic_search", {"query": "sandbox destination"})
+        # reload and confirm the extra avenue is parsed back out of the reply
+        found = None
+        for _ in range(3):
+            g, _2 = self.mcp.tool("topic_serve", {"context": ""})
+            break
+        import urllib.request, json as _json, os as _os
+        base = _os.environ.get("TOPICS_BOARD_URL", "http://127.0.0.1:9772")
+        with urllib.request.urlopen(
+                f"{base}/api/post?slug={dest}", timeout=5) as r2:
+            full = _json.loads(r2.read())
+        bodies = [m.get("body", "") for th in full.get("threads", [])
+                  for m in th.get("messages", [])]
+        self.assertTrue(any("also-parent:" in b for b in bodies),
+                        "the rediscovery reply landed in the thread")
+        # cleanup
+        for s in (av, dest):
+            self.mcp.tool("topic_state", {"slug": s, "state": "pruned", "note": "e2e cleanup"})
 
 
 if __name__ == "__main__":

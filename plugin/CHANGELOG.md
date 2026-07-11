@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0 - 2026-07-11 - Multi-parent DAG + the panel beauty pass
+
+- MULTI-PARENT (owner insight: two conversations can lead to the same child topic).
+  Topics form a DAG, never a duplicated subtree: topic.parent_id stays the PRIMARY
+  parent (layout spine); new topic_parent table holds extra avenues (schema v3).
+  attach/detach via POST /api/topics/{slug}/attach (full-DAG cycle guard) and the
+  `topic_attach` MCP tool. Rediscovery ENRICHMENT: attaching appends a
+  "[rediscovered <date> via <parent>]" note to the body + a rediscovered event -
+  the topic accumulates later discoveries instead of fragmenting.
+- SURVIVOR PRUNE LAW: pruning a branch SPARES any descendant reachable via a live
+  avenue outside the pruned set - the surviving avenue is promoted to its primary
+  parent. Mirrored client-side (core.pruneSet) so the confirm dialog says how many
+  survive; server tests cover it.
+- BOARD BACKEND: multiple "parent:" body lines = extra avenues at creation;
+  attaching to an existing topic posts an "also-parent: <slug> | <note>" THREAD
+  REPLY (post bodies are immutable through the board API - the thread becomes the
+  discovery log); loads parse replies back out (message_count guards the fetch).
+- WEB: cross-link edges (dashed violet) in Constellation (with a gentle force tug)
+  and Star Chart; "N avenues" chip in Lineage; panel AVENUES IN section (jump to a
+  parent, detach where the store allows, "+ add avenue" input).
+- PANEL BEAUTY PASS: floating glass card inside <main> (never covers the header
+  chrome), gradient title, state pills, boxed body, refined buttons, entrance
+  animation. Esc closes the panel. Board page: "<- board" link moved to the far
+  left. topics-capture skill teaches attach-not-twin.
+
 ## 0.3.0 - 2026-07-11 - Installable: MCP face, semantic ranking, archive + edit
 
 - INSTALLABLE PLUGIN: the repo is its own marketplace (root .claude-plugin/

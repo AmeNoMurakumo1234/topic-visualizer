@@ -81,6 +81,9 @@ window.TopicsRenderers.lineage = (function () {
           ${n.critical ? `<span class="chip crit">critical</span>` : ""}
           ${n.state === "discussed" ? `<span class="chip done">discussed</span>` : ""}
           ${n.state === "seedling" ? `<span class="chip seed">seedling</span>` : ""}
+          ${n.extraParents && n.extraParents.length
+            ? `<span class="chip xlink" title="also reachable via ${n.extraParents
+                 .map(x => x.slug).join(", ")}">&#8618; ${n.extraParents.length + 1} avenues</span>` : ""}
         </div>
         ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {

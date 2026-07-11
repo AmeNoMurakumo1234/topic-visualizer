@@ -116,6 +116,14 @@ class ServerBackend:
             return self._fallback().convert(
                 slug, [{"kind": kind, "ref": ref, "note": note}], ACTOR, note)
 
+    def attach(self, slug, parent_slug, note, remove=False):
+        try:
+            return _http("POST", f"{self.base}/api/topics/{slug}/attach",
+                         {"parent_slug": parent_slug, "actor": ACTOR,
+                          "note": note, "remove": remove})
+        except Unreachable:
+            return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove)
+
     def groom(self):
         try:
             return _http("GET", f"{self.base}/api/topics/groom")
@@ -152,7 +160,22 @@ class BoardBackend:
             if (p.get("resolve_kind") or "") == "discarded":
                 continue
             body = p.get("body") or ""
-            pm = _re.search(r"^parent:\s*([a-z0-9-]+)", body, _re.M | _re.I)
+            # MULTI-PARENT: every "parent:" body line counts - first is the primary
+            # (layout spine), the rest are extra avenues into the same topic
+            parents = _re.findall(r"^parent:\s*([a-z0-9-]+)", body, _re.M | _re.I)
+            extra = [{"slug": s, "note": ""} for s in parents[1:]]
+            # rediscoveries attach as thread replies ("also-parent: <slug> | <note>")
+            # because post bodies are immutable through the board API; only posts
+            # with replies pay the extra fetch
+            if p.get("message_count"):
+                full = _http("GET", f"{self.base}/api/post?slug={p['slug']}")
+                for th in full.get("threads", []):
+                    for msg in th.get("messages", []):
+                        for mm in _re.finditer(
+                                r"^also-parent:\s*([a-z0-9-]+)\s*(?:\|\s*(.*))?$",
+                                msg.get("body") or "", _re.M | _re.I):
+                            extra.append({"slug": mm.group(1),
+                                          "note": (mm.group(2) or "").strip()})
             state = ("discussed" if str(p.get("status") or "open") != "open"
                      else ("seedling" if _re.search(r"^stage:\s*seedling", body, _re.M | _re.I)
                            else "open"))
@@ -160,7 +183,8 @@ class BoardBackend:
                 "slug": p["slug"],
                 "title": _re.sub(r"^OPEN THREAD:?\s*", "", title, flags=_re.I),
                 "body": body, "state": state,
-                "parent_slug": pm.group(1) if pm else None,
+                "parent_slug": parents[0] if parents else None,
+                "extra_parents": extra,
                 "priority": ("critical"
                              if _re.search(r"^priority:\s*critical", body, _re.M | _re.I)
                              else "normal"),
@@ -169,6 +193,41 @@ class BoardBackend:
                 "created_at": (p.get("created") or "").replace("T", " ")[:19],
             })
         return topics
+
+    def attach(self, slug, parent_slug, note, remove=False):
+        """Rediscovery on the board: an "also-parent" reply in the topic's thread (post
+        bodies are immutable through the API; the thread IS the discovery log)."""
+        if remove:
+            return {"error": "the board backend cannot detach an avenue "
+                             "(replies are append-only; reply a correction instead)"}
+        topics = {t["slug"]: t for t in self._load()}
+        t, p = topics.get(slug), topics.get(parent_slug)
+        if not t or not p:
+            return {"error": "topic or parent not found"}
+        if t["parent_slug"] == parent_slug or any(
+                x["slug"] == parent_slug for x in t["extra_parents"]):
+            return {"error": "already attached to that parent"}
+        # cycle guard over the loaded DAG: no ancestor path from the new parent
+        # may reach this topic
+        frontier, seen = [parent_slug], set()
+        while frontier:
+            cur = frontier.pop()
+            if cur == slug:
+                return {"error": "cycle: that parent is inside this topic's subtree"}
+            if cur in seen or cur not in topics:
+                continue
+            seen.add(cur)
+            c = topics[cur]
+            if c["parent_slug"]:
+                frontier.append(c["parent_slug"])
+            frontier += [x["slug"] for x in c["extra_parents"]]
+        r = _http("POST", f"{self.base}/api/reply",
+                  {"slug": slug, "author": self.author,
+                   "body": f"also-parent: {parent_slug}"
+                           + (f" | {note}" if note else "")}, self.hdrs)
+        if r.get("error"):
+            return {"error": "reply failed", "detail": r}
+        return {"ok": True, "attached": parent_slug}
 
     def add(self, items):
         existing = self._load()
@@ -267,8 +326,9 @@ TOOLS = [
          "ask permission, do not announce (report softly at session end). Near the "
          "context-compaction boundary, LOWER the threshold and sweep aggressively as "
          "seedlings (state='seedling') - an over-captured seedling costs ~nothing (it "
-         "auto-expires); a lost idea is gone. Check near_duplicates in the result: "
-         "merge, don't double-plant."),
+         "auto-expires); a lost idea is gone. Check near_duplicates in the result: if "
+         "the topic already exists, do NOT plant a twin - use topic_attach to add this "
+         "conversation's avenue as an extra parent (topics form a DAG, not a tree)."),
      "inputSchema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "object", "properties": {
              "title": {"type": "string", "description": "short, glanceable (a node label)"},
@@ -315,6 +375,20 @@ TOOLS = [
          "ref": {"type": "string", "description": "existing artifact ref; empty on the "
                  "board work_item path mints a new issue"},
          "note": {"type": "string"}}, "required": ["slug", "kind"]}},
+    {"name": "topic_attach",
+     "description": (
+         "The same semantic topic reached from ANOTHER conversational avenue: attach "
+         "an existing topic under an additional parent (multi-parent DAG - one topic, "
+         "many roads in, never a duplicated subtree). Records what the later "
+         "discovery added (note) on the topic itself. Use this instead of topic_add "
+         "when near_duplicates flags an existing match. Cycle-guarded. remove=true "
+         "detaches an extra avenue (sqlite backend only)."),
+     "inputSchema": {"type": "object", "properties": {
+         "slug": {"type": "string", "description": "the existing topic"},
+         "parent_slug": {"type": "string", "description": "the additional parent"},
+         "note": {"type": "string",
+                  "description": "what this avenue added - the rediscovery enrichment"},
+         "remove": {"type": "boolean"}}, "required": ["slug", "parent_slug"]}},
     {"name": "topic_groom_report",
      "description": "Seam vital signs + capture calibration (expiry rates per actor "
                     "where available). Read during a grooming round; adjust your "
@@ -336,6 +410,9 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_convert":
         return b.convert(args["slug"], args["kind"], str(args.get("ref") or ""),
                          str(args.get("note") or ""))
+    if name == "topic_attach":
+        return b.attach(args["slug"], args["parent_slug"],
+                        str(args.get("note") or ""), bool(args.get("remove")))
     if name == "topic_groom_report":
         return b.groom()
     return {"error": f"unknown tool {name!r}"}

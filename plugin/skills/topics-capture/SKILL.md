@@ -30,6 +30,16 @@ dim, and auto-expiring in ~3 weeks if never touched - so the cost of a wrong cap
 near zero and the human prunes nothing by hand. Check the near_duplicates the server
 returns and merge instead of double-planting.
 
+**THE SAME TOPIC VIA A SECOND ROAD -> topic_attach, never a twin.** Topics form a DAG,
+not a strict tree: two different conversations can legitimately lead to the SAME
+semantic topic. When near_duplicates (or your own memory) says the topic already
+exists, do not plant a copy and do not silently drop the moment - call `topic_attach`
+with the existing topic's slug, this conversation's parent topic, and a short note of
+what the new avenue ADDED. The note is the rediscovery enrichment: the topic
+accumulates the later discoveries instead of fragmenting into duplicates, and the tree
+shows the extra avenue as a cross-link. Pruning respects this: a topic reachable via
+another living avenue SURVIVES the prune of one road in.
+
 **MORTALITY-AWARE THRESHOLD.** Your context is mortal; compaction is the unplanned
 death and it takes unplanted ideas with it. As your context grows toward the boundary,
 LOWER the capture bar deliberately - plant liberally, annotate less. The seedling

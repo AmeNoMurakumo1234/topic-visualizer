@@ -13,6 +13,7 @@ window.TopicsAdapter = (function () {
       return items.map(t => ({
         slug: t.slug, title: t.title, body: t.body, author: t.created_by,
         created: t.created_at, parentSlug: t.parent_slug || null,
+        extraParents: t.extra_parents || [],   // multi-parent DAG edges
         state: t.state,   // seedling | open | discussed | pruned | expired pass through
         critical: t.priority === "critical",
       }));
@@ -22,6 +23,14 @@ window.TopicsAdapter = (function () {
       const r = await fetch(`/api/topics/${encodeURIComponent(slug)}/edit`, {
         method: "POST", headers: HDRS,
         body: JSON.stringify({ ...fields, actor }),
+      });
+      return await r.json();
+    },
+    attachRemove: true,   // this store can detach an extra avenue
+    async attach(slug, parentSlug, note, actor, remove) {
+      const r = await fetch(`/api/topics/${encodeURIComponent(slug)}/attach`, {
+        method: "POST", headers: HDRS,
+        body: JSON.stringify({ parent_slug: parentSlug, note, actor, remove: !!remove }),
       });
       return await r.json();
     },

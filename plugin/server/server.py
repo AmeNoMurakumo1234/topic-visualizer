@@ -71,11 +71,25 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
         rows = _conn.execute(q).fetchall()
         link_rows = _conn.execute(
             "SELECT topic_id, kind, ref, note FROM topic_link").fetchall()
+        xp_rows = _conn.execute(
+            """SELECT tp.topic_id, tp.note, tp.added_by, tp.added_at,
+                      p.slug AS parent_slug
+               FROM topic_parent tp JOIN topic p ON p.id = tp.parent_id""").fetchall()
     links: dict = {}
     for lr in link_rows:
         links.setdefault(lr["topic_id"], []).append(
             {"kind": lr["kind"], "ref": lr["ref"], "note": lr["note"]})
-    return [_row_to_topic(r, links) for r in rows]
+    xparents: dict = {}
+    for xr in xp_rows:
+        xparents.setdefault(xr["topic_id"], []).append(
+            {"slug": xr["parent_slug"], "note": xr["note"],
+             "added_by": xr["added_by"], "added_at": xr["added_at"]})
+    out = []
+    for r in rows:
+        t = _row_to_topic(r, links)
+        t["extra_parents"] = xparents.get(r["id"], [])
+        out.append(t)
+    return out
 
 
 def _event(topic_id: int, event: str, actor: str, note: str = "") -> None:
@@ -237,15 +251,49 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
             return {"error": "not found"}
         ids = [row["id"]]
         if state == "pruned":
-            # collect the live subtree
-            subtree, frontier = [row["id"]], [row["id"]]
-            while frontier:
-                marks = ",".join("?" for _ in frontier)
-                kids = _conn.execute(
-                    f"SELECT id FROM topic WHERE parent_id IN ({marks}) "
-                    "AND state IN ('seedling','open','discussed')", frontier).fetchall()
-                frontier = [k["id"] for k in kids]
-                subtree.extend(frontier)
+            # collect the live PRIMARY subtree
+            def closure(root_ids):
+                out, fr = list(root_ids), list(root_ids)
+                while fr:
+                    marks = ",".join("?" for _ in fr)
+                    kids = _conn.execute(
+                        f"SELECT id FROM topic WHERE parent_id IN ({marks}) "
+                        "AND state IN ('seedling','open','discussed')", fr).fetchall()
+                    fr = [k["id"] for k in kids if k["id"] not in out]
+                    out.extend(fr)
+                return out
+            subtree = closure([row["id"]])
+            # SURVIVORS (multi-parent law): a descendant reachable via an extra
+            # parent OUTSIDE the pruned set has another reason to exist - it is
+            # spared, and that outside avenue is promoted to its primary parent.
+            # (Mirrored in the web core's pruneSet(); keep the two in sync.)
+            promoted = []
+            while True:
+                sset = set(subtree)
+                spared = None
+                for tid2 in subtree:
+                    if tid2 == row["id"]:
+                        continue
+                    xp = _conn.execute(
+                        """SELECT tp.parent_id FROM topic_parent tp
+                           JOIN topic p ON p.id = tp.parent_id
+                           WHERE tp.topic_id=? AND p.state IN
+                             ('seedling','open','discussed')""", (tid2,)).fetchall()
+                    outside = [x["parent_id"] for x in xp if x["parent_id"] not in sset]
+                    if outside:
+                        spared = (tid2, outside[0])
+                        break
+                if spared is None:
+                    break
+                tid2, new_pid = spared
+                keep = set(closure([tid2]))
+                subtree = [i for i in subtree if i not in keep]
+                promoted.append((tid2, new_pid))
+            for tid2, new_pid in promoted:
+                _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (new_pid, tid2))
+                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                              (tid2, new_pid))
+                _event(tid2, "reparented", actor, "promoted surviving avenue on prune")
             if cascade is not None:
                 slugs = set(cascade)
                 actual = {r2["slug"] for r2 in _conn.execute(
@@ -309,15 +357,25 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                 p = _conn.execute("SELECT id FROM topic WHERE slug=?", (parent_slug,)).fetchone()
                 if not p:
                     return {"error": "parent not found"}
-                # cycle guard: the new parent must not be inside this topic's subtree
-                cur, seen = p["id"], set()
-                while cur is not None and cur not in seen:
+                # cycle guard over the FULL DAG: walk every ancestor path (primary +
+                # extra edges) up from the new parent; hitting this topic = a cycle
+                frontier, seen = [p["id"]], set()
+                while frontier:
+                    cur = frontier.pop()
                     if cur == tid:
                         return {"error": "cycle: parent is inside this subtree"}
+                    if cur in seen:
+                        continue
                     seen.add(cur)
                     nxt = _conn.execute("SELECT parent_id FROM topic WHERE id=?", (cur,)).fetchone()
-                    cur = nxt["parent_id"] if nxt else None
+                    if nxt and nxt["parent_id"] is not None:
+                        frontier.append(nxt["parent_id"])
+                    frontier += [x["parent_id"] for x in _conn.execute(
+                        "SELECT parent_id FROM topic_parent WHERE topic_id=?", (cur,))]
                 _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (p["id"], tid))
+                # if the new primary was also an extra edge, collapse the duplicate
+                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                              (tid, p["id"]))
                 _event(tid, "reparented", actor, f"-> {parent_slug}")
         if critical is not None:
             _conn.execute("UPDATE topic SET priority=? WHERE id=?",
@@ -328,6 +386,60 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
         _touch(tid, actor)
         _conn.commit()
     return {"ok": True}
+
+
+def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
+                  remove: bool = False) -> dict:
+    """Multi-parent: the same semantic topic reached from a SECOND conversational
+    avenue. Adds an extra edge (never a duplicate subtree) and enriches the topic
+    with what the later discovery added: a 'rediscovered' event + a body append.
+    remove=True detaches the extra edge (the primary parent is edit_topic's job)."""
+    with _lock:
+        row = _conn.execute(
+            "SELECT id, parent_id, body FROM topic WHERE slug=?", (slug,)).fetchone()
+        p = _conn.execute("SELECT id FROM topic WHERE slug=?", (parent_slug,)).fetchone()
+        if not row or not p:
+            return {"error": "topic or parent not found"}
+        tid, pid = row["id"], p["id"]
+        if remove:
+            n = _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                              (tid, pid)).rowcount
+            if n:
+                _event(tid, "detached", actor, f"<- {parent_slug}")
+                _touch(tid, actor)
+            _conn.commit()
+            return {"ok": True, "removed": n}
+        if tid == pid:
+            return {"error": "a topic cannot parent itself"}
+        if row["parent_id"] == pid:
+            return {"error": "already the primary parent"}
+        # cycle guard over the FULL DAG: the new parent must not sit anywhere inside
+        # this topic's descendant closure (primary + extra edges both count)
+        frontier, seen = [tid], {tid}
+        while frontier:
+            marks = ",".join("?" for _ in frontier)
+            kids = [k["id"] for k in _conn.execute(
+                f"SELECT id FROM topic WHERE parent_id IN ({marks})", frontier)]
+            kids += [k["topic_id"] for k in _conn.execute(
+                f"SELECT topic_id FROM topic_parent WHERE parent_id IN ({marks})", frontier)]
+            frontier = [k for k in kids if k not in seen]
+            seen.update(frontier)
+            if pid in seen:
+                return {"error": "cycle: that parent is inside this topic's subtree"}
+        try:
+            _conn.execute(
+                "INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
+                "VALUES (?,?,?,?)", (tid, pid, note, actor))
+        except sqlite3.IntegrityError:
+            return {"error": "already attached to that parent"}
+        # rediscovery enrichment: the later avenue leaves a visible trace on the topic
+        stamp = time.strftime("%Y-%m-%d")
+        addendum = f"\n\n[rediscovered {stamp} via {parent_slug}]" + (f" {note}" if note else "")
+        _conn.execute("UPDATE topic SET body = body || ? WHERE id=?", (addendum, tid))
+        _event(tid, "rediscovered", actor, f"via {parent_slug}" + (f": {note}" if note else ""))
+        _touch(tid, actor)
+        _conn.commit()
+    return {"ok": True, "attached": parent_slug}
 
 
 def search_in(query, topics, limit=40):
@@ -516,7 +628,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/topics":
             items = body.get("topics") or ([body] if body.get("title") else [])
             return self._json(200, {"results": add_topics(items, actor)})
-        m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit)$", u.path)
+        m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
         if m:
             slug, op = m.group(1), m.group(2)
             if op == "state":
@@ -530,6 +642,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, edit_topic(
                     slug, actor, body.get("title"), body.get("body"),
                     body.get("parent_slug"), body.get("critical")))
+            if op == "attach":
+                return self._json(200, attach_parent(
+                    slug, str(body.get("parent_slug") or ""), actor,
+                    str(body.get("note") or ""), bool(body.get("remove"))))
         self._json(404, {"error": "not found"})
 
 

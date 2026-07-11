@@ -48,6 +48,13 @@
       if (e.key === "Escape") { searchEl.value = ""; core.setSearch(""); }
     });
   }
+  // Esc closes the side panel (unless typing in an input - those keep their own Esc)
+  addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    const el = document.activeElement;
+    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+    if (core.selected) { core.closePanel(); core.onChange(); }
+  });
   // quick-add: the human's two-second door (Enter plants an open root topic;
   // select a node first to plant a child under it)
   const quickEl = document.getElementById("quickadd");

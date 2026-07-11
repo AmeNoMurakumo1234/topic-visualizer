@@ -171,6 +171,15 @@ window.TopicsRenderers.starchart = (function () {
       g.addEventListener("dblclick", ev => { ev.stopPropagation(); setFocus(n); });
       nodesG.appendChild(g);
     }
+    // cross-links (multi-parent DAG): extra avenues, drawn only when both ends
+    // are on the chart - dashed and quieter than the radial tree edges
+    for (const x of core.xlinks || []) {
+      if (!inView.has(x.from.slug) || !inView.has(x.to.slug)) continue;
+      const e = document.createElementNS(SVG_NS, "path");
+      e.setAttribute("class", "edge xlink");
+      e.dataset.a = x.from.slug; e.dataset.b = x.to.slug;
+      edgesG.appendChild(e);
+    }
     position(); scheduleLabels();
   }
 

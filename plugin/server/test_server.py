@@ -152,6 +152,50 @@ class SeamTests(unittest.TestCase):
         actors = {row["actor"] for row in g["capture_calibration"]}
         self.assertIn("ai", actors)
 
+    def test_09_multi_parent_attach_and_enrichment(self):
+        r = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "dag: avenue one"}, {"title": "dag: avenue two"},
+            {"title": "dag: the shared destination"}]})
+        a1, a2, dest = [x["slug"] for x in r["results"]]
+        call(f"/api/topics/{dest}/edit", {"actor": "ai", "parent_slug": a1})
+        ok = call(f"/api/topics/{dest}/attach",
+                  {"actor": "ai", "parent_slug": a2,
+                   "note": "found again from the second avenue"})
+        self.assertTrue(ok.get("ok"), ok)
+        t = next(x for x in call("/api/topics")["topics"] if x["slug"] == dest)
+        self.assertEqual([x["slug"] for x in t["extra_parents"]], [a2])
+        self.assertIn("rediscovered", t["body"], "the later discovery enriches the body")
+        self.assertIn("found again", t["body"])
+        # duplicates + cycles refused
+        self.assertIn("error", call(f"/api/topics/{dest}/attach",
+                                    {"actor": "ai", "parent_slug": a2}))
+        self.assertIn("error", call(f"/api/topics/{a1}/attach",
+                                    {"actor": "ai", "parent_slug": dest}),
+                      "attaching your own descendant is a cycle")
+        # detach works
+        rm = call(f"/api/topics/{dest}/attach",
+                  {"actor": "ai", "parent_slug": a2, "remove": True})
+        self.assertEqual(rm.get("removed"), 1)
+
+    def test_10_prune_spares_multi_parent_survivors(self):
+        r = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "spare: doomed branch"}, {"title": "spare: safe branch"}]})
+        doomed, safe = [x["slug"] for x in r["results"]]
+        r2 = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "spare: reachable two ways", "parent_slug": doomed},
+            {"title": "spare: only via doomed", "parent_slug": doomed}]})
+        both, only = [x["slug"] for x in r2["results"]]
+        call(f"/api/topics/{both}/attach", {"actor": "ai", "parent_slug": safe})
+        # prune the doomed branch WITHOUT a cascade check (cascade=None)
+        ok = call(f"/api/topics/{doomed}/state", {"actor": "human", "state": "pruned"})
+        self.assertEqual(ok.get("changed"), 2, "root + only-via-doomed die")
+        live = {t["slug"]: t for t in call("/api/topics")["topics"]}
+        self.assertIn(both, live, "the two-avenue topic SURVIVES the prune")
+        self.assertNotIn(only, live)
+        self.assertEqual(live[both]["parent_slug"], safe,
+                         "the surviving avenue is promoted to primary")
+        self.assertEqual(live[both]["extra_parents"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
