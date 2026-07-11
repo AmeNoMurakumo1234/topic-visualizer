@@ -130,6 +130,24 @@ window.TopicsRenderers.lineage = (function () {
         }
       }
     }
+    // cross-link wires (multi-parent DAG): dashed violet curves from each EXTRA
+    // avenue to the child, connecting whichever card edges face each other -
+    // drawn only when both cards are visible (a collapsed avenue stays quiet)
+    const shown = new Set(visible.map(n => n.slug));
+    for (const n of visible) {
+      for (const x of (n.extraParents || [])) {
+        const p = core.bySlug[x.slug];
+        if (!p || !shown.has(p.slug)) continue;
+        const path = document.createElementNS(SVG_NS, "path");
+        const goRight = p.lx + W <= n.lx;
+        const x1 = goRight ? p.lx + W : p.lx, y1 = p.ly + (p.lh || ROWH) / 2,
+              x2 = goRight ? n.lx : n.lx + W, y2 = n.ly + (n.lh || ROWH) / 2,
+              mx = (x1 + x2) / 2;
+        path.setAttribute("d", `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+        path.setAttribute("class", "wire xwire");
+        wires.appendChild(path);
+      }
+    }
     wires.setAttribute("width", maxX); wires.setAttribute("height", maxY);
     wires.style.width = maxX + "px"; wires.style.height = maxY + "px";
   }

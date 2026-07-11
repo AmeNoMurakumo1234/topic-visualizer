@@ -213,7 +213,10 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .editform .e-err { color: var(--danger); font-size: 11px; min-height: 14px; }
 .editform button { margin-top: 4px; }
 
-/* ---- multi-parent DAG (2026-07-11): cross-link edges + lineage chip ---- */
+/* ---- multi-parent DAG (2026-07-11): cross-link edges + lineage wires/chip ---- */
 .edge.xlink { stroke: #b48be0 !important; stroke-dasharray: 5 7; stroke-opacity: 0.45;
               stroke-width: 1.1; }
-.chip.xlink { color: #c7a6ff; border-color: #5a3f8a; }
+.wire.xwire { stroke: #b48be0; stroke-dasharray: 6 7; stroke-opacity: 0.55;
+              stroke-width: 1.4; }
+.chip.xlink { color: #e2d1ff; border-color: #7a55c2; background: #241a3d;
+              box-shadow: 0 0 9px #b48be04d; }
