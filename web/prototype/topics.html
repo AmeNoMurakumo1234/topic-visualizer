@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Topics - the Thread Tree</title>
+<style>
+  :root { --bg:#05070f; --panel:#10162a; --line:#2a3558; --ink:#dfe7ff; --dim:#7d8ab0;
+          --accent:#6ea8ff; --warn:#f0b24a; }
+  * { box-sizing: border-box; margin: 0; }
+  body { height: 100vh; display: flex; flex-direction: column; color: var(--ink);
+         font: 14px/1.5 system-ui, sans-serif;
+         background: radial-gradient(ellipse 120% 90% at 50% 0%, #101a3a 0%, #070b1a 45%, #04060d 100%); }
+  header { flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+           padding: 10px 16px; border-bottom: 1px solid var(--line);
+           background: #05070fd8; }
+  header h1 { font-size: 15px; letter-spacing: 0.06em; }
+  header h1 .dim { color: var(--dim); font-weight: 400; }
+  .viewtabs { display: flex; gap: 6px; }
+  .viewtabs button { background: none; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 999px; padding: 5px 16px; cursor: pointer; font-size: 13px;
+    transition: all 0.15s ease; }
+  .viewtabs button:hover { color: var(--ink); border-color: var(--accent); }
+  .viewtabs button.active { color: #0b101f; background: var(--accent); border-color: var(--accent);
+    font-weight: 600; box-shadow: 0 0 14px #6ea8ff55; }
+  header .home { margin-left: auto; color: var(--dim); text-decoration: none; font-size: 13px; }
+  header .home:hover { color: var(--ink); }
+  main { flex: 1 1 auto; position: relative; min-height: 0; }
+  main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+                display: none; }
+  main iframe.active { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌌 Topics <span class="dim">- the thread tree, three ways</span></h1>
+  <div class="viewtabs" id="viewtabs">
+    <button data-v="a">Constellation</button>
+    <button data-v="b">Lineage</button>
+    <button data-v="c">Star Chart</button>
+  </div>
+  <a class="home" href="/">&larr; back to the board</a>
+</header>
+<main>
+  <iframe id="frame-a" data-src="/thread-tree-a.html"></iframe>
+  <iframe id="frame-b" data-src="/thread-tree-b.html"></iframe>
+  <iframe id="frame-c" data-src="/thread-tree-c.html"></iframe>
+</main>
+<script>
+(() => {
+  // One topic database, three freely-switchable views (owner decision, 2026-07-11).
+  // Frames lazy-load on first activation; the chosen view persists across visits.
+  // Any query params (e.g. ?demo=300) pass through to every view.
+  const qs = location.search || "";
+  const tabs = document.getElementById("viewtabs");
+  function show(v) {
+    localStorage.setItem("topics-view", v);
+    for (const b of tabs.children) b.classList.toggle("active", b.dataset.v === v);
+    for (const f of document.querySelectorAll("main iframe")) {
+      const active = f.id === "frame-" + v;
+      f.classList.toggle("active", active);
+      if (active && !f.src) f.src = f.dataset.src + qs;
+    }
+  }
+  tabs.addEventListener("click", e => {
+    const b = e.target.closest("button[data-v]");
+    if (b) show(b.dataset.v);
+  });
+  show(localStorage.getItem("topics-view") || "c");
+})();
+</script>
+</body>
+</html>

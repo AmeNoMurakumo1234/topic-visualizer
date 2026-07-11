@@ -1,0 +1,48 @@
+---
+name: topics-groom
+description: Use on a recurring cadence (weekly, or when the open-topic count grows noticeably) to keep the topics tree a garden instead of a graveyard - merge duplicates, surface expiry candidates for the human's explicit choice, verify beacons are still earned, and check that discussed topics got their conversions recorded. Grooming is a standing mechanism, never a discipline someone must remember.
+---
+
+# topics-groom: the gardener's round
+
+A topics tree rots the same way every knowledge store rots: quietly. Grooming is the
+dedicated, recurring counter-pressure. It exists as a scheduled act because systems
+that depend on a busy mind remembering hygiene ARE the failure mode.
+
+## The round
+
+1. **Duplicates and near-misses.** Topics phrased differently but asking the same
+   question get merged (keep the better-formed one; note the merge). This is also where
+   the synonym gap shows - if search keeps missing kin topics, that is the signal to
+   add semantic indexing, not before.
+
+2. **Expiry candidates - by choice, never by silence.** A topic unserved and untouched
+   for ~a month is a candidate, not a casualty. Present candidates to the human ONE at
+   a time or in a tiny batch (<=3) with the one question: *"expire this, keep it
+   waiting, or talk about it now?"* Every answer is recorded. The difference between a
+   graveyard and an archive is that someone chose the archive.
+
+3. **Beacon audit.** Critical beacons are only meaningful while rare. If beacons have
+   accumulated, re-justify each: still critical? Downgrade the rest. A tree full of
+   beacons has none.
+
+4. **Conversion integrity.** For recently-discussed topics: did the conversations that
+   yielded outcomes actually get their conversion recorded (decision written, work
+   items minted, links back)? An extracted-but-unrecorded conversion is a decision
+   dying in a notebook - the exact disease this system exists to cure. Fix on sight.
+
+5. **Orphan and lineage health.** Topics whose parent was pruned but who survived
+   (deliberately) become roots - verify that was intended. Verify family hues still
+   map to real thematic families; re-parent the strays.
+
+6. **Report in one breath.** The groom ends with a two-line summary to the human:
+   what merged, what's waiting on expiry choices, beacon count, tree size trend.
+   Tree GREW a lot? Check capture threshold discipline. Tree static and unserved?
+   Check the serving ritual - storing without serving is the trap (CHARTER).
+
+## The metric that matters
+
+Not size. Not coverage. **Cards served that led to real conversations, conversions, or
+chosen prunings.** A tree of 30 living topics that deals one good card a day is a
+success; a tree of 500 organized topics nobody touches is the failure this whole
+plugin was built to prevent.
