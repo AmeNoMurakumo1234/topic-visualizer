@@ -15,6 +15,9 @@ so they can accept, defer, or say "next" for the second card.
 
 ## When to serve
 
+- FIRST SESSION OF THE DAY (owner-ratified default): open with ONE dealt card,
+  skippable with a word. The SessionStart hook handles the first-of-day check where
+  hooks run; otherwise deal it as part of your opening.
 - The human asks: "what should we talk about?", "what am I missing?", "deal me one".
 - A session's main work closes with energy left - offer one card matched to the
   remaining time (use the time-weights; a "~10 min" card fits where a "deep dive"

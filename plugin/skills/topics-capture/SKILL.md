@@ -21,7 +21,22 @@ end from memory (too late, too lossy). The classic births:
 
 Capture only if **a real future conversation about it would change what gets built or
 decided**. "Interesting" is not the bar; losing-it-would-cost-something is the bar.
-When in doubt, and the human is present, one line: *"worth keeping X as a topic?"*
+
+**Capture SILENTLY (owner-ratified policy).** Do not ask permission per capture and do
+not stop the conversation. Plant topics as they surface (batch them - topic_add takes
+an array; one call per natural pause, not per idea) and mention it in at most ONE soft
+line at a natural break ("planted 2 topics"). Your captures enter as SEEDLINGS - small,
+dim, and auto-expiring in ~3 weeks if never touched - so the cost of a wrong capture is
+near zero and the human prunes nothing by hand. Check the near_duplicates the server
+returns and merge instead of double-planting.
+
+**MORTALITY-AWARE THRESHOLD.** Your context is mortal; compaction is the unplanned
+death and it takes unplanted ideas with it. As your context grows toward the boundary,
+LOWER the capture bar deliberately - plant liberally, annotate less. The seedling
+expiry valve is what licenses this aggression: over-capture near death costs almost
+nothing, but a lost idea is gone. When a pre-compaction signal fires (hook or your own
+awareness of a very long session), sweep NOW: "ideas at risk of being lost to
+summarization - plant them."'
 
 **Never speculatively farm topics.** Generating topic lists ("here are 50 things we
 could discuss about cars") is forbidden - the tree grows only by walked paths. This

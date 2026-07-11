@@ -133,7 +133,9 @@ window.TopicsRenderers.starchart = (function () {
       const isFocus = focus === n, rootlike = !n.parent && !focus;
       g.setAttribute("class", "node" + (isFocus ? " focus" : "") +
         (rootlike ? " rootlike" : "") + (core.selected === n ? " selected" : "") +
-        (n.state === "discussed" ? " discussed" : ""));
+        (n.state === "discussed" ? " discussed" : "") +
+        (n.state === "seedling" ? " seedling" : "") +
+        (core.searchDim(n) ? " searchdim" : ""));
       g.dataset.slug = n.slug;
       const depth = n.tgt.depth,
             r = isFocus ? 46 : Math.max(10, 30 - depth * 6) + Math.min(10, n.children.length * 1.5);
@@ -221,7 +223,9 @@ window.TopicsRenderers.starchart = (function () {
 
   function updateLabels() {
     labelRaf = null;
-    const allowed = core.labelAllowedSet(visible, scale);
+    // active search overrides the zoom budget: matches are ALWAYS labeled
+    const allowed = core.matched !== null ? core.matched
+                  : core.labelAllowedSet(visible, scale);
     for (const g of nodesG.children) {
       const n = core.bySlug[g.dataset.slug]; if (!n) continue;
       const label = g.querySelector("text.label"), more = g.querySelector("text.more");

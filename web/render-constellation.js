@@ -101,6 +101,8 @@ window.TopicsRenderers.constellation = (function () {
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute("class", "node" + (n.parent ? "" : " root") +
         (n.state === "discussed" ? " discussed" : "") +
+        (n.state === "seedling" ? " seedling" : "") +
+        (core.searchDim(n) ? " searchdim" : "") +
         (core.selected === n ? " selected" : ""));
       g.dataset.slug = n.slug;
       const r = 14 + Math.min(14, core.subtree(n).length * 2);
@@ -170,7 +172,9 @@ window.TopicsRenderers.constellation = (function () {
 
   function updateLabels() {
     labelRaf = null;
-    const allowed = core.labelAllowedSet(core.nodes, scale);
+    // active search overrides the zoom budget: matches are ALWAYS labeled
+    const allowed = core.matched !== null ? core.matched
+                  : core.labelAllowedSet(core.nodes, scale);
     for (const g of nodesG.children) {
       const n = core.bySlug[g.dataset.slug]; if (!n) continue;
       const label = g.querySelector("text.label"), count = g.querySelector("text.count");

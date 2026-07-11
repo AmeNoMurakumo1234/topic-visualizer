@@ -13,7 +13,7 @@ window.TopicsAdapter = (function () {
       return items.map(t => ({
         slug: t.slug, title: t.title, body: t.body, author: t.created_by,
         created: t.created_at, parentSlug: t.parent_slug || null,
-        state: t.state === "discussed" ? "discussed" : "open",
+        state: t.state,   // seedling | open | discussed pass through
         critical: t.priority === "critical",
       }));
     },
@@ -22,6 +22,18 @@ window.TopicsAdapter = (function () {
         method: "POST", headers: HDRS,
         body: JSON.stringify({ state, actor, note }),
       });
+    },
+    async create(items) {
+      await fetch("/api/topics", { method: "POST", headers: HDRS,
+        body: JSON.stringify({ actor: "human", topics: items }) });
+    },
+    async search(q) {
+      const r = await fetch(`/api/topics/search?q=${encodeURIComponent(q)}`);
+      return (await r.json()).results || [];
+    },
+    async health() {
+      const r = await fetch("/api/topics/health");
+      return await r.json();
     },
     async prune(slugs, actor) {
       // client-confirmed, server-verified cascade (see server spec): send the subtree

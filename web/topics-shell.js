@@ -36,6 +36,37 @@
     if (b) show(b.dataset.v);
   });
 
+  // search bar: filters every view live (Esc clears); debounced
+  const searchEl = document.getElementById("search");
+  if (searchEl) {
+    let deb = null;
+    searchEl.addEventListener("input", () => {
+      clearTimeout(deb);
+      deb = setTimeout(() => core.setSearch(searchEl.value), 250);
+    });
+    searchEl.addEventListener("keydown", e => {
+      if (e.key === "Escape") { searchEl.value = ""; core.setSearch(""); }
+    });
+  }
+  // quick-add: the human's two-second door (Enter plants an open root topic;
+  // select a node first to plant a child under it)
+  const quickEl = document.getElementById("quickadd");
+  if (quickEl) quickEl.addEventListener("keydown", async e => {
+    if (e.key !== "Enter") return;
+    const parent = core.selected ? core.selected.slug : null;
+    await core.quickAdd(quickEl.value, parent);
+    quickEl.value = "";
+  });
+  // seam health strip (hidden when the adapter has no health endpoint)
+  (async () => {
+    const h = await core.health();
+    const el = document.getElementById("seamhealth");
+    if (el && h) el.textContent =
+      `seam 30d: ${h.captured} captured | ${h.served} served | ` +
+      `${h.converted} converted | ${h.pruned + h.expired} pruned/expired` +
+      (h.beacon_warning ? " | beacons HIGH" : "");
+  })();
+
   core.paintStars(stage, document.getElementById("stars"));
   addEventListener("resize", () =>
     core.paintStars(stage, document.getElementById("stars")));

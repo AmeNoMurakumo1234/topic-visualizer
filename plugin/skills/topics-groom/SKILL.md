@@ -35,7 +35,14 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    (deliberately) become roots - verify that was intended. Verify family hues still
    map to real thematic families; re-parent the strays.
 
-6. **Report in one breath.** The groom ends with a two-line summary to the human:
+6. **Calibration feedback (the loop teaching both minds).** topic_groom_report
+   returns per-actor capture outcomes ("of your last 20 captures: 14 became topics,
+   3 expired, 3 pruned"). READ YOURS and tune your capture threshold against the
+   human's actual behavior - high expiry rate means you are planting below the bar;
+   near-zero expiry with a tiny tree may mean you are missing captures. No scolding
+   in either direction; the numbers are the teacher.
+
+7. **Report in one breath.** The groom ends with a two-line summary to the human:
    what merged, what's waiting on expiry choices, beacon count, tree size trend.
    Tree GREW a lot? Check capture threshold discipline. Tree static and unserved?
    Check the serving ritual - storing without serving is the trap (CHARTER).

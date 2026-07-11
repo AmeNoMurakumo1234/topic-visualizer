@@ -130,6 +130,65 @@ window.TopicsCore = (function () {
       labelBudget, labelAllowedSet, styleLabel, paintStars,
     };
 
+    /* --- search (the Seam spec): filters every view by ranked match. Server-side
+       semantic ranking when the adapter offers it; client-side keyword scoring as the
+       universal fallback (works on any adapter). --- */
+    core.searchQuery = "";
+    core.matched = null;                 // null = no active search; Set(slug) otherwise
+    const scoreText = (qToks, text) => {
+      const toks = (text.toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+      if (!toks.length || !qToks.length) return 0;
+      const tf = {};
+      for (const w of toks) tf[w] = (tf[w] || 0) + 1;
+      let hit = 0;
+      for (const q of qToks) hit += Math.sqrt(tf[q] || 0);
+      return hit / Math.sqrt(toks.length + 8);
+    };
+    core.setSearch = async function (q) {
+      core.searchQuery = String(q || "").trim();
+      if (!core.searchQuery) { core.matched = null; core.onChange(); return; }
+      let ranked = null;
+      if (!core.demo && adapter.search) {
+        try { ranked = await adapter.search(core.searchQuery); } catch (e) { ranked = null; }
+      }
+      if (ranked) {
+        core.matched = new Set(ranked.map(r => r.slug));
+      } else {
+        const qToks = (core.searchQuery.toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+        core.matched = new Set(core.nodes
+          .filter(n => scoreText(qToks, n.title + " " + n.body) > 0)
+          .map(n => n.slug));
+      }
+      core.onChange();
+    };
+    // renderers consult these two in one line each:
+    core.searchDim = n => core.matched !== null && !core.matched.has(n.slug);
+    core.labelForced = n => core.matched !== null && core.matched.has(n.slug);
+
+    /* --- quick-add: the human's two-second door --- */
+    core.quickAdd = async function (title, parentSlug) {
+      if (!title.trim()) return;
+      if (core.demo) {
+        core.nodes.push({ slug: "demo-q" + core.nodes.length, title: title.trim(),
+          body: "", author: "human", created: "", parentSlug: parentSlug || null,
+          state: "open", critical: false, children: [], parent: parentSlug || null });
+        const t = TopicsCore.buildTree(core.nodes.map(n => ({ ...n, parentSlug: n.parent })));
+        core.nodes = t.nodes; core.bySlug = t.bySlug; core.roots = t.roots;
+        core.onChange(); return;
+      }
+      if (adapter.create) {
+        await adapter.create([{ title: title.trim(), parent_slug: parentSlug || null,
+                                state: "open", created_by: core.actor }]);
+        await core.load();
+      }
+    };
+
+    /* --- seam health strip (adapters without a health endpoint just hide it) --- */
+    core.health = async function () {
+      if (core.demo || !adapter.health) return null;
+      try { return await adapter.health(); } catch (e) { return null; }
+    };
+
     core.load = async function () {
       const raw = core.demo ? demoData(core.demo) : await adapter.load();
       const t = buildTree(raw);

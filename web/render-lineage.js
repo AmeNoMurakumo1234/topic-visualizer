@@ -65,6 +65,8 @@ window.TopicsRenderers.lineage = (function () {
       d.className = "tnode" + (n.parent ? "" : " root") + (core.selected === n ? " selected" : "")
         + (!n.children.length ? " leaf" : "")
         + (n.state === "discussed" ? " discussed" : "")
+        + (n.state === "seedling" ? " seedling" : "")
+        + (core.searchDim(n) ? " searchdim" : "")
         + (n.critical && n.state !== "discussed" ? " critical" : "");
       d.style.left = n.lx + "px"; d.style.top = n.ly + "px";
       if (n.parent && n.state !== "discussed") {
@@ -77,6 +79,7 @@ window.TopicsRenderers.lineage = (function () {
                               : `<span class="chip frontier">frontier</span>`}
           ${n.critical ? `<span class="chip crit">critical</span>` : ""}
           ${n.state === "discussed" ? `<span class="chip done">discussed</span>` : ""}
+          ${n.state === "seedling" ? `<span class="chip seed">seedling</span>` : ""}
         </div>
         ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {
