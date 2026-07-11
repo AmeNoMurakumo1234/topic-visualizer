@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.2 - 2026-07-11 - Consumer-friendly install (no machine paths, no env vars)
+
+- INSTALL.md rewritten to install straight from GitHub as a marketplace
+  (`claude plugin marketplace add AmeNoMurakumo1234/topic-visualizer` +
+  `install topic-visualizer@topic-visualizer`) - CLI, slash, and declarative
+  `.claude/settings.json` forms. No local machine paths; cloning is
+  contributors-only.
+- The default topics DB moved to a real, user-typeable home path
+  `~/.topic-visualizer/topics.db` (created on first capture, survives updates) and
+  is now the single default across the MCP tools, the server, and the first-of-day
+  hook. Dropped the `${CLAUDE_PLUGIN_DATA}` env override from `.mcp.json` - that
+  variable only exists inside Claude Code's own execution and is not something a
+  consumer can use from their shell, so public docs never reference it. Running the
+  viewer is now just `python <plugin>/server/server.py` (no args, no env).
+
 ## 0.4.1 - 2026-07-11 - The hardening: 3-lane audit, verified and fixed
 
 A parallel adversarial audit (server/MCP, web, plugin-form/docs) followed by a

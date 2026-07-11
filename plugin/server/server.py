@@ -32,8 +32,13 @@ DB_PATH = "topics.db"
 
 
 # ---------------------------------------------------------------- store ----
+DEFAULT_DB = str(Path.home() / ".topic-visualizer" / "topics.db")
+
+
 def open_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False)
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)     # a real, user-owned home path
+    conn = sqlite3.connect(str(p), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
     conn.commit()
@@ -763,7 +768,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     global _conn, DB_PATH
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(HERE / "topics.db"))
+    ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--port", type=int, default=8991)
     ap.add_argument("--web", default=str(HERE.parent / "web"))
     args = ap.parse_args()

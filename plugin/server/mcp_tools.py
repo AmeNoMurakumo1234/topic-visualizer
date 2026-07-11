@@ -71,7 +71,7 @@ class ServerBackend:
     def _fallback(self):
         if self._direct is None:
             import server as srv
-            db = os.environ.get("TOPICS_DB") or str(HERE / "topics.db")
+            db = os.environ.get("TOPICS_DB") or srv.DEFAULT_DB
             Path(db).parent.mkdir(parents=True, exist_ok=True)
             srv._conn = srv.open_db(db)
             srv.DB_PATH = db
@@ -463,7 +463,7 @@ def main() -> None:
             resp = {"protocolVersion": (msg.get("params") or {}).get(
                         "protocolVersion", "2024-11-05"),
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "topic-visualizer", "version": "0.4.1"}}
+                    "serverInfo": {"name": "topic-visualizer", "version": "0.4.2"}}
         elif method == "tools/list":
             resp = {"tools": TOOLS}
         elif method == "tools/call":

@@ -52,8 +52,9 @@ some builds; the commands above work there too.
 - **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`,
   `topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. No server
   needs to be running: the tools fall back to direct SQLite at
-  `${CLAUDE_PLUGIN_DATA}/topics.db` (survives plugin updates). If the topics server
-  IS running they pass through it - same store, same behavior.
+  `~/.topic-visualizer/topics.db` (a plain file in your home dir, created on first
+  capture; survives plugin updates). If the topics server IS running they pass
+  through it - same store, same behavior.
 - **Skills**: `topics-capture` (silent capture at the fork; mortality-aware near
   compaction), `topics-serve` (one card, first session of the day), `topics-groom`
   (the gardener's round, evidence-calibrated).
@@ -66,27 +67,32 @@ some builds; the commands above work there too.
 ## Seeing the tree (the human half)
 
 The MCP tools capture and serve without any UI. To browse your tree in the three
-views, run the bundled server against your topics DB:
+views, run the bundled server - with no arguments it opens the same store the AI
+captures into (`~/.topic-visualizer/topics.db`):
 
 ```
-python "<plugin-dir>/server/server.py" --db "<your-topics.db>"
+python "<plugin-dir>/server/server.py"
 ```
 
-`<plugin-dir>` is where Claude Code installed the plugin (the plugins cache under
-your Claude config dir); `<your-topics.db>` defaults to
-`${CLAUDE_PLUGIN_DATA}/topics.db`. It prints a localhost URL (default
-`http://127.0.0.1:8991`) - Constellation, Lineage, Star Chart over your tree,
-localhost only. The plugin never phones home; your maybes are yours.
+`<plugin-dir>` is wherever Claude Code installed the plugin (run
+`claude plugin list` to see the path; it lives in the plugins cache under your
+Claude config dir). It prints a localhost URL (default `http://127.0.0.1:8991`) -
+Constellation, Lineage, Star Chart over your tree, localhost only. Point it at a
+different file with `--db /path/to/other.db` if you keep more than one tree. The
+plugin never phones home; your maybes are yours.
 
 Prefer to kick the tires before installing? See the demo in the
 [README](README.md#try-it-in-two-minutes-demo-mode) - synthetic, deterministic,
 never stored.
 
-## Configuration (env, all optional)
+## Configuration (all optional - sensible defaults, nothing to set up)
+
+You do not need to set any of these; they are overrides for power users. Defaults
+work out of the box.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TOPICS_DB` | `${CLAUDE_PLUGIN_DATA}/topics.db` | SQLite path (MCP direct fallback) |
+| `TOPICS_DB` | `~/.topic-visualizer/topics.db` | SQLite path (MCP direct fallback) |
 | `TOPICS_SERVER_URL` | `http://127.0.0.1:8991` | running topics server, if any |
 | `TOPICS_EMBED_URL` | `http://127.0.0.1:8082` | OpenAI-style `/v1/embeddings` endpoint; semantic search/dedup when up, keyword fallback when not |
 | `TOPICS_BACKEND` | `server` | `board` swaps every tool onto a message-board backend (topics as `OPEN THREAD` posts) |

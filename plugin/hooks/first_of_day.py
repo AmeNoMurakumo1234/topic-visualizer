@@ -22,8 +22,7 @@ def _serve():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
         import server as srv
-        db = os.environ.get("TOPICS_DB") or str(
-            Path(__file__).resolve().parent.parent / "server" / "topics.db")
+        db = os.environ.get("TOPICS_DB") or srv.DEFAULT_DB
         if not Path(db).exists():
             return None                       # nothing captured yet - stay silent
         srv._conn = srv.open_db(db)
