@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 - 2026-07-11 - Installable: MCP face, semantic ranking, archive + edit
+
+- INSTALLABLE PLUGIN: the repo is its own marketplace (root .claude-plugin/
+  marketplace.json -> ./plugin); plugin/ is now self-contained (server/ + web/ moved
+  inside - an install copies only the plugin source dir). Both manifests pass
+  `claude plugin validate`. INSTALL.md carries the real two-command flow.
+- MCP FACE (server/mcp_tools.py, registered via .mcp.json): topic_add / topic_serve /
+  topic_search / topic_state / topic_convert / topic_groom_report over stdio
+  JSON-RPC. Two backends behind one contract: the plugin server (HTTP passthrough
+  with a zero-setup DIRECT sqlite fallback at ${CLAUDE_PLUGIN_DATA}/topics.db when
+  no server is running) and a message-board backend (topics as OPEN THREAD posts)
+  where topic_convert(work_item) MINTS a real board issue - the EXPLORING -> ACTING
+  crossing, live. 4/4 e2e tests over real stdio, including a board-sandbox lifecycle.
+- SEMANTIC ranking everywhere ranking exists (search, write-time dedup, serve
+  territory-fit): any OpenAI-style /v1/embeddings endpoint via TOPICS_EMBED_URL,
+  graceful keyword fallback when absent. Store-agnostic ranking seams
+  (near_duplicates_in / search_in / rank_candidates) shared by both MCP backends.
+- ARCHIVE EXPLORER (web): header toggle shows pruned/expired topics as ghosts
+  (dashed, struck-through, quiet); any archived topic is resurrectable from the
+  panel. The past stays visitable - death by choice, never by deletion.
+- PANEL EDIT (web): title / body / re-parent (cycle-guarded server-side) / beacon
+  toggle, capability-detected per adapter (hidden where the store cannot edit).
+- FIX: X-Requested-By anti-CSRF value for the board backend.
+
 ## 0.2.0 - 2026-07-11 - The Seam (design + working implementation)
 
 - docs/2026-07-11-seam-design.md: the full ratified design (silent capture + soft

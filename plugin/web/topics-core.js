@@ -189,14 +189,26 @@ window.TopicsCore = (function () {
       try { return await adapter.health(); } catch (e) { return null; }
     };
 
+    /* --- archive explorer: the past stays visitable (nothing is ever lost, only
+       resting). Adapters that support it get ghosts; others silently ignore. --- */
+    core.showArchive = false;
+    core.setArchive = async function (on) {
+      core.showArchive = !!on;
+      await core.load();
+    };
+
     core.load = async function () {
-      const raw = core.demo ? demoData(core.demo) : await adapter.load();
+      const raw = core.demo ? demoData(core.demo) : await adapter.load(core.showArchive);
       const t = buildTree(raw);
       core.nodes = t.nodes; core.bySlug = t.bySlug; core.roots = t.roots;
       core.selected = null;
-      if (dom.statEl) dom.statEl.textContent =
-        `${core.nodes.length} open topic(s), ${core.roots.length} root(s)` +
-        (core.demo ? " (demo)" : "");
+      if (dom.statEl) {
+        const archived = core.nodes.filter(
+          n => n.state === "pruned" || n.state === "expired").length;
+        dom.statEl.textContent =
+          `${core.nodes.length - archived} open topic(s), ${core.roots.length} root(s)` +
+          (archived ? ` + ${archived} archived` : "") + (core.demo ? " (demo)" : "");
+      }
       core.onChange();
     };
 
@@ -226,7 +238,9 @@ window.TopicsCore = (function () {
     core.select = function (n, extraButtons) {
       core.selected = n;
       const kids = subtree(n).length - 1;
-      const stateChip = n.state === "discussed" ? " | DISCUSSED"
+      const archived = n.state === "pruned" || n.state === "expired";
+      const stateChip = archived ? ` | ${n.state.toUpperCase()} (archived)`
+                       : n.state === "discussed" ? " | DISCUSSED"
                        : (n.critical ? " | CRITICAL" : "");
       dom.panel.className = "open";
       dom.panel.innerHTML = `<h2>${short(n.title)}</h2>
@@ -234,19 +248,24 @@ window.TopicsCore = (function () {
           | ${n.children.length} child(ren), ${kids} descendant(s)${stateChip}<br/>slug: ${n.slug}</div>
         <div class="body"></div>
         <span class="extra"></span>
-        ${n.state === "discussed"
-          ? `<button class="reopen">Reopen topic</button>`
+        ${(n.state !== "open" && n.state !== "seedling")
+          ? `<button class="reopen">${archived ? "Resurrect" : "Reopen"} topic</button>`
           : `<button class="discuss">Mark discussed</button>`}
-        <button class="prune">Prune this branch</button>
+        ${adapter.edit && !core.demo ? `<button class="edit">Edit</button>` : ""}
+        ${archived ? "" : `<button class="prune">Prune this branch</button>`}
         <button class="close">Close</button>`;
       dom.panel.querySelector(".body").textContent =
         String(n.body || "").replace(/^parent:.*$/mi, "").replace(/^priority:.*$/mi, "").trim();
       dom.panel.querySelector(".close").onclick = () => { core.closePanel(); core.onChange(); };
-      dom.panel.querySelector(".prune").onclick = () => core.confirmPrune(n);
+      const pr = dom.panel.querySelector(".prune");
+      if (pr) pr.onclick = () => core.confirmPrune(n);
       const re = dom.panel.querySelector(".reopen");
-      if (re) re.onclick = () => core.setState(n, "open", "reopened via the topic tree");
+      if (re) re.onclick = () => core.setState(n, "open",
+        archived ? "resurrected from the archive" : "reopened via the topic tree");
       const di = dom.panel.querySelector(".discuss");
       if (di) di.onclick = () => core.setState(n, "discussed", "discussed - marked via the topic tree");
+      const ed = dom.panel.querySelector(".edit");
+      if (ed) ed.onclick = () => core.editPanel(n);
       if (extraButtons) {
         const mount = dom.panel.querySelector(".extra");
         for (const b of extraButtons) {
@@ -256,6 +275,49 @@ window.TopicsCore = (function () {
         }
       }
       core.onChange();
+    };
+
+    /* --- panel edit: title / body / re-parent / beacon, saved in one act. Only
+       offered when the adapter can edit (capability detection - the board cannot). --- */
+    core.editPanel = function (n) {
+      const options = core.nodes
+        .filter(t => t.slug !== n.slug)
+        .map(t => `<option value="${t.slug}">`).join("");
+      dom.panel.innerHTML = `<h2>Edit topic</h2>
+        <div class="editform">
+          <label>Title</label><input class="e-title" type="text" maxlength="200"/>
+          <label>Body</label><textarea class="e-body" rows="6"></textarea>
+          <label>Parent slug (blank = root)</label>
+          <input class="e-parent" type="text" list="tvSlugs" placeholder="root"/>
+          <datalist id="tvSlugs">${options}</datalist>
+          <label class="e-crit-row"><input class="e-crit" type="checkbox"/>
+            critical beacon (rare - the loud voice you must not waste)</label>
+          <div class="e-err"></div>
+          <button class="save">Save</button>
+          <button class="back">Cancel</button>
+        </div>`;
+      dom.panel.querySelector(".e-title").value = n.title;
+      dom.panel.querySelector(".e-body").value = n.body || "";
+      dom.panel.querySelector(".e-parent").value = n.parent || "";
+      dom.panel.querySelector(".e-crit").checked = !!n.critical;
+      dom.panel.querySelector(".back").onclick = () => core.select(n);
+      dom.panel.querySelector(".save").onclick = async () => {
+        const parentSlug = dom.panel.querySelector(".e-parent").value.trim();
+        const res = await adapter.edit(n.slug, {
+          title: dom.panel.querySelector(".e-title").value.trim() || n.title,
+          body: dom.panel.querySelector(".e-body").value,
+          parent_slug: parentSlug,               // "" re-roots; server cycle-guards
+          critical: dom.panel.querySelector(".e-crit").checked,
+        }, core.actor);
+        if (res && res.error) {
+          dom.panel.querySelector(".e-err").textContent = res.error;
+          return;
+        }
+        const slug = n.slug;
+        await core.load();
+        const again = core.bySlug[slug];
+        if (again) core.select(again);
+      };
     };
 
     /* --- prune-with-consequence (descendant count, honest reversibility) --- */

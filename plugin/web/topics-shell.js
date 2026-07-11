@@ -57,6 +57,16 @@
     await core.quickAdd(quickEl.value, parent);
     quickEl.value = "";
   });
+  // archive explorer toggle: show pruned/expired ghosts (resurrectable). Hidden
+  // when the adapter cannot serve an archive (capability detection).
+  const archEl = document.getElementById("archive");
+  if (archEl) {
+    if (window.TopicsAdapter.archiveCapable === false || demo) {
+      archEl.closest(".archchip").style.display = "none";
+    } else {
+      archEl.addEventListener("change", () => core.setArchive(archEl.checked));
+    }
+  }
   // seam health strip (hidden when the adapter has no health endpoint)
   (async () => {
     const h = await core.health();

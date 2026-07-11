@@ -102,6 +102,7 @@ window.TopicsRenderers.constellation = (function () {
       g.setAttribute("class", "node" + (n.parent ? "" : " root") +
         (n.state === "discussed" ? " discussed" : "") +
         (n.state === "seedling" ? " seedling" : "") +
+        (n.state === "pruned" || n.state === "expired" ? " archived" : "") +
         (core.searchDim(n) ? " searchdim" : "") +
         (core.selected === n ? " selected" : ""));
       g.dataset.slug = n.slug;

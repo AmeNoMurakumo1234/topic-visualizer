@@ -135,6 +135,7 @@ window.TopicsRenderers.starchart = (function () {
         (rootlike ? " rootlike" : "") + (core.selected === n ? " selected" : "") +
         (n.state === "discussed" ? " discussed" : "") +
         (n.state === "seedling" ? " seedling" : "") +
+        (n.state === "pruned" || n.state === "expired" ? " archived" : "") +
         (core.searchDim(n) ? " searchdim" : ""));
       g.dataset.slug = n.slug;
       const depth = n.tgt.depth,

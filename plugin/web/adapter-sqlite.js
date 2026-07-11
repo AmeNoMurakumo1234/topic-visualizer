@@ -7,15 +7,23 @@ window.TopicsAdapter = (function () {
 
   return {
     name: "sqlite",
-    async load() {
-      const r = await fetch("/api/topics");
+    async load(includeArchive) {
+      const r = await fetch("/api/topics" + (includeArchive ? "?include=archive" : ""));
       const items = (await r.json()).topics || [];
       return items.map(t => ({
         slug: t.slug, title: t.title, body: t.body, author: t.created_by,
         created: t.created_at, parentSlug: t.parent_slug || null,
-        state: t.state,   // seedling | open | discussed pass through
+        state: t.state,   // seedling | open | discussed | pruned | expired pass through
         critical: t.priority === "critical",
       }));
+    },
+    async edit(slug, fields, actor) {
+      // fields: { title?, body?, parent_slug? ("" = to root), critical? }
+      const r = await fetch(`/api/topics/${encodeURIComponent(slug)}/edit`, {
+        method: "POST", headers: HDRS,
+        body: JSON.stringify({ ...fields, actor }),
+      });
+      return await r.json();
     },
     async setState(slug, state, actor, note) {
       await fetch(`/api/topics/${encodeURIComponent(slug)}/state`, {

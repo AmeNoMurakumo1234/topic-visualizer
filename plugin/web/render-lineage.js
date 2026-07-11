@@ -66,6 +66,7 @@ window.TopicsRenderers.lineage = (function () {
         + (!n.children.length ? " leaf" : "")
         + (n.state === "discussed" ? " discussed" : "")
         + (n.state === "seedling" ? " seedling" : "")
+        + (n.state === "pruned" || n.state === "expired" ? " archived" : "")
         + (core.searchDim(n) ? " searchdim" : "")
         + (n.critical && n.state !== "discussed" ? " critical" : "");
       d.style.left = n.lx + "px"; d.style.top = n.ly + "px";
