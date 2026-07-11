@@ -53,7 +53,7 @@ window.TopicsRenderers.lineage = (function () {
   function render() {
     if (!stage) return;
     cards.innerHTML = "";
-    wires.innerHTML = `<defs><marker id="tvXArrowL" viewBox="0 0 10 10" refX="8" refY="5"
+    wires.innerHTML = `<defs><marker id="tvXArrowL" viewBox="0 0 10 10" refX="10" refY="5"
       markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="#b48be0"/></marker></defs>`;
     const visible = [];
@@ -162,13 +162,21 @@ window.TopicsRenderers.lineage = (function () {
         const path = document.createElementNS(SVG_NS, "path");
         const x1 = p.lx + W, y1 = p.ly + (p.lh || ROWH) / 2,
               x2 = n.lx, y2 = n.ly + (n.lh || ROWH) / 2;
-        const back = x2 < x1;                      // child sits left of the parent
-        const c1 = back ? x1 + 70 : (x1 + x2) / 2,
-              c2 = back ? x2 - 70 : (x1 + x2) / 2;
-        path.setAttribute("d", `M ${x1} ${y1} C ${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`);
+        // gradual attach: horizontal tangent at BOTH card edges, easing into the
+        // curve with a reach proportional to the span - and a PORT DOT at the
+        // parent edge, so an attached wire can never be mistaken for one merely
+        // passing behind the card (passing lines have no dot, no flat approach)
+        const reach = Math.max(80, Math.min(220,
+          Math.hypot(x2 - x1, y2 - y1) * 0.35));
+        path.setAttribute("d",
+          `M ${x1} ${y1} C ${x1 + reach} ${y1}, ${x2 - reach} ${y2}, ${x2} ${y2}`);
         path.setAttribute("class", "wire xwire");
         path.setAttribute("marker-end", "url(#tvXArrowL)");
         wires.appendChild(path);
+        const port = document.createElementNS(SVG_NS, "circle");
+        port.setAttribute("cx", x1); port.setAttribute("cy", y1);
+        port.setAttribute("r", 3.5); port.setAttribute("class", "xport");
+        wires.appendChild(port);
       }
     }
     wires.setAttribute("width", maxX); wires.setAttribute("height", maxY);
