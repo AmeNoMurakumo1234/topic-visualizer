@@ -89,9 +89,45 @@
       (h.beacon_warning ? " | beacons HIGH" : "");
   })();
 
-  core.paintStars(stage, document.getElementById("stars"));
-  addEventListener("resize", () =>
-    core.paintStars(stage, document.getElementById("stars")));
+  // backdrop: the generated canvas scene is the DEFAULT; if the plugin's
+  // backgrounds/ folder has images, offer a picker to swap in one of those
+  // (mostly-transparent, so nodes stay legible). Choice persists.
+  const starsCanvas = document.getElementById("stars");
+  const bgImage = document.getElementById("bgimage");
+  const bgPick = document.getElementById("bgpick");
+  function applyBackdrop(choice, urlBase) {
+    if (choice && choice !== "__default__") {
+      bgImage.style.backgroundImage = `url("${urlBase}${encodeURIComponent(choice)}")`;
+      bgImage.style.display = "block";
+      starsCanvas.style.display = "none";       // image replaces the generated scene
+    } else {
+      bgImage.style.backgroundImage = "";
+      bgImage.style.display = "none";
+      starsCanvas.style.display = "";
+      core.paintStars(stage, starsCanvas);
+    }
+  }
+  core.paintStars(stage, starsCanvas);
+  addEventListener("resize", () => {
+    if (starsCanvas.style.display !== "none") core.paintStars(stage, starsCanvas);
+  });
+  if (bgPick && window.TopicsAdapter.backgrounds && !demo) {
+    (async () => {
+      const { list, urlBase } = await window.TopicsAdapter.backgrounds();
+      if (!list.length) return;               // no images -> keep the default scene
+      const saved = localStorage.getItem("topics-bg") || "__default__";
+      const pretty = f => f.replace(/\.(png|jpe?g|webp)$/i, "").replace(/[-_]/g, " ");
+      bgPick.innerHTML = `<option value="__default__">backdrop: generated</option>`
+        + list.map(f => `<option value="${f}">${pretty(f)}</option>`).join("");
+      bgPick.value = list.includes(saved) ? saved : "__default__";
+      bgPick.style.display = "";
+      applyBackdrop(bgPick.value, urlBase);
+      bgPick.addEventListener("change", () => {
+        localStorage.setItem("topics-bg", bgPick.value);
+        applyBackdrop(bgPick.value, urlBase);
+      });
+    })();
+  }
 
   // validate the stored view (legacy shells stored a/b/c) - never boot into nothing
   const LEGACY = { a: "constellation", b: "lineage", c: "starchart" };

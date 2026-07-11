@@ -54,6 +54,14 @@ window.TopicsAdapter = (function () {
       const r = await fetch("/api/topics/health");
       return await r.json();
     },
+    // background scenes: filenames in the plugin's backgrounds/ folder, served at
+    // /backgrounds/<name>. Empty list -> the shell keeps the generated canvas.
+    async backgrounds() {
+      try {
+        const r = await fetch("/api/backgrounds");
+        return { list: (await r.json()).backgrounds || [], urlBase: "/backgrounds/" };
+      } catch (e) { return { list: [], urlBase: "/backgrounds/" }; }
+    },
     async prune(slugs, actor) {
       // client-confirmed, server-verified cascade (see server spec): send the subtree
       // the human saw in the consequence dialog; the server checks it still matches.

@@ -685,17 +685,32 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, health())
         if u.path == "/api/topics/groom":
             return self._json(200, groom_report())
-        # static web
+        # background images: whatever PNGs live in the plugin's backgrounds/ folder
+        # (empty -> the web falls back to the generated canvas scene). The user
+        # picks one; images are meant to be rendered mostly-transparent.
+        if u.path == "/api/backgrounds":
+            bg = HERE.parent / "backgrounds"
+            files = sorted(p.name for p in bg.glob("*.png")) if bg.is_dir() else []
+            return self._json(200, {"backgrounds": files})
+        # static web + backgrounds
         if self.web_root:
             rel = "index.html" if u.path == "/" else u.path.lstrip("/")
-            f = (self.web_root / rel).resolve()
-            if f == (self.web_root / "index.html").resolve():
-                f = f if f.is_file() else None
-            elif not (f.is_file() and self.web_root.resolve() in f.parents):
-                f = None
+            bg_root = (HERE.parent / "backgrounds").resolve()
+            if u.path.startswith("/backgrounds/"):
+                f = (bg_root / u.path[len("/backgrounds/"):]).resolve()
+                f = f if (f.is_file() and bg_root in f.parents) else None
+            else:
+                f = (self.web_root / rel).resolve()
+                if f == (self.web_root / "index.html").resolve():
+                    f = f if f.is_file() else None
+                elif not (f.is_file() and self.web_root.resolve() in f.parents):
+                    f = None
             if f is not None:
                 ctype = {"html": "text/html", "js": "text/javascript",
-                         "css": "text/css"}.get(f.suffix.lstrip("."), "application/octet-stream")
+                         "css": "text/css", "png": "image/png",
+                         "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                         "webp": "image/webp"}.get(
+                             f.suffix.lstrip("."), "application/octet-stream")
                 data = f.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
