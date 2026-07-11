@@ -239,3 +239,17 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .avpill.seed { color: #9fd49f; border-color: #2e5a3a; }
 .avpill.done { color: #9aa3c0; border-color: #333c5c; }
 .avpill.arch { color: #8a92ad; border-color: #3a4055; text-decoration: line-through; }
+
+/* ---- deep-space motion: the rare meteor (one div, CSS-only) ---- */
+.meteor { position: absolute; left: -12%; width: 130px; height: 1.5px;
+          pointer-events: none; opacity: 0; transform: rotate(16deg);
+          background: linear-gradient(90deg, rgba(207,224,255,0), rgba(207,224,255,0.9));
+          border-radius: 999px; filter: drop-shadow(0 0 4px #cfe0ffaa);
+          animation: shoot 29s linear infinite; animation-delay: 6s; }
+@keyframes shoot {
+  0%    { opacity: 0; transform: translate(0, 0) rotate(16deg); }
+  86.5% { opacity: 0; transform: translate(0, 0) rotate(16deg); }
+  87%   { opacity: 0.9; }
+  92%   { opacity: 0; transform: translate(62vw, 18vw) rotate(16deg); }
+  100%  { opacity: 0; transform: translate(62vw, 18vw) rotate(16deg); }
+}
