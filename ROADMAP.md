@@ -21,12 +21,14 @@ backend); snapshots live in [web/prototype/](web/prototype/):
 1. **Server**: implement [server/README.md](server/README.md) against
    [server/schema.sql](server/schema.sql) - one small process, HTTP API + MCP tools,
    SQLite owner. Zero heavy dependencies; localhost only.
-2. **The single-module merge**: extract the triplicated view logic into one
-   `topics-core.js` (data load, state, hues, panel, actions, demo) with a STORAGE
-   ADAPTER seam; three renderers, one shell, no iframes. The views must never know
-   the storage (the adapter law).
-3. **Port the views** onto the sqlite adapter; golden-master eyeball check per view
-   against the prototype snapshots.
+2. **DONE (2026-07-11): the single-module merge.** web/ now holds topics-core.js
+   (tree building, hues, states, demo, shared panel + prune flow, semantic-zoom
+   helpers) + three renderer modules + shell + adapter-sqlite.js (the server-spec
+   client, awaiting the server) + index.html. The birthplace board VENDORS these
+   files verbatim with its own adapter-board.js; verified live there against demo
+   AND real data, all three views, golden-master eyeballed.
+3. **Wire the sqlite adapter** to the real server once (1) ships; the views need
+   zero changes (the adapter law, proven by the board port).
 4. **Capture UX**: wire the skills to the MCP tools; sharpen the zero-friction moment
    (the AI files topics mid-conversation without breaking flow).
 5. **Serving ritual**: `topic_serve` ranking + the one-card presentation pattern.

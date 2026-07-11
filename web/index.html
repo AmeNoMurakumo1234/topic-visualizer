@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Topics - the Topic Visualizer</title>
+<link rel="stylesheet" href="topics.css" />
+</head>
+<body>
+<header>
+  <h1>&#127756; Topics <span class="dim">- one tree, three ways</span></h1>
+  <div class="viewtabs" id="viewtabs">
+    <button data-v="constellation">Constellation</button>
+    <button data-v="lineage">Lineage</button>
+    <button data-v="starchart">Star Chart</button>
+  </div>
+  <span class="hud"><b id="stat"></b><span id="hint" class="dim"></span></span>
+</header>
+<div id="legend" class="legend"></div>
+<main>
+  <div id="stage" class="stage"><canvas id="stars"></canvas><div id="renderer"></div></div>
+</main>
+<div id="panel"></div>
+<div id="confirm"><div class="box" id="confirmBox"></div></div>
+
+<script src="topics-core.js"></script>
+<script src="adapter-sqlite.js"></script>
+<script src="render-constellation.js"></script>
+<script src="render-lineage.js"></script>
+<script src="render-starchart.js"></script>
+<script src="topics-shell.js"></script>
+</body>
+</html>

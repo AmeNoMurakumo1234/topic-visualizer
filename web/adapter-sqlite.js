@@ -1,0 +1,36 @@
+/* adapter-sqlite.js - the plugin's storage adapter: talks to the local topics server
+ * (see ../server/README.md). The views never know the storage; this file is the only
+ * place that does. CANONICAL SOURCE: the topic-visualizer plugin repo. */
+window.TopicsAdapter = (function () {
+  "use strict";
+  const HDRS = { "Content-Type": "application/json", "X-Requested-By": "topic-visualizer" };
+
+  return {
+    name: "sqlite",
+    async load() {
+      const r = await fetch("/api/topics");
+      const items = (await r.json()).topics || [];
+      return items.map(t => ({
+        slug: t.slug, title: t.title, body: t.body, author: t.created_by,
+        created: t.created_at, parentSlug: t.parent_slug || null,
+        state: t.state === "discussed" ? "discussed" : "open",
+        critical: t.priority === "critical",
+      }));
+    },
+    async setState(slug, state, actor, note) {
+      await fetch(`/api/topics/${encodeURIComponent(slug)}/state`, {
+        method: "POST", headers: HDRS,
+        body: JSON.stringify({ state, actor, note }),
+      });
+    },
+    async prune(slugs, actor) {
+      // client-confirmed, server-verified cascade (see server spec): send the subtree
+      // the human saw in the consequence dialog; the server checks it still matches.
+      await fetch(`/api/topics/${encodeURIComponent(slugs[0])}/state`, {
+        method: "POST", headers: HDRS,
+        body: JSON.stringify({ state: "pruned", actor, cascade: slugs,
+                               note: "pruned from the topic tree" }),
+      });
+    },
+  };
+})();
