@@ -55,6 +55,16 @@ window.TopicsCore = (function () {
       for (let d = 0; d < 12 && out.length < count; d++) p = mk(p.slug);
     }
     while (out.length < count) mk(out[Math.floor(rnd() * out.length)].slug);
+    // ~3% multi-parent cross-links (rediscovered-via-another-avenue), so the DAG
+    // is visible at demo scale; buildTree drops any accidental self/dup edges
+    for (const t of out) {
+      if (rnd() < 0.03 && t.parentSlug) {
+        const other = out[Math.floor(rnd() * out.length)];
+        if (other.slug !== t.slug && other.slug !== t.parentSlug) {
+          t.extraParents = [{ slug: other.slug, note: "rediscovered via another avenue (demo)" }];
+        }
+      }
+    }
     return out;
   }
 

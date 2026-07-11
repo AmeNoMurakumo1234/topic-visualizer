@@ -5,7 +5,7 @@ window.TopicsRenderers = window.TopicsRenderers || {};
 window.TopicsRenderers.constellation = (function () {
   "use strict";
   let core, stage, svg, view, fogG, edgesG, nodesG;
-  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null;
+  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, userMoved = false;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   const DEFS = `
@@ -36,10 +36,11 @@ window.TopicsRenderers.constellation = (function () {
     edgesG = stage.querySelector(".tv-edges");
     nodesG = stage.querySelector(".tv-nodes");
     const r = stage.getBoundingClientRect();
-    tx = r.width / 2; ty = r.height / 2; scale = 1; apply();
+    tx = r.width / 2; ty = r.height / 2; scale = 1; userMoved = false; apply();
 
     stage.addEventListener("mousedown", ev => {
       if (ev.target.closest(".node")) return;
+      userMoved = true;
       stage.classList.add("dragging");
       const sx = ev.clientX - tx, sy = ev.clientY - ty;
       const mv = e => { tx = e.clientX - sx; ty = e.clientY - sy; apply(); };
@@ -49,6 +50,7 @@ window.TopicsRenderers.constellation = (function () {
     });
     // cursor-anchored zoom (behavioral contract: the point under the mouse stays fixed)
     stage.addEventListener("wheel", ev => { ev.preventDefault();
+      userMoved = true;
       const rect = stage.getBoundingClientRect();
       const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
       const next = Math.max(0.25, Math.min(3, scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
@@ -58,6 +60,25 @@ window.TopicsRenderers.constellation = (function () {
 
   const apply = () => { if (view) { view.setAttribute("transform",
     `translate(${tx},${ty}) scale(${scale})`); scheduleLabels(); } };
+
+  /* auto-fit: big graphs open pulled-back so the whole constellation is on screen
+   * (and the semantic-zoom label budget engages). Never fights the user - any pan
+   * or zoom disables it. */
+  function fit() {
+    if (!stage || !core.nodes.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of core.nodes) {
+      if (n.x < x0) x0 = n.x; if (n.x > x1) x1 = n.x;
+      if (n.y < y0) y0 = n.y; if (n.y > y1) y1 = n.y;
+    }
+    const r = stage.getBoundingClientRect(), pad = 90;
+    const next = Math.max(0.25, Math.min(1,
+      Math.min(r.width / (x1 - x0 + 2 * pad), r.height / (y1 - y0 + 2 * pad))));
+    scale = next;
+    tx = r.width / 2 - scale * (x0 + x1) / 2;
+    ty = r.height / 2 - scale * (y0 + y1) / 2;
+    apply();
+  }
 
   function seedPositions() {
     // keep existing positions across re-renders; seed only the unplaced
@@ -181,6 +202,8 @@ window.TopicsRenderers.constellation = (function () {
       for (const n of nodes) { n.vx += -n.x * 0.0012; n.vy += -n.y * 0.0012;
         n.x += n.vx *= 0.82; n.y += n.vy *= 0.82; }
       position();
+      // camera pulls back as the graph blooms (every ~15 ticks + once settled)
+      if (!userMoved && (ticks % 15 === 0 || ticks === maxTicks - 1)) fit();
       if (++ticks < maxTicks) animId = requestAnimationFrame(step);
     };
     animId = requestAnimationFrame(step);
