@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -91,6 +92,59 @@ def _touch(topic_id: int, actor: str, note: str = "") -> None:
         "UPDATE topic SET state='open' WHERE id=? AND state='seedling'", (topic_id,))
 
 
+# ------------------------------------------------------ embeddings ----
+# Optional SEMANTIC ranking via any OpenAI-style /v1/embeddings endpoint (env
+# TOPICS_EMBED_URL; default the local CPU embedding server). Graceful: when the
+# endpoint is down or absent, every ranking falls back to keyword scoring.
+import urllib.request
+
+EMBED_URL = (os.environ.get("TOPICS_EMBED_URL", "http://127.0.0.1:8082")).rstrip("/")
+_embed_up = None
+_embed_cache = {}
+
+
+def _embed(texts):
+    global _embed_up
+    if not EMBED_URL or _embed_up is False:
+        return None
+    todo = [x for x in texts if x not in _embed_cache]
+    if todo:
+        try:
+            req = urllib.request.Request(
+                EMBED_URL + "/v1/embeddings",
+                data=json.dumps({"input": todo}).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())["data"]
+            for txt, item in zip(todo, data):
+                _embed_cache[txt] = item["embedding"]
+            _embed_up = True
+        except Exception:
+            _embed_up = False
+            return None
+    return [_embed_cache[x] for x in texts]
+
+
+def _cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1.0
+    nb = math.sqrt(sum(x * x for x in b)) or 1.0
+    return dot / (na * nb)
+
+
+def semantic_rank(query, topics):
+    """Cosine-rank topics against a query; None when the embedder is unavailable."""
+    if not query or not topics:
+        return None
+    texts = [query] + [t["title"] + " " + t["body"][:400] for t in topics]
+    vecs = _embed(texts)
+    if vecs is None:
+        return None
+    qv = vecs[0]
+    return sorted(((max(0.0, _cosine(qv, v)), t) for v, t in zip(vecs[1:], topics)),
+                  key=lambda x: -x[0])
+
+
 # ------------------------------------------------------ text ranking ----
 _WORD = re.compile(r"[a-z0-9]{3,}")
 _STOP = frozenset("the and for with that this from are was were should would could "
@@ -114,16 +168,26 @@ def _score(query_toks: list[str], text: str) -> float:
     return hit / math.sqrt(len(toks) + 8)
 
 
-def _near_duplicates(title: str, body: str, limit: int = 3) -> list[dict]:
-    """Write-time dedup guard: the AI merges instead of double-planting."""
-    q = _tokens(title + " " + body[:200])
+def near_duplicates_in(title, body, topics, limit=3):
+    """Write-time dedup guard over a given topic list (store-agnostic; the MCP board
+    backend reuses this). Semantic when the embedder is up, keyword otherwise."""
+    ranked = semantic_rank(title + " " + body[:200], topics)
     out = []
-    for t in _load_topics():
-        s = _score(q, t["title"] + " " + t["body"][:200])
-        if s > 0.55:
-            out.append({"slug": t["slug"], "title": t["title"], "score": round(s, 3)})
-    out.sort(key=lambda x: -x["score"])
+    if ranked is not None:
+        out = [{"slug": x["slug"], "title": x["title"], "score": round(s, 3)}
+               for s, x in ranked if s > 0.62]
+    else:
+        q = _tokens(title + " " + body[:200])
+        for x in topics:
+            s = _score(q, x["title"] + " " + x["body"][:200])
+            if s > 0.55:
+                out.append({"slug": x["slug"], "title": x["title"], "score": round(s, 3)})
+        out.sort(key=lambda y: -y["score"])
     return out[:limit]
+
+
+def _near_duplicates(title: str, body: str, limit: int = 3) -> list[dict]:
+    return near_duplicates_in(title, body, _load_topics(), limit)
 
 
 # ------------------------------------------------------------ actions ----
@@ -266,35 +330,53 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
     return {"ok": True}
 
 
-def search(query: str, limit: int = 40) -> list[dict]:
-    """Ranked search. Keyword fallback always works; a local embedder (optional
-    install extra) can replace _score with cosine ranking - same contract."""
+def search_in(query, topics, limit=40):
+    """Ranked search over a given topic list (store-agnostic). SEMANTIC when the
+    embedder is up (cosine over MiniLM vectors); keyword scoring otherwise."""
+    ranked = semantic_rank(query, topics)
+    if ranked is not None:
+        return [{"slug": x["slug"], "score": round(s, 4), "state": x["state"],
+                 "mode": "semantic"}
+                for s, x in ranked if s > 0.22][:limit]
     q = _tokens(query)
     scored = []
-    for t in _load_topics(include_archive=True):
-        s = _score(q, t["title"] + " " + t["body"])
+    for x in topics:
+        s = _score(q, x["title"] + " " + x["body"])
         if s > 0:
-            scored.append({"slug": t["slug"], "score": round(s, 4), "state": t["state"]})
-    scored.sort(key=lambda x: -x["score"])
+            scored.append({"slug": x["slug"], "score": round(s, 4),
+                           "state": x["state"], "mode": "keyword"})
+    scored.sort(key=lambda y: -y["score"])
     return scored[:limit]
 
 
-def serve_card(context: str = "") -> dict:
-    """ONE card (+2 alternates). Ranking: beacons > territory match vs the context
-    string > age-decay resurfacing (old-but-important rises) > time-weight fit."""
+def search(query: str, limit: int = 40) -> list[dict]:
+    return search_in(query, _load_topics(include_archive=True), limit)
+
+
+def rank_candidates(topics, context=""):
+    """Serve ranking over a given list (store-agnostic): beacons > territory match
+    (semantic when available) > age-decay resurfacing."""
+    live = [x for x in topics if x["state"] in ("open", "seedling")]
+    sem = semantic_rank(context, live) if context else None
+    sem_by_slug = {x["slug"]: s for s, x in sem} if sem else {}
     ctx = _tokens(context)
     now = time.time()
     cands = []
-    for t in _load_topics():
-        if t["state"] not in ("open", "seedling"):
-            continue
-        age_days = max(0.0, (now - _parse_ts(t["touched_at"])) / 86400.0)
-        score = (100.0 if t["priority"] == "critical" else 0.0)
-        if ctx:
-            score += 40.0 * _score(ctx, t["title"] + " " + t["body"])
+    for x in live:
+        age_days = max(0.0, (now - _parse_ts(x.get("touched_at") or x.get("created_at") or "")) / 86400.0)
+        score = (100.0 if x["priority"] == "critical" else 0.0)
+        if context:
+            score += 40.0 * (sem_by_slug.get(x["slug"], 0.0) if sem
+                             else _score(ctx, x["title"] + " " + x["body"]))
         score += min(20.0, age_days * 0.7)          # spaced resurfacing
-        cands.append((score, t))
-    cands.sort(key=lambda x: -x[0])
+        cands.append((score, x))
+    cands.sort(key=lambda y: -y[0])
+    return cands
+
+
+def serve_card(context: str = "") -> dict:
+    """ONE card (+2 alternates)."""
+    cands = rank_candidates(_load_topics(), context)
     if not cands:
         return {"card": None, "alternates": []}
     card = cands[0][1]
