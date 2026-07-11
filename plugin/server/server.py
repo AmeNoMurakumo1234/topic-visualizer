@@ -695,7 +695,11 @@ class Handler(BaseHTTPRequestHandler):
         # picks one; images are meant to be rendered mostly-transparent.
         if u.path == "/api/backgrounds":
             bg = HERE.parent / "backgrounds"
-            files = sorted(p.name for p in bg.glob("*.png")) if bg.is_dir() else []
+            # discover WHATEVER images the user has dropped in (any common type),
+            # never a hardcoded list
+            exts = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")
+            files = sorted(p.name for p in bg.iterdir()
+                           if p.is_file() and p.suffix.lower() in exts) if bg.is_dir() else []
             return self._json(200, {"backgrounds": files})
         # static web + backgrounds
         if self.web_root:
