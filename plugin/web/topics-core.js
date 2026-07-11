@@ -338,7 +338,9 @@ window.TopicsCore = (function () {
         return shown.map(renderRow).join("")
           + (rows.length > shown.length
              ? `<button class="avmore">show ${rows.length - shown.length} more
-                (important first, handled last)</button>` : "");
+                (important first, handled last)</button>` : "")
+          + (expanded && rows.length > AV_CAP
+             ? `<button class="avmore avless">show less</button>` : "");
       };
       const inExtras = n.extraParents.slice()
         .sort((a, b) => farRank(core.bySlug[a.slug]) - farRank(core.bySlug[b.slug]));
@@ -401,15 +403,17 @@ window.TopicsCore = (function () {
           if (p2) core.select(p2);
         };
       });
-      // "+N more" expands the capped avenue lists in place (collapses again on
-      // the next selection); the re-render must NOT jump the scroll back to top
+      // "+N more" expands the capped avenue lists in place; "show less" collapses
+      // them again (also collapses on the next selection). The re-render must NOT
+      // jump the scroll back to top.
       dom.panel.querySelectorAll(".avmore").forEach(el => {
+        const collapsing = el.classList.contains("avless");
         el.onclick = () => {
           const st = dom.panel.scrollTop;
-          core._avenuesExpandOnce = true;
+          core._avenuesExpandOnce = !collapsing;
           core.select(n, extraButtons);
           // restore INSTANTLY - scroll-behavior:smooth would animate the restore
-          // from the top, which reads as a glitch
+          // from the top, which reads as a glitch (browser clamps to the new max)
           dom.panel.style.scrollBehavior = "auto";
           dom.panel.scrollTop = st;
           dom.panel.style.scrollBehavior = "";
