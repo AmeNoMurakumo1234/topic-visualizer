@@ -62,11 +62,16 @@ exit doors, and the whole thing runs on one trust loop. Source:
 
 ## Try it in two minutes (demo mode)
 
-You do not need any real data - or even the plugin installed - to feel how it works:
+The fastest path is just to **install it** (two commands, straight from GitHub - see
+[INSTALL.md](INSTALL.md)); the AI-side capture works immediately and you run the
+bundled server to browse your tree.
+
+Want to see the views on synthetic data *before* installing? Grab the repo and run
+the bundled server once:
 
 ```
-git clone <this repo> && cd topic-visualizer
-python plugin/server/server.py
+claude plugin marketplace add AmeNoMurakumo1234/topic-visualizer   # or, to poke first:
+#   download/clone the repo, then:  python plugin/server/server.py
 ```
 
 Then open the printed URL with a `?demo=N` parameter:

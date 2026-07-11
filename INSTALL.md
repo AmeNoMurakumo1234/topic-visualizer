@@ -1,29 +1,59 @@
-# Install
+# Installing the Topic Visualizer
 
-**Just browsing?** You can feel the whole thing in two minutes without installing
-anything: run `python plugin/server/server.py` and open the printed URL with
-`?demo=120` (any count up to 1500) - synthetic, deterministic, never stored. Full
-demo tour in the [README](README.md#try-it-in-two-minutes-demo-mode).
+This repo is both a Claude Code marketplace and the `topic-visualizer` plugin it
+hosts. Source of truth: `https://github.com/AmeNoMurakumo1234/topic-visualizer`.
 
-The repo doubles as its own plugin marketplace (`.claude-plugin/marketplace.json` at
-the root, plugin source in `plugin/`). Two commands in any Claude Code session:
+## TL;DR
+
+1. Add the marketplace `AmeNoMurakumo1234/topic-visualizer`.
+2. Install the `topic-visualizer` plugin.
+3. The MCP tools + skills + hooks work immediately; run the bundled server any time
+   to browse your tree in the three views.
+
+## Quick start (terminal CLI)
+
+If you do not already have the Claude Code CLI: install it (Node.js 18+) with
+`npm install -g @anthropic-ai/claude-code` (or the native installer / Homebrew /
+WinGet; see the official [setup guide](https://code.claude.com/docs/en/setup)),
+run `claude`, and log in.
+
+Then add this marketplace + install the plugin straight from GitHub - no clone
+needed. From any terminal:
 
 ```
-/plugin marketplace add F:\writing\plugins\topic-visualizer
+claude plugin marketplace add AmeNoMurakumo1234/topic-visualizer
+claude plugin install topic-visualizer@topic-visualizer
+```
+
+Inside a running `claude` session, use the slash forms instead:
+
+```
+/plugin marketplace add AmeNoMurakumo1234/topic-visualizer
 /plugin install topic-visualizer@topic-visualizer
 ```
 
-(From GitHub instead: `/plugin marketplace add <owner>/topic-visualizer`.)
+**Pin it in a repo (declarative).** Commit a `.claude/settings.json`:
 
-Validate the manifest any time with `claude plugin validate ./plugin`.
+```json
+{
+  "extraKnownMarketplaces": {
+    "topic-visualizer": { "source": { "source": "github", "repo": "AmeNoMurakumo1234/topic-visualizer" } }
+  },
+  "enabledPlugins": { "topic-visualizer@topic-visualizer": true }
+}
+```
+
+**Desktop app.** Manage plugins from the **+ button -> Plugins**. Adding a new
+custom (non-official) marketplace may require the CLI / integrated terminal on
+some builds; the commands above work there too.
 
 ## What you get, immediately
 
 - **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`,
-  `topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. No server needs to be
-  running: the tools fall back to direct SQLite at `${CLAUDE_PLUGIN_DATA}/topics.db`
-  (survives plugin updates). If the topics server IS running they pass through it -
-  same store, same behavior.
+  `topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. No server
+  needs to be running: the tools fall back to direct SQLite at
+  `${CLAUDE_PLUGIN_DATA}/topics.db` (survives plugin updates). If the topics server
+  IS running they pass through it - same store, same behavior.
 - **Skills**: `topics-capture` (silent capture at the fork; mortality-aware near
   compaction), `topics-serve` (one card, first session of the day), `topics-groom`
   (the gardener's round, evidence-calibrated).
@@ -35,13 +65,22 @@ Validate the manifest any time with `claude plugin validate ./plugin`.
 
 ## Seeing the tree (the human half)
 
+The MCP tools capture and serve without any UI. To browse your tree in the three
+views, run the bundled server against your topics DB:
+
 ```
-python <plugin>/server/server.py --db <CLAUDE_PLUGIN_DATA>/topics.db
+python "<plugin-dir>/server/server.py" --db "<your-topics.db>"
 ```
 
-It prints the URL (default http://127.0.0.1:8991) - three views over your tree:
-Constellation, Lineage, Star Chart. Localhost only. The plugin never phones home;
-your maybes are yours.
+`<plugin-dir>` is where Claude Code installed the plugin (the plugins cache under
+your Claude config dir); `<your-topics.db>` defaults to
+`${CLAUDE_PLUGIN_DATA}/topics.db`. It prints a localhost URL (default
+`http://127.0.0.1:8991`) - Constellation, Lineage, Star Chart over your tree,
+localhost only. The plugin never phones home; your maybes are yours.
+
+Prefer to kick the tires before installing? See the demo in the
+[README](README.md#try-it-in-two-minutes-demo-mode) - synthetic, deterministic,
+never stored.
 
 ## Configuration (env, all optional)
 
@@ -57,5 +96,11 @@ your maybes are yours.
 ## Uninstall / disable
 
 `/plugin uninstall topic-visualizer` - or disable it and keep using your own
-integration (this machine's message-board Topics tab is exactly that: the same
-vendored views over a board adapter).
+integration ([INTEGRATING.md](INTEGRATING.md) shows how to embed the views in
+another app).
+
+## Contributing / building from source
+
+Cloning is only for contributors, not consumers. `claude plugin validate ./plugin`
+checks the manifest; the repo doubles as its own marketplace (root
+`.claude-plugin/marketplace.json`, plugin source in `plugin/`).
