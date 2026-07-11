@@ -52,7 +52,10 @@ window.TopicsRenderers.lineage = (function () {
    * heights - a fixed row slot is exactly the overlap bug we shipped once. */
   function render() {
     if (!stage) return;
-    cards.innerHTML = ""; wires.innerHTML = "";
+    cards.innerHTML = "";
+    wires.innerHTML = `<defs><marker id="tvXArrowL" viewBox="0 0 10 10" refX="8" refY="5"
+      markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b48be0"/></marker></defs>`;
     const visible = [];
     const collect = (n, depth) => {
       if (n.open === undefined) n.open = true;
@@ -86,7 +89,12 @@ window.TopicsRenderers.lineage = (function () {
           ${n.state === "seedling" ? `<span class="chip seed">seedling</span>` : ""}
           ${n.extraParents && n.extraParents.length
             ? `<span class="chip xlink" title="also reachable via ${n.extraParents
-                 .map(x => x.slug).join(", ")}">&#8618; ${n.extraParents.length + 1} avenues</span>` : ""}
+                 .map(x => x.slug).join(", ")}">&#8618; ${n.extraParents.length
+                 + (n.parent ? 1 : 0)} in</span>` : ""}
+          ${(core.xlinks || []).some(x => x.to === n)
+            ? `<span class="chip xlink" title="extra avenue INTO ${(core.xlinks || [])
+                 .filter(x => x.to === n).map(x => x.from.slug).join(", ")}">&#8618; ${
+                 (core.xlinks || []).filter(x => x.to === n).length} out</span>` : ""}
         </div>
         ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {
@@ -140,20 +148,26 @@ window.TopicsRenderers.lineage = (function () {
       }
     }
     // cross-link wires (multi-parent DAG): dashed violet curves from each EXTRA
-    // avenue to the child, connecting whichever card edges face each other -
-    // drawn only when both cards are visible (a collapsed avenue stays quiet)
+    // avenue to the child. GRAMMAR MATTERS (owner-caught): in this view the left
+    // edge means "parent side" and the right edge means "child side", so a cross
+    // wire ALWAYS leaves the parent's RIGHT edge and enters the child's LEFT edge
+    // (looping backward when the child sits left of the parent) - nearest-edge
+    // anchoring made an outgoing link read as a second parent. Arrowheads point
+    // at the child. Drawn only when both cards are visible.
     const shown = new Set(visible.map(n => n.slug));
     for (const n of visible) {
       for (const x of (n.extraParents || [])) {
         const p = core.bySlug[x.slug];
         if (!p || !shown.has(p.slug)) continue;
         const path = document.createElementNS(SVG_NS, "path");
-        const goRight = p.lx + W <= n.lx;
-        const x1 = goRight ? p.lx + W : p.lx, y1 = p.ly + (p.lh || ROWH) / 2,
-              x2 = goRight ? n.lx : n.lx + W, y2 = n.ly + (n.lh || ROWH) / 2,
-              mx = (x1 + x2) / 2;
-        path.setAttribute("d", `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+        const x1 = p.lx + W, y1 = p.ly + (p.lh || ROWH) / 2,
+              x2 = n.lx, y2 = n.ly + (n.lh || ROWH) / 2;
+        const back = x2 < x1;                      // child sits left of the parent
+        const c1 = back ? x1 + 70 : (x1 + x2) / 2,
+              c2 = back ? x2 - 70 : (x1 + x2) / 2;
+        path.setAttribute("d", `M ${x1} ${y1} C ${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`);
         path.setAttribute("class", "wire xwire");
+        path.setAttribute("marker-end", "url(#tvXArrowL)");
         wires.appendChild(path);
       }
     }

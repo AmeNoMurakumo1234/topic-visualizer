@@ -26,6 +26,10 @@ window.TopicsRenderers.starchart = (function () {
         <stop offset="60%" stop-color="#4160b8" stop-opacity="0.12"/>
         <stop offset="100%" stop-color="#4160b8" stop-opacity="0"/>
       </radialGradient>
+      <marker id="tvXArrow" viewBox="0 0 10 10" refX="8" refY="5"
+        markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#b48be0"/>
+      </marker>
     </defs>`;
 
   let core, stage, view, orbitsG, fogG, edgesG, nodesG, crumbsEl;
@@ -185,7 +189,9 @@ window.TopicsRenderers.starchart = (function () {
       if (!inView.has(x.from.slug) || !inView.has(x.to.slug)) continue;
       const e = document.createElementNS(SVG_NS, "path");
       e.setAttribute("class", "edge xlink");
-      e.dataset.a = x.from.slug; e.dataset.b = x.to.slug;
+      // parent -> child so the arrowhead lands on the CHILD (direction grammar)
+      e.dataset.a = x.to.slug; e.dataset.b = x.from.slug;
+      e.setAttribute("marker-end", "url(#tvXArrow)");
       edgesG.appendChild(e);
     }
     position(); scheduleLabels();
