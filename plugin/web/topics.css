@@ -106,7 +106,12 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
          background: linear-gradient(165deg, #131b33f2 0%, #0c1225f6 55%, #0a0f1ff8 100%);
          border: 1px solid #31406e; border-radius: 16px;
          box-shadow: 0 18px 60px #00000090, 0 0 0 1px #6ea8ff14 inset, 0 0 44px #3a5bbf22 inset;
-         backdrop-filter: blur(9px); }
+         backdrop-filter: blur(9px);
+         /* long expanded lists scroll smoothly with NO visible scrollbar (the
+            glass card stays clean); overscroll never chains to the page */
+         scroll-behavior: smooth; overscroll-behavior: contain;
+         scrollbar-width: none; -ms-overflow-style: none; }
+#panel::-webkit-scrollbar { display: none; }
 #panel.open { display: block; animation: panelin 0.18s ease; }
 @keyframes panelin { from { opacity: 0; transform: translateX(14px); }
                      to { opacity: 1; transform: none; } }

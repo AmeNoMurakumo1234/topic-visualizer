@@ -402,9 +402,18 @@ window.TopicsCore = (function () {
         };
       });
       // "+N more" expands the capped avenue lists in place (collapses again on
-      // the next selection)
+      // the next selection); the re-render must NOT jump the scroll back to top
       dom.panel.querySelectorAll(".avmore").forEach(el => {
-        el.onclick = () => { core._avenuesExpandOnce = true; core.select(n, extraButtons); };
+        el.onclick = () => {
+          const st = dom.panel.scrollTop;
+          core._avenuesExpandOnce = true;
+          core.select(n, extraButtons);
+          // restore INSTANTLY - scroll-behavior:smooth would animate the restore
+          // from the top, which reads as a glitch
+          dom.panel.style.scrollBehavior = "auto";
+          dom.panel.scrollTop = st;
+          dom.panel.style.scrollBehavior = "";
+        };
       });
       dom.panel.querySelectorAll(".avx").forEach(el => {
         el.onclick = async () => {
