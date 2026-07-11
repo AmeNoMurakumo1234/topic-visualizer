@@ -15,6 +15,16 @@ might yield work, or a decision, or nothing at all. There was no home for
 
 This plugin is that home.
 
+## Architecture at a glance
+
+![Topic Visualizer architecture](docs/architecture.png)
+
+Two minds meet at the seam: the AI captures unpursued topics into a local SQLite
+DAG; the human explores them through three switchable views. Everything is
+storage-blind behind the adapter law, topics leave only through three explicit
+exit doors, and the whole thing runs on one trust loop. Source:
+[docs/architecture.html](docs/architecture.html).
+
 ## What it is
 
 - **A topics ledger** - a local SQLite tree of conversation topics. Every AI session can

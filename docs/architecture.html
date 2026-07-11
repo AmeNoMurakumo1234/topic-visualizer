@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;padding:0;background:#080b16;}
+  svg{display:block;background:radial-gradient(ellipse 130% 100% at 50% 0%, #12193a 0%, #0a0e1e 45%, #060812 100%);
+      font-family:"Segoe UI",Arial,sans-serif;}
+  .box{box-sizing:border-box;width:100%;height:100%;border-radius:14px;border:2px solid #3a4666;
+       padding:12px 18px;overflow:hidden;backdrop-filter:blur(2px);}
+  .box h3{margin:0 0 2px 0;font-size:22px;line-height:1.15;}
+  .box .sub{margin:0 0 7px 0;font-size:15px;font-style:italic;opacity:.75;}
+  .box ul{margin:5px 0 0 0;padding-left:20px;}
+  .box li{font-size:16px;line-height:1.34;margin:4px 0;}
+  .box .small{font-size:14.5px;opacity:.9;}
+  .intake{background:linear-gradient(155deg,#18294a,#101a30);border-color:#5b9bd5;color:#dce9fb;
+          box-shadow:0 0 26px #5b9bd530, inset 0 0 30px #5b9bd514;}
+  .store{background:linear-gradient(155deg,#2c2614,#1c180d);border-color:#d0a94e;color:#f3e9cf;
+         box-shadow:0 0 30px #d0a94e34, inset 0 0 34px #d0a94e14;}
+  .tension{background:linear-gradient(155deg,#331b16,#20110d);border-color:#df7f6b;color:#f8ded6;
+           box-shadow:0 0 26px #df7f6b2e, inset 0 0 30px #df7f6b12;}
+  .internal{background:linear-gradient(155deg,#271b40,#181026);border-color:#b28ee6;color:#e9ddfb;
+            box-shadow:0 0 26px #b28ee62e, inset 0 0 30px #b28ee612;}
+  .external{background:linear-gradient(155deg,#153020,#0d1e14);border-color:#5fc78d;color:#dcf5e4;
+            box-shadow:0 0 26px #5fc78d2e, inset 0 0 30px #5fc78d12;}
+  .guard{background:linear-gradient(155deg,#332c10,#221d0a);border-color:#ecd257;border-width:3px;color:#fbf3c8;
+         box-shadow:0 0 34px #ecd25740, inset 0 0 30px #ecd25716;}
+  .out{background:linear-gradient(155deg,#122e31,#0b1d1f);border-color:#5fc7d2;color:#d7f1f4;
+       box-shadow:0 0 26px #5fc7d22e, inset 0 0 30px #5fc7d212;}
+  .accent{color:#ffd479;font-weight:600;}
+  .warn{color:#ff9284;font-weight:600;}
+  .k{color:#8fd0ff;font-weight:600;}
+  text.elabel{font-size:15px;fill:#9fb0c8;font-family:"Segoe UI",Arial,sans-serif;font-style:italic;}
+  text.loop{font-size:16px;fill:#d0a94e;font-style:italic;}
+  text.title{font-size:32px;font-weight:700;fill:#eaf2ff;}
+  text.subt{font-size:18px;fill:#9fb0c8;}
+</style></head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="2720" height="1180" viewBox="0 0 2720 1180">
+  <defs>
+    <marker id="arr" markerWidth="13" markerHeight="13" refX="9.5" refY="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8496ad"/></marker>
+    <marker id="arrt" markerWidth="13" markerHeight="13" refX="9.5" refY="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d0a94e"/></marker>
+  </defs>
+
+  <text class="title" x="42" y="50">Topic Visualizer &#8212; the seam between a human mind and an AI mind</text>
+  <text class="subt" x="42" y="82">a home for might-not-do: the conversations you haven't had yet, kept alive instead of dying in scrollback</text>
+
+  <!-- ===== EDGES (under boxes) ===== -->
+  <g fill="none" stroke="#8496ad" stroke-width="2.4">
+    <path d="M400,250 C428,250 428,360 452,360" marker-end="url(#arr)"/>          <!-- AI->capture -->
+    <path d="M400,480 C428,480 428,430 452,430" marker-end="url(#arr)"/>          <!-- human->capture -->
+    <path d="M832,395 C856,395 856,430 882,430" marker-end="url(#arr)"/>          <!-- capture->tree -->
+    <path d="M1352,320 C1378,320 1378,280 1404,280" marker-end="url(#arr)"/>      <!-- tree->MCP -->
+    <path d="M1352,560 C1378,560 1378,600 1404,600" marker-end="url(#arr)"/>      <!-- tree->web -->
+    <path d="M1834,285 C1858,285 1858,300 1884,300" marker-end="url(#arr)"/>      <!-- MCP->serve -->
+    <path d="M2244,330 C2268,330 2268,360 2294,360" marker-end="url(#arr)"/>      <!-- serve->exit -->
+    <path d="M1834,600 C2080,600 2120,470 2294,470" marker-end="url(#arr)"/>      <!-- web->exit -->
+  </g>
+  <!-- the TRUST LOOP: exit -> loop banner -> back to capture (gold, dashed) -->
+  <g fill="none" stroke="#d0a94e" stroke-width="2.6" stroke-dasharray="9 7">
+    <path d="M2470,690 C2470,820 2360,905 2250,905" marker-end="url(#arrt)"/>     <!-- exit->loop -->
+    <path d="M470,905 C300,905 300,470 452,405" marker-end="url(#arrt)"/>         <!-- loop->capture -->
+  </g>
+
+  <!-- ===== NODES ===== -->
+  <foreignObject x="40" y="150" width="360" height="200">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box internal">
+      <h3>AI mind</h3>
+      <div class="sub">surfaces many, pursues one</div>
+      <ul><li>presents 4, or 7, worth-talking-about threads</li>
+      <li>you follow ONE; it becomes a real session</li>
+      <li>the other six just <span class="warn">got lost</span></li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="40" y="382" width="360" height="196">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box intake">
+      <h3>Human mind</h3>
+      <div class="sub">might-not-do</div>
+      <ul><li>a maybe worth keeping</li>
+      <li>not a task, not a decision yet</li>
+      <li>a conversation not <i>yet</i> had</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="452" y="255" width="380" height="320">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box intake">
+      <h3>Capture</h3>
+      <div class="sub">silent, at the fork &#183; MCP topic_add</div>
+      <ul><li>plant the instant a topic is set aside &#8212; no permission, no interruption</li>
+      <li>enters as a <span class="k">seedling</span> (auto-expires ~21d untouched, so over-capture is cheap)</li>
+      <li><span class="accent">mortality-aware</span> near compaction: lower the bar, sweep before ideas are lost</li>
+      <li>near-duplicate &#8594; <b>attach</b>, never a twin</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="882" y="210" width="470" height="470">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box store">
+      <h3>The topic tree</h3>
+      <div class="sub">one local SQLite store &#183; one home per topic</div>
+      <ul><li>multi-parent <span class="accent">DAG</span> &#8212; many roads into one topic, never a duplicated subtree</li>
+      <li>lifecycle: <span class="k">seedling</span> &#8594; open &#8594; discussed</li>
+      <li>pruned / expired = <b>archived</b>, always resurrectable (death by choice)</li>
+      <li>rare critical <span class="accent">beacons</span> &#8212; the loud voice, kept scarce</li>
+      <li>semantic dedup + search (local embedder; keyword fallback)</li>
+      <li>append-only event history (honest prune, cheap reopen)</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="882" y="720" width="470" height="180">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box guard">
+      <h3>The adapter law</h3>
+      <ul><li>every view + tool is <b>storage-blind</b></li>
+      <li>one small adapter per backend (SQLite &#183; message board &#183; your app)</li>
+      <li>vendored views are never edited &#8212; fix upstream, re-copy</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="1404" y="150" width="430" height="255">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box internal">
+      <h3>MCP face &#8212; the AI's hands</h3>
+      <div class="sub">7 stdio tools</div>
+      <ul><li>add &#183; serve &#183; search &#183; state &#183; convert &#183; attach &#183; groom</li>
+      <li>zero setup: direct-sqlite fallback when no server runs</li>
+      <li>board backend: convert <b>mints a real work item</b></li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="1404" y="440" width="430" height="340">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box external">
+      <h3>Web face &#8212; the human's eyes</h3>
+      <div class="sub">one tree, three ways</div>
+      <ul><li><b>Constellation</b> &#8212; force graph (what does my idea space look like?)</li>
+      <li><b>Lineage</b> &#8212; collapsible tidy tree (work this branch)</li>
+      <li><b>Star Chart</b> &#8212; radial focus+context (re-root anywhere)</li>
+      <li>semantic zoom (labels readable-or-absent), family hues,</li>
+      <li>facet search, deep-space backdrop, archive explorer</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="1884" y="185" width="360" height="230">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box out">
+      <h3>Serve</h3>
+      <div class="sub">one card, never the list</div>
+      <ul><li>first session of the day (SessionStart hook)</li>
+      <li>beacons &gt; territory fit &gt; oldest-important resurfacing</li>
+      <li>a gift at a boundary, never a nag</li></ul>
+    </div></foreignObject>
+
+  <foreignObject x="2294" y="250" width="380" height="440">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box tension">
+      <h3>The three exit doors</h3>
+      <div class="sub">a maybe never silently becomes a commitment</div>
+      <ul><li><b>pruned</b> &#8212; chose not to explore; costs nothing, cancels nothing</li>
+      <li><b>discussed</b> &#8212; the conversation happened; reopenable</li>
+      <li><b>converted</b> &#8212; recorded as a <span class="k">decision</span> or a real <span class="k">work item</span></li></ul>
+      <div class="small" style="margin-top:10px;border-top:1px solid #df7f6b55;padding-top:8px">
+      the hard ontological line:<br/>
+      <b class="accent">EXPLORING</b> (here) &#8594; <b>DECIDED</b> (a ledger) &#8594; <b>ACTING</b> (your tracker)</div>
+    </div></foreignObject>
+
+  <foreignObject x="470" y="920" width="1780" height="170">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box store" style="border-style:dashed;">
+      <h3>The trust loop <span style="font-weight:400;font-size:15px;font-style:italic;opacity:.75">&#8212; why every discipline above exists</span></h3>
+      <div class="small" style="margin-top:4px">
+      Junk capture &#8594; distrust &#8594; nothing worth serving &#8594; capture decays &#8594; the tree dies. Every choice spins the loop the OTHER way:
+      <b>silent seedling capture</b> keeps the bar low without noise &#183; <b>expiry + pruning</b> keep the store trustworthy &#183;
+      <b>one-card serving</b> makes it worth reading &#183; <b>explicit conversion</b> keeps maybe-space from masquerading as committed-space.
+      A store worth trusting is a store worth serving is a store worth capturing into.</div>
+    </div></foreignObject>
+
+</svg>
+</body></html>
