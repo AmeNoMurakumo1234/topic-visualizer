@@ -19,7 +19,7 @@
   <input id="quickadd" class="seambox" type="text" placeholder="+ quick add (Enter; child of selection)" />
   <label class="archchip" title="show pruned + expired topics as ghosts (everything is resurrectable)">
     <input id="archive" type="checkbox" /> archive</label>
-  <select id="bgpick" class="seambox" title="backdrop scene" style="display:none"></select>
+  <button id="bgopen" class="seambox" title="choose a backdrop" style="display:none">&#9673; backdrop</button>
   <span class="hud"><b id="stat"></b><span id="hint" class="dim"></span></span>
 </header>
 <div id="legend" class="legend"></div>
@@ -29,6 +29,11 @@
   <div id="panel"></div>
 </main>
 <div id="confirm"><div class="box" id="confirmBox"></div></div>
+<div id="bgmodal"><div class="bgpanel">
+  <div class="bghead"><b>Backdrop</b><span class="dim">pick a scene, or the generated default</span>
+    <button class="bgclose" title="close (Esc)">&times;</button></div>
+  <div class="bggrid" id="bggrid"></div>
+</div></div>
 
 <script src="topics-core.js"></script>
 <script src="adapter-sqlite.js"></script>

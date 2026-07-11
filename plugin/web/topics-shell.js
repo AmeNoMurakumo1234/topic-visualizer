@@ -90,11 +90,13 @@
   })();
 
   // backdrop: the generated canvas scene is the DEFAULT; if the plugin's
-  // backgrounds/ folder has images, offer a picker to swap in one of those
-  // (mostly-transparent, so nodes stay legible). Choice persists.
+  // backgrounds/ folder has images, a modal thumbnail gallery lets the user
+  // eyeball-pick one (mostly-transparent, so nodes stay legible). Choice persists.
   const starsCanvas = document.getElementById("stars");
   const bgImage = document.getElementById("bgimage");
-  const bgPick = document.getElementById("bgpick");
+  const bgOpen = document.getElementById("bgopen");
+  const bgModal = document.getElementById("bgmodal");
+  const bgGrid = document.getElementById("bggrid");
   function applyBackdrop(choice, urlBase) {
     if (choice && choice !== "__default__") {
       bgImage.style.backgroundImage = `url("${urlBase}${encodeURIComponent(choice)}")`;
@@ -111,21 +113,43 @@
   addEventListener("resize", () => {
     if (starsCanvas.style.display !== "none") core.paintStars(stage, starsCanvas);
   });
-  if (bgPick && window.TopicsAdapter.backgrounds && !demo) {
+  if (bgOpen && bgModal && window.TopicsAdapter.backgrounds && !demo) {
     (async () => {
       const { list, urlBase } = await window.TopicsAdapter.backgrounds();
       if (!list.length) return;               // no images -> keep the default scene
-      const saved = localStorage.getItem("topics-bg") || "__default__";
-      const pretty = f => f.replace(/\.(png|jpe?g|webp)$/i, "").replace(/[-_]/g, " ");
-      bgPick.innerHTML = `<option value="__default__">backdrop: generated</option>`
-        + list.map(f => `<option value="${f}">${pretty(f)}</option>`).join("");
-      bgPick.value = list.includes(saved) ? saved : "__default__";
-      bgPick.style.display = "";
-      applyBackdrop(bgPick.value, urlBase);
-      bgPick.addEventListener("change", () => {
-        localStorage.setItem("topics-bg", bgPick.value);
-        applyBackdrop(bgPick.value, urlBase);
+      let current = localStorage.getItem("topics-bg") || "__default__";
+      if (current !== "__default__" && !list.includes(current)) current = "__default__";
+      const pretty = f => f.replace(/\.(png|jpe?g|webp|gif|avif)$/i, "").replace(/[-_]/g, " ");
+      const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      // "generated" tile first, then a thumbnail per image (lazy-loaded; the tile
+      // is dark so a transparent image composites to its true backdrop look)
+      bgGrid.innerHTML =
+        `<button class="bgtile gen${current === "__default__" ? " sel" : ""}" data-bg="__default__">
+           <span class="bgthumb bggen"></span><span class="bglabel">generated</span></button>`
+        + list.map(f =>
+          `<button class="bgtile${current === f ? " sel" : ""}" data-bg="${esc(f)}">
+             <img class="bgthumb" loading="lazy" src="${urlBase}${encodeURIComponent(f)}" alt="">
+             <span class="bglabel">${esc(pretty(f))}</span></button>`).join("");
+      const closeModal = () => { bgModal.className = ""; };
+      const pick = choice => {
+        current = choice;
+        localStorage.setItem("topics-bg", choice);
+        applyBackdrop(choice, urlBase);
+        for (const t of bgGrid.children) t.classList.toggle("sel", t.dataset.bg === choice);
+        closeModal();
+      };
+      bgOpen.style.display = "";
+      bgOpen.addEventListener("click", () => { bgModal.className = "open"; });
+      bgGrid.addEventListener("click", e => {
+        const t = e.target.closest(".bgtile");
+        if (t) pick(t.dataset.bg);
       });
+      bgModal.querySelector(".bgclose").addEventListener("click", closeModal);
+      bgModal.addEventListener("click", e => { if (e.target === bgModal) closeModal(); });
+      addEventListener("keydown", e => {
+        if (e.key === "Escape" && bgModal.classList.contains("open")) closeModal();
+      });
+      applyBackdrop(current, urlBase);
     })();
   }
 

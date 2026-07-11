@@ -259,3 +259,38 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
   92%   { opacity: 0; transform: translate(62vw, 18vw) rotate(16deg); }
   100%  { opacity: 0; transform: translate(62vw, 18vw) rotate(16deg); }
 }
+
+/* ---- backdrop picker: modal thumbnail gallery (2026-07-11) ---- */
+#bgopen { cursor: pointer; }
+#bgmodal { position: fixed; inset: 0; background: #030509d0; display: none;
+           align-items: center; justify-content: center; z-index: 20;
+           backdrop-filter: blur(3px); }
+#bgmodal.open { display: flex; animation: panelin 0.16s ease; }
+#bgmodal .bgpanel { width: min(1040px, 92vw); max-height: 86vh; display: flex;
+  flex-direction: column; overflow: hidden; border-radius: 16px;
+  background: linear-gradient(165deg, #131b33f6 0%, #0b1122fa 60%, #090d1bfc 100%);
+  border: 1px solid #31406e; box-shadow: 0 24px 70px #000000a0, 0 0 44px #3a5bbf22 inset; }
+#bgmodal .bghead { display: flex; align-items: baseline; gap: 12px;
+  padding: 16px 20px; border-bottom: 1px solid #232f55; font-size: 15px; }
+#bgmodal .bghead b { background: linear-gradient(90deg, #eaf2ff, #a8c4ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent; letter-spacing: 0.02em; }
+#bgmodal .bgclose { margin-left: auto; background: none; border: none; color: var(--dim);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; }
+#bgmodal .bgclose:hover { color: var(--ink); }
+.bggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px; padding: 18px 20px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: #3a4666 transparent; }
+.bgtile { display: flex; flex-direction: column; gap: 6px; padding: 0; cursor: pointer;
+  background: none; border: none; text-align: left; }
+.bgthumb { display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 10px;
+  object-fit: cover; border: 2px solid #2a3558;
+  background: radial-gradient(ellipse 130% 100% at 50% 0%, #12193a, #070b1a 70%, #05070f);
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease; }
+.bgtile:hover .bgthumb { transform: translateY(-2px); border-color: #4a5a8a;
+  box-shadow: 0 6px 22px #6ea8ff33; }
+.bgtile.sel .bgthumb { border-color: var(--accent); box-shadow: 0 0 0 2px #6ea8ff55, 0 0 18px #6ea8ff44; }
+.bggen { display: flex; align-items: center; justify-content: center; }
+.bggen::after { content: "generated scene"; color: #7d8ab0; font-size: 12px; font-style: italic; }
+.bglabel { font-size: 12px; color: var(--dim); padding: 0 2px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.bgtile.sel .bglabel { color: var(--ink); }
