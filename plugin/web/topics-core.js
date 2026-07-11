@@ -161,6 +161,15 @@ window.TopicsCore = (function () {
       for (const q of qToks) hit += Math.sqrt(tf[q] || 0);
       return hit / Math.sqrt(toks.length + 8);
     };
+    // FACET terms filter by state/beacon ("critical", "discussed"...) and combine
+    // with free text; mirrors the server's _FACETS - keep the two in sync
+    const FACETS = {
+      critical: n => n.critical, beacon: n => n.critical,
+      seedling: n => n.state === "seedling", open: n => n.state === "open",
+      discussed: n => n.state === "discussed", pruned: n => n.state === "pruned",
+      expired: n => n.state === "expired",
+      archived: n => n.state === "pruned" || n.state === "expired",
+    };
     core.setSearch = async function (q) {
       core.searchQuery = String(q || "").trim();
       if (!core.searchQuery) { core.matched = null; core.onChange(); return; }
@@ -171,9 +180,13 @@ window.TopicsCore = (function () {
       if (ranked) {
         core.matched = new Set(ranked.map(r => r.slug));
       } else {
-        const qToks = (core.searchQuery.toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+        const words = core.searchQuery.toLowerCase().split(/\s+/);
+        const facets = words.filter(w => FACETS[w]).map(w => FACETS[w]);
+        const qToks = (words.filter(w => !FACETS[w]).join(" ")
+                       .match(/[a-z0-9]{3,}/g) || []);
         core.matched = new Set(core.nodes
-          .filter(n => scoreText(qToks, n.title + " " + n.body) > 0)
+          .filter(n => facets.every(f => f(n)))
+          .filter(n => !qToks.length || scoreText(qToks, n.title + " " + n.body) > 0)
           .map(n => n.slug));
       }
       core.onChange();

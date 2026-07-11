@@ -442,9 +442,34 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
     return {"ok": True, "attached": parent_slug}
 
 
+# FACET terms: state / beacon words act as FILTERS, so "critical" finds every
+# beacon and "critical grounding" ranks beacons by "grounding". Mirrored in the
+# web core's client-side fallback (topics-core.js) - keep the two in sync.
+_FACETS = {
+    "critical": lambda t: t["priority"] == "critical",
+    "beacon":   lambda t: t["priority"] == "critical",
+    "seedling": lambda t: t["state"] == "seedling",
+    "open":     lambda t: t["state"] == "open",
+    "discussed": lambda t: t["state"] == "discussed",
+    "pruned":   lambda t: t["state"] == "pruned",
+    "expired":  lambda t: t["state"] == "expired",
+    "archived": lambda t: t["state"] in ("pruned", "expired"),
+}
+
+
 def search_in(query, topics, limit=40):
-    """Ranked search over a given topic list (store-agnostic). SEMANTIC when the
-    embedder is up (cosine over MiniLM vectors); keyword scoring otherwise."""
+    """Ranked search over a given topic list (store-agnostic). Facet words filter
+    by state/beacon; the rest of the query ranks SEMANTICALLY when the embedder is
+    up (cosine over MiniLM vectors), by keyword scoring otherwise."""
+    words = query.lower().split()
+    facets = [_FACETS[w] for w in words if w in _FACETS]
+    rest = " ".join(w for w in words if w not in _FACETS)
+    if facets:
+        topics = [t for t in topics if all(f(t) for f in facets)]
+        if not rest.strip():
+            return [{"slug": t["slug"], "score": 1.0, "state": t["state"],
+                     "mode": "facet"} for t in topics][:limit]
+        query = rest
     ranked = semantic_rank(query, topics)
     if ranked is not None:
         return [{"slug": x["slug"], "score": round(s, 4), "state": x["state"],

@@ -152,6 +152,21 @@ class SeamTests(unittest.TestCase):
         actors = {row["actor"] for row in g["capture_calibration"]}
         self.assertIn("ai", actors)
 
+    def test_08b_facet_search(self):
+        r = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "facet: the beacon topic", "priority": "critical"},
+            {"title": "facet: plain grounding topic"}]})
+        crit, plain = [x["slug"] for x in r["results"]]
+        res = call("/api/topics/search?q=critical")["results"]
+        slugs = [x["slug"] for x in res]
+        self.assertIn(crit, slugs, "facet word matches the beacon chip")
+        self.assertNotIn(plain, slugs)
+        self.assertTrue(all(x["mode"] == "facet" for x in res))
+        # facet + free text combine: critical topics ranked by the remaining words
+        res2 = call("/api/topics/search?q=critical%20beacon%20topic")["results"]
+        self.assertIn(crit, [x["slug"] for x in res2])
+        self.assertNotIn(plain, [x["slug"] for x in res2])
+
     def test_09_multi_parent_attach_and_enrichment(self):
         r = call("/api/topics", {"actor": "ai", "topics": [
             {"title": "dag: avenue one"}, {"title": "dag: avenue two"},
