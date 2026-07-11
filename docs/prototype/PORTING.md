@@ -1,4 +1,4 @@
-# web/prototype - the working snapshot, and how it becomes the plugin's web layer
+# docs/prototype - the working snapshot (formerly web/prototype), and how it becomes the plugin's web layer
 
 These four files are a verbatim snapshot (2026-07-11) of the WORKING prototype from the
 birthplace instance, where they run against a message-board backend. They are kept here

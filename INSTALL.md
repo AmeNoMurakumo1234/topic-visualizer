@@ -1,17 +1,53 @@
 # Install
 
-**Not yet installable - pre-release foundation.** This document will carry the real
-flow once the server ships (see [ROADMAP.md](ROADMAP.md)). The intended shape, so you
-know where this is going:
+The repo doubles as its own plugin marketplace (`.claude-plugin/marketplace.json` at
+the root, plugin source in `plugin/`). Two commands in any Claude Code session:
 
-1. Install the plugin (Claude Code plugin marketplace or `claude plugin` CLI, same
-   flow as the sibling Mind Coherence Suite).
-2. First run creates `topics.db` next to your project (or at a configured path) and
-   starts the local topics server (localhost only).
-3. Open the Topics page in your browser (the server prints the URL) - three views,
-   one tree, initially empty.
-4. Work with Claude normally. The `topics-capture` skill plants unpursued topics as
-   they surface; ask "deal me one" any time (`topics-serve`); run `topics-groom`
-   weekly.
+```
+/plugin marketplace add F:\writing\plugins\topic-visualizer
+/plugin install topic-visualizer@topic-visualizer
+```
 
-The plugin never phones home; everything is local. Your maybes are yours.
+(From GitHub instead: `/plugin marketplace add <owner>/topic-visualizer`.)
+
+Validate the manifest any time with `claude plugin validate ./plugin`.
+
+## What you get, immediately
+
+- **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`,
+  `topic_state`, `topic_convert`, `topic_groom_report`. No server needs to be
+  running: the tools fall back to direct SQLite at `${CLAUDE_PLUGIN_DATA}/topics.db`
+  (survives plugin updates). If the topics server IS running they pass through it -
+  same store, same behavior.
+- **Skills**: `topics-capture` (silent capture at the fork; mortality-aware near
+  compaction), `topics-serve` (one card, first session of the day), `topics-groom`
+  (the gardener's round, evidence-calibrated).
+- **Hooks**: SessionStart serves the first-of-day card; Stop and PreCompact remind
+  the AI to sweep unplanted seedlings - the mechanism at the discipline-decay points.
+
+## Seeing the tree (the human half)
+
+```
+python <plugin>/server/server.py --db <CLAUDE_PLUGIN_DATA>/topics.db
+```
+
+It prints the URL (default http://127.0.0.1:8991) - three views over your tree:
+Constellation, Lineage, Star Chart. Localhost only. The plugin never phones home;
+your maybes are yours.
+
+## Configuration (env, all optional)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TOPICS_DB` | `${CLAUDE_PLUGIN_DATA}/topics.db` | SQLite path (MCP direct fallback) |
+| `TOPICS_SERVER_URL` | `http://127.0.0.1:8991` | running topics server, if any |
+| `TOPICS_EMBED_URL` | `http://127.0.0.1:8082` | OpenAI-style `/v1/embeddings` endpoint; semantic search/dedup when up, keyword fallback when not |
+| `TOPICS_BACKEND` | `server` | `board` swaps every tool onto a message-board backend (topics as `OPEN THREAD` posts) |
+| `TOPICS_BOARD_URL` / `TOPICS_BOARD_PROJECT` / `TOPICS_BOARD_AUTHOR` | - | board backend knobs |
+| `TOPICS_ACTOR` | `ai` | actor stamped on MCP writes |
+
+## Uninstall / disable
+
+`/plugin uninstall topic-visualizer` - or disable it and keep using your own
+integration (this machine's message-board Topics tab is exactly that: the same
+vendored views over a board adapter).

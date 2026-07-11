@@ -63,14 +63,14 @@ committed-space. Read [CHARTER.md](CHARTER.md) - it is the soul of the thing.
 **Pre-release: foundation.** The full working prototype runs today against a message
 board backend (its birthplace); this repo is the generalized plugin form. See
 [ROADMAP.md](ROADMAP.md) for the port plan and [server/](server/) for the storage
-design. The prototype views live in [web/prototype/](web/prototype/) with provenance.
+design. The prototype views live in [docs/prototype/](docs/prototype/) with provenance.
 
 ## Contents
 
 - [CHARTER.md](CHARTER.md) - the philosophy; read before adopting
 - [plugin/](plugin/) - the Claude Code plugin (manifest + skills)
 - [server/](server/) - storage schema + API design (the adapter target)
-- [web/prototype/](web/prototype/) - the three views, working snapshot
+- [docs/prototype/](docs/prototype/) - the three views, working snapshot
 - [ROADMAP.md](ROADMAP.md) - what's built, what's next
 - [INSTALL.md](INSTALL.md) | [CONTRIBUTING.md](CONTRIBUTING.md)
 

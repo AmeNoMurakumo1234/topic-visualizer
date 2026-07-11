@@ -3,7 +3,7 @@
 ## Done (the prototype, 2026-07-10/11)
 
 Everything below exists and runs today in the birthplace instance (message-board
-backend); snapshots live in [web/prototype/](web/prototype/):
+backend); snapshots live in [docs/prototype/](docs/prototype/):
 
 - Three views over one tree: Constellation (force graph), Lineage (collapsible tidy
   tree), Star Chart (radial focus+context with re-rooting + breadcrumbs).
@@ -19,7 +19,7 @@ backend); snapshots live in [web/prototype/](web/prototype/):
 ## Next (the plugin form, in order)
 
 1. **DONE (2026-07-11): the server** (server/server.py, 8/8 e2e tests in
-   server/test_server.py). Remaining server-side: the MCP tools file (thin wrapper over
+   plugin/server/test_server.py). Remaining server-side: the MCP tools file (thin wrapper over
    the same operations), optional local embedder install extra.
 2. **DONE (2026-07-11): the single-module merge.** web/ now holds topics-core.js
    (tree building, hues, states, demo, shared panel + prune flow, semantic-zoom
