@@ -47,14 +47,22 @@ window.TopicsRenderers.starchart = (function () {
     const r = stage.getBoundingClientRect();
     tx = r.width / 2; ty = r.height / 2; scale = 1; apply();
 
-    stage.addEventListener("mousedown", ev => {
-      if (ev.target.closest(".node") || ev.target.closest(".tv-crumbs")) return;
+    // pointer capture: move/up keep arriving even when the cursor leaves the
+    // window (a plain mouseup listener loses the release -> stuck drag)
+    stage.addEventListener("pointerdown", ev => {
+      if (ev.button !== 0 || ev.target.closest(".node") || ev.target.closest(".tv-crumbs")) return;
       stage.classList.add("dragging");
+      try { stage.setPointerCapture(ev.pointerId); } catch (e) { /* capture is
+        best-effort: a failed capture must never kill the drag itself */ }
       const sx = ev.clientX - tx, sy = ev.clientY - ty;
       const mv = e => { tx = e.clientX - sx; ty = e.clientY - sy; apply(); };
       const up = () => { stage.classList.remove("dragging");
-        removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
-      addEventListener("mousemove", mv); addEventListener("mouseup", up);
+        stage.removeEventListener("pointermove", mv);
+        stage.removeEventListener("pointerup", up);
+        stage.removeEventListener("pointercancel", up); };
+      stage.addEventListener("pointermove", mv);
+      stage.addEventListener("pointerup", up);
+      stage.addEventListener("pointercancel", up);
     });
     stage.addEventListener("wheel", ev => { ev.preventDefault();
       const rect = stage.getBoundingClientRect();

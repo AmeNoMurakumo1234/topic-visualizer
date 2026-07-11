@@ -28,7 +28,8 @@ header .home:hover { color: var(--ink); }
 
 /* ---- stage ---- */
 main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
-.stage { flex: 1 1 auto; position: relative; overflow: hidden; cursor: grab; }
+.stage { flex: 1 1 auto; position: relative; overflow: hidden; cursor: grab;
+         touch-action: none; user-select: none; }
 .stage.dragging { cursor: grabbing; }
 #stars { position: absolute; inset: 0; pointer-events: none; }
 #renderer { position: absolute; inset: 0; }

@@ -18,14 +18,23 @@ window.TopicsRenderers.lineage = (function () {
     cards = stage.querySelector(".tv-cards");
     tx = 20; ty = 20; scale = 1; apply();
 
-    stage.addEventListener("mousedown", ev => {
-      if (ev.target.closest(".tnode")) return;
+    // pointer capture: the drag keeps receiving move/up EVEN when the cursor
+    // leaves the window - a plain mouseup listener loses the release out there
+    // and the view stays glued to the mouse (owner-caught stuck-drag bug)
+    stage.addEventListener("pointerdown", ev => {
+      if (ev.button !== 0 || ev.target.closest(".tnode")) return;
       stage.classList.add("dragging");
+      try { stage.setPointerCapture(ev.pointerId); } catch (e) { /* capture is
+        best-effort: a failed capture must never kill the drag itself */ }
       const sx = ev.clientX - tx, sy = ev.clientY - ty;
       const mv = e => { tx = e.clientX - sx; ty = e.clientY - sy; apply(); };
       const up = () => { stage.classList.remove("dragging");
-        removeEventListener("mousemove", mv); removeEventListener("mouseup", up); };
-      addEventListener("mousemove", mv); addEventListener("mouseup", up);
+        stage.removeEventListener("pointermove", mv);
+        stage.removeEventListener("pointerup", up);
+        stage.removeEventListener("pointercancel", up); };
+      stage.addEventListener("pointermove", mv);
+      stage.addEventListener("pointerup", up);
+      stage.addEventListener("pointercancel", up);
     });
     stage.addEventListener("wheel", ev => { ev.preventDefault();
       const rect = stage.getBoundingClientRect();
