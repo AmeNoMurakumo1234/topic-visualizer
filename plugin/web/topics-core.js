@@ -111,18 +111,94 @@ window.TopicsCore = (function () {
     el.style.fontWeight = scale < 0.55 ? "600" : "";
   }
 
-  /* ---------- starfield + twinkle (celestial backdrop, painted once) ---------- */
+  /* ---------- deep-space backdrop (painted ONCE per resize, deterministic) ----------
+   * Layers, faintest first: galactic nebula band -> a distant ringed planet in the
+   * corner -> temperature-varied starfield -> glints on the brightest few -> edge
+   * vignette. Everything is deliberately mostly-transparent: the sky must never
+   * compete with the data. CSS twinkle divs add the only motion. */
   function paintStars(stage, canvas) {
     const r = stage.getBoundingClientRect();
-    canvas.width = r.width; canvas.height = r.height;
+    const w = canvas.width = r.width, h = canvas.height = r.height;
+    if (!w || !h) return;
     const ctx = canvas.getContext("2d");
     let s = 7 >>> 0; const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
-    for (let i = 0; i < 240; i++) {
-      const x = rnd() * canvas.width, y = rnd() * canvas.height, big = rnd() > 0.94;
-      ctx.globalAlpha = big ? 0.8 : 0.15 + rnd() * 0.35;
-      ctx.fillStyle = big ? "#cfe0ff" : "#8fa5d8";
-      ctx.beginPath(); ctx.arc(x, y, big ? 1.4 : 0.7, 0, 7); ctx.fill();
+
+    // --- nebula: soft blobs strewn along a diagonal galactic band, plus two
+    // counter-hue pockets so the sky has weather, not wallpaper ---
+    ctx.globalCompositeOperation = "screen";
+    const blob = (x, y, rad, hue, a) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+      g.addColorStop(0, `hsla(${hue}, 70%, 62%, ${a})`);
+      g.addColorStop(0.55, `hsla(${hue}, 65%, 45%, ${a * 0.45})`);
+      g.addColorStop(1, "hsla(0, 0%, 0%, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    };
+    const diag = Math.hypot(w, h);
+    for (let i = 0; i < 26; i++) {
+      const t = i / 25;                                  // along the band
+      const bx = w * (0.05 + t * 0.9) + (rnd() - 0.5) * w * 0.14;
+      const by = h * (0.85 - t * 0.7) + (rnd() - 0.5) * h * 0.2;
+      const hue = 235 + (rnd() - 0.5) * 50;              // indigo..violet drift
+      blob(bx, by, diag * (0.05 + rnd() * 0.1), hue, 0.04 + rnd() * 0.03);
     }
+    blob(w * 0.16, h * 0.22, diag * 0.13, 292, 0.052);   // violet pocket
+    blob(w * 0.82, h * 0.68, diag * 0.11, 185, 0.046);   // teal pocket
+    // a faint bright core in the band's heart
+    blob(w * 0.55, h * 0.42, diag * 0.055, 228, 0.07);
+
+    // --- a distant ringed planet, mostly off-canvas in the lower-left corner ---
+    ctx.globalCompositeOperation = "source-over";
+    const px = w * 0.06, py = h * 1.04, pr = Math.min(w, h) * 0.34;
+    // atmosphere halo
+    const halo = ctx.createRadialGradient(px, py, pr * 0.92, px, py, pr * 1.25);
+    halo.addColorStop(0, "rgba(120, 160, 255, 0.10)");
+    halo.addColorStop(1, "rgba(120, 160, 255, 0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(px, py, pr * 1.25, 0, 7); ctx.fill();
+    // body: dark sphere lit from the upper right (where the nebula core sits)
+    const body = ctx.createRadialGradient(
+      px + pr * 0.55, py - pr * 0.65, pr * 0.1, px, py, pr);
+    body.addColorStop(0, "rgba(150, 180, 235, 0.34)");
+    body.addColorStop(0.35, "rgba(70, 95, 160, 0.30)");
+    body.addColorStop(0.75, "rgba(22, 30, 58, 0.55)");
+    body.addColorStop(1, "rgba(8, 11, 24, 0.85)");
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 7); ctx.fill();
+    // rings: two thin ellipses, brighter where they catch the light
+    ctx.save();
+    ctx.translate(px, py); ctx.rotate(-0.42);
+    for (const [rx, a] of [[1.55, 0.16], [1.78, 0.09]]) {
+      ctx.strokeStyle = `rgba(170, 195, 250, ${a})`;
+      ctx.lineWidth = pr * 0.045;
+      ctx.beginPath(); ctx.ellipse(0, 0, pr * rx, pr * rx * 0.24, 0, 0, 7); ctx.stroke();
+    }
+    ctx.restore();
+
+    // --- starfield: temperature-varied, size-distributed ---
+    const TINTS = ["#cfe0ff", "#cfe0ff", "#e8eeff", "#ffe9c9", "#c9d4ff", "#ffd9d0"];
+    for (let i = 0; i < 320; i++) {
+      const x = rnd() * w, y = rnd() * h, roll = rnd();
+      const big = roll > 0.955, mid = roll > 0.85;
+      ctx.globalAlpha = big ? 0.9 : mid ? 0.55 : 0.12 + rnd() * 0.3;
+      ctx.fillStyle = TINTS[Math.floor(rnd() * TINTS.length)];
+      ctx.beginPath();
+      ctx.arc(x, y, big ? 1.5 : mid ? 1.0 : 0.6, 0, 7); ctx.fill();
+      if (big) {                                       // cross glint
+        ctx.globalAlpha = 0.35;
+        ctx.fillRect(x - 4.5, y - 0.4, 9, 0.8);
+        ctx.fillRect(x - 0.4, y - 4.5, 0.8, 9);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // --- vignette: pull the eye toward the center where the data lives ---
+    const vin = ctx.createRadialGradient(w / 2, h / 2, diag * 0.32, w / 2, h / 2, diag * 0.62);
+    vin.addColorStop(0, "rgba(0, 0, 0, 0)");
+    vin.addColorStop(1, "rgba(2, 3, 8, 0.42)");
+    ctx.fillStyle = vin;
+    ctx.fillRect(0, 0, w, h);
+
     for (const t of stage.querySelectorAll(".twinkle")) t.remove();
     for (let i = 0; i < 14; i++) {
       const t = document.createElement("div");
