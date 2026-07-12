@@ -22,6 +22,17 @@ a throwaway git worktree at `<repo>/.claude/worktrees/<rand>`):
   `.reduced-motion * { animation:none; transition:none }` kills any remaining keyframe or
   transition. The page paints once and goes idle, so a headless viewer gets a clean frame
   on all three views (Constellation was the last that could hang).
+- CLEAN PROJECT LABELS in the switcher dropdown. It showed the full encoded key
+  (`C--NB-Disk-FyiBOS`); now it shows just the folder name (`FyiBOS`). The real name is
+  read from the project's session transcript (the `~/.claude/projects` dir name is a lossy
+  encoding), worktree-stripped, so hyphenated names survive intact (`quantum-concepts`
+  stays `quantum-concepts`, not `concepts`). No drive/path leak.
+- RESPONSIVE HEADER. It wraps cleanly onto extra rows when narrow instead of smushing;
+  controls are grouped so related ones travel together - the project switcher + the three
+  view toggles as one unit (the toggle trio never splits or clips), the
+  search/add/archive/backdrop as another. The decorative subtitle drops on narrow screens
+  so the title always has room. Host pages gain `.hgroup` wrappers (`#…` element ids
+  unchanged - the shell still finds everything).
 
 ## 0.5.0 - 2026-07-11 - Per-project stores + a project switcher + screenshot-safe motion
 

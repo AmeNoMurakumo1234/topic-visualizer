@@ -111,6 +111,40 @@ def _fold_worktree(name: str) -> str:
     return re.split(r"-+claude-worktrees-", name, maxsplit=1)[0]
 
 
+def _repo_name_from_path(cwd: str) -> str:
+    """The human-facing folder NAME for a path: strip a Claude worktree suffix
+    (`/.claude/worktrees/<rand>`) to the repo, then take the last real path segment. So
+    C:\\NB-Disk\\FyiBOS -> FyiBOS, and .../quantum-concepts stays quantum-concepts (split on
+    real separators, never the lossy encoded dashes). No path/drive leak in the label."""
+    p = str(cwd).replace("\\", "/").rstrip("/")
+    p = re.split(r"/\.claude/worktrees/", p, maxsplit=1)[0].rstrip("/")
+    return p.split("/")[-1] or p
+
+
+def _read_project_cwd(d: Path):
+    """The real cwd recorded in the project's newest session transcript, or None. The
+    ~/.claude/projects dir name is a LOSSY encoding (dashes are ambiguous), so a transcript
+    is the only reliable source of the true path -> a clean folder-name label."""
+    try:
+        sessions = sorted(d.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in sessions[:1]:                      # newest session only
+            chunk = f.read_bytes()[:65536]          # cwd appears early (~9 KB in)
+            m = re.search(rb'"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"', chunk)
+            if m:
+                return json.loads(b'"' + m.group(1) + b'"')
+    except Exception:
+        pass
+    return None
+
+
+def _label_fallback(key: str) -> str:
+    """Best-effort label when no transcript exists: never the full path - just the tail
+    token (imperfect for hyphenated names, but leaks no drive/path)."""
+    if key == "default":
+        return "default"
+    return key.rsplit("-", 1)[-1] or key
+
+
 def project_db_path(key: str) -> str:
     """DB file for a project key. 'default' keeps the pre-per-project single store so
     existing topics are never orphaned; every other key gets its own file."""
@@ -135,21 +169,29 @@ def list_projects(current: str) -> dict:
     """Every project the dropdown should offer: the Claude projects present on THIS
     machine (so it knows what exists) plus any topic stores already created, current
     flagged. Nothing hardcoded to any one machine."""
-    seen: dict[str, str] = {}
+    seen: dict[str, str] = {}                         # key -> clean display label
     if CLAUDE_PROJECTS_DIR.is_dir():
         for d in sorted(CLAUDE_PROJECTS_DIR.iterdir()):
             if d.is_dir() and not d.name.startswith("."):
-                folded = _fold_worktree(d.name)          # collapse N worktrees -> one repo entry
-                seen.setdefault(_safe_key(folded), folded)
+                key = _safe_key(_fold_worktree(d.name))   # collapse N worktrees -> one repo entry
+                if key in seen:
+                    continue
+                cwd = _read_project_cwd(d)                # real path -> just the folder name
+                seen[key] = _repo_name_from_path(cwd) if cwd else _label_fallback(key)
     pdir = _projects_dir()
     if pdir.is_dir():
         for f in sorted(pdir.glob("*.db")):
-            seen.setdefault(_safe_key(f.stem), f.stem)
+            seen.setdefault(_safe_key(f.stem), _label_fallback(_safe_key(f.stem)))
     cur = _safe_key(current)
-    seen.setdefault(cur, current or "default")
+    if cur not in seen:                              # label the current project cleanly when
+        root = _repo_root()                          # it is the server's own repo (real path
+        if root and _safe_key(encode_project_path(root)) == cur:   # -> real folder name)
+            seen[cur] = _repo_name_from_path(root)
+        else:
+            seen[cur] = _label_fallback(cur)
     seen.setdefault("default", "default")
     projects = [{"key": k, "label": lbl, "current": k == cur}
-                for k, lbl in sorted(seen.items())]
+                for k, lbl in sorted(seen.items(), key=lambda kv: kv[1].lower())]
     return {"projects": projects, "current": cur}
 
 

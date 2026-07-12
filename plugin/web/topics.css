@@ -8,11 +8,22 @@ body { height: 100vh; display: flex; flex-direction: column; color: var(--ink);
        background: radial-gradient(ellipse 120% 90% at 50% 0%, #101a3a 0%, #070b1a 45%, #04060d 100%); }
 
 /* ---- header + tabs + legend ---- */
-header { flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+/* Responsive header: it WRAPS onto extra rows when narrow instead of smushing. Controls
+   are grouped so related ones travel together - the project switcher + the three view
+   toggles stay as one unbreakable unit (.hscope), the search/add/archive/backdrop cluster
+   as another (.htools). The decorative subtitle drops on narrow screens so the title
+   always has room. */
+header { flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
          padding: 10px 16px; border-bottom: 1px solid var(--line); background: #05070fd8; }
-header h1 { font-size: 15px; letter-spacing: 0.06em; }
+header h1 { font-size: 15px; letter-spacing: 0.06em; white-space: nowrap; flex-shrink: 0; }
 .dim { color: var(--dim); font-weight: 400; }
-.viewtabs { display: flex; gap: 6px; }
+.hgroup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* .hscope may SHRINK to the viewport and wrap INTERNALLY when too narrow (the switcher
+   drops above the toggles) so the toggle trio is never clipped off-screen - but the trio
+   itself (.viewtabs) never splits. min-width:0 lets it narrow past its content width. */
+.hscope { min-width: 0; }
+.htools { flex: 1 1 260px; }   /* fills the remaining width; its items flow + wrap as a cluster */
+.viewtabs { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: nowrap; }  /* 3 toggles: one unit, never split */
 .viewtabs button { background: none; border: 1px solid var(--line); color: var(--dim);
   border-radius: 999px; padding: 5px 16px; cursor: pointer; font-size: 13px;
   transition: all 0.15s ease; }
@@ -216,6 +227,13 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .seambox { background: #0b101f; border: 1px solid var(--line); color: var(--ink);
            border-radius: 999px; padding: 5px 14px; font-size: 12px; width: 220px; }
 .seambox:focus { outline: none; border-color: var(--accent); }
+/* header responsiveness: search grows to fill the row, quickadd shrinks; both stay usable */
+#search.seambox { flex: 1 1 160px; width: auto; min-width: 120px; }
+#quickadd.seambox { flex: 0 1 220px; min-width: 130px; }
+@media (max-width: 680px) {
+  header h1 .dim { display: none; }   /* the title always has room: drop the decorative subtitle */
+  header .hud { display: none; }      /* hide the drag/zoom hint when the row is cramped */
+}
 .seamhealth { flex-shrink: 0; padding: 2px 16px; font-size: 11px; color: var(--dim);
               background: #05070f90; border-bottom: 1px solid #141c33; }
 .seamhealth:empty { display: none; }
