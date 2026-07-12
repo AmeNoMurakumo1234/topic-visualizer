@@ -334,6 +334,82 @@ def list_topics(include_archive=False, limit=500, offset=0) -> dict:
             "limit": limit, "returned": len(page)}
 
 
+def _content_hash(title, body, state, priority, parents, links) -> str:
+    """Stable identity of a topic's CONTENT (not its timestamps). Import compares this to
+    decide 'same topic, unchanged'. parents/links are order-independent."""
+    payload = json.dumps(
+        {"title": title, "body": body, "state": state, "priority": priority,
+         "parents": sorted(parents), "links": sorted(links)},
+        sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _topic_export_dict(t: dict) -> dict:
+    """One live topic (from _load_topics) -> its portable, byte-stable export record.
+    Immutable fields only (no touched_at) so unchanged content re-exports identically."""
+    parents = ([t["parent_slug"]] if t.get("parent_slug") else []) + \
+              [x["slug"] for x in t.get("extra_parents", [])]
+    links = [{"kind": l["kind"], "ref": l["ref"], "note": l.get("note", "")}
+             for l in t.get("links", [])]
+    return {
+        "slug": t["slug"], "title": t["title"], "body": t["body"],
+        "state": t["state"], "priority": t["priority"], "parents": parents,
+        "links": links, "provenance": t.get("provenance", ""),
+        "created_at": t.get("created_at", ""),
+        "content_hash": _content_hash(t["title"], t["body"], t["state"], t["priority"],
+                                      parents, [f'{l["kind"]}:{l["ref"]}' for l in links]),
+    }
+
+
+def _subtree_slugs(topics: list[dict], root: str) -> set:
+    """root + every descendant (primary + extra-parent edges), for a scoped export."""
+    bychild: dict = {}
+    for t in topics:
+        for p in ([t["parent_slug"]] if t.get("parent_slug") else []) + \
+                 [x["slug"] for x in t.get("extra_parents", [])]:
+            bychild.setdefault(p, []).append(t["slug"])
+    out, fr = {root}, [root]
+    while fr:
+        for c in bychild.get(fr.pop(), []):
+            if c not in out:
+                out.add(c); fr.append(c)
+    return out
+
+
+def _write_json(path: Path, obj) -> None:
+    path.write_text(json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+
+
+def export_topics(dir=None, mode="mirror", scope=None) -> dict:
+    """Write the live tree to a directory of per-topic files (git-committable). mirror
+    (default) makes the dir EXACTLY match the store (deletes stale files); snapshot only
+    adds. scope: None=all live | 'critical' | a slug (that subtree)."""
+    dest = Path(dir).expanduser() if dir else Path(_repo_root() or Path.cwd()) / ".topics"
+    dest.mkdir(parents=True, exist_ok=True)
+    topics = _load_topics()
+    if scope == "critical":
+        topics = [t for t in topics if t["priority"] == "critical"]
+    elif scope:
+        keep = _subtree_slugs(topics, scope)
+        topics = [t for t in topics if t["slug"] in keep]
+    exported = {}
+    for t in topics:
+        obj = _topic_export_dict(t)
+        exported[t["slug"]] = obj
+        _write_json(dest / f'{t["slug"]}.json', obj)
+    _write_json(dest / "index.json",
+                {"schema_version": 1, "source_project": _default_project,
+                 "count": len(exported), "topics": sorted(exported)})
+    deleted = 0
+    if mode == "mirror":
+        for f in dest.glob("*.json"):
+            if f.name != "index.json" and f.stem not in exported:
+                f.unlink(); deleted += 1
+    return {"dir": str(dest), "written": len(exported), "deleted": deleted,
+            "count": len(exported), "mode": mode}
+
+
 def _fail(msg: str, **extra) -> dict:
     """Error return from inside an action: roll back any pending writes FIRST -
     on a shared autocommit-off connection they would otherwise be committed by
@@ -1035,6 +1111,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/topics":
                 items = body.get("topics") or ([body] if body.get("title") else [])
                 return self._json(200, {"results": add_topics(items, actor)})
+            if u.path == "/api/topics/export":
+                return self._json(200, export_topics(
+                    body.get("dir"), str(body.get("mode") or "mirror"), body.get("scope")))
             m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
             if m:
                 slug, op = m.group(1), m.group(2)

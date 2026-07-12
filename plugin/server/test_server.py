@@ -382,6 +382,29 @@ class SeamTests(unittest.TestCase):
             self.assertIn("merged_into", cols2, "open_db migrates a legacy DB")
             conn2.close()
 
+    def test_21_export_writes_stable_dir(self):
+        proj = "exp1"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "auth: session expiry policy (~30 min)", "body": "THE QUESTION: idle vs absolute?"},
+            {"title": "auth: refresh token rotation", "body": "THE QUESTION: rotate on every use?"}]})
+        out = str(Path(self.tmp.name) / "export1")
+        r = call(f"/api/topics/export?project={proj}", {"dir": out, "mode": "mirror"})
+        self.assertEqual(r["count"], 2)
+        files = sorted(p.name for p in Path(out).glob("*.json"))
+        self.assertIn("index.json", files)
+        self.assertEqual(len([f for f in files if f != "index.json"]), 2)
+        # byte-stable: a second export of unchanged content rewrites identical bytes
+        topic_file = next(p for p in Path(out).glob("*.json") if p.name != "index.json")
+        first = topic_file.read_bytes()
+        call(f"/api/topics/export?project={proj}", {"dir": out, "mode": "mirror"})
+        self.assertEqual(topic_file.read_bytes(), first, "unchanged topic -> identical bytes")
+        # mirror deletes a file whose topic is gone: prune one, re-export
+        gone_slug = topic_file.stem
+        call(f"/api/topics/{gone_slug}/state?project={proj}", {"actor": "ai", "state": "pruned"})
+        r2 = call(f"/api/topics/export?project={proj}", {"dir": out, "mode": "mirror"})
+        self.assertEqual(r2["deleted"], 1, "mirror removes the pruned topic's file")
+        self.assertFalse((Path(out) / f"{gone_slug}.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
