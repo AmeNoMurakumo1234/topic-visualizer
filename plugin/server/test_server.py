@@ -444,6 +444,45 @@ class SeamTests(unittest.TestCase):
         self.assertTrue(r3["disambiguated"], "different-content collision disambiguates")
         self.assertTrue(r3["disambiguated"][0]["as"].startswith(target + "-"))
 
+    def test_23_merge_folds_and_guards(self):
+        proj = "mrg"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "widget: the survivor", "body": "keep me", "priority": "critical"},
+            {"title": "widget: the duplicate", "body": "fold me"}]})
+        rows = call(f"/api/topics?project={proj}")["topics"]
+        into = next(t["slug"] for t in rows if t["title"] == "widget: the survivor")
+        frm = next(t["slug"] for t in rows if t["title"] == "widget: the duplicate")
+        # give `from` a child so re-parenting is observable
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "widget: a child of the duplicate", "parent_slug": frm}]})
+        child = next(t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]
+                     if t["title"] == "widget: a child of the duplicate")
+        # self-merge refused
+        self.assertIn("error", call(f"/api/topics/merge?project={proj}", {"into": into, "from": into}))
+        # merge with a rewritten combined body
+        r = call(f"/api/topics/merge?project={proj}",
+                 {"into": into, "from": frm, "body": "keep me + fold me, combined"})
+        self.assertTrue(r.get("ok"), r)
+        live = {t["slug"]: t for t in call(f"/api/topics?project={proj}")["topics"]}
+        self.assertNotIn(frm, live, "the folded topic leaves the live tree")
+        self.assertIn(into, live)
+        self.assertEqual(live[child]["parent_slug"], into, "child re-parented to the survivor")
+        self.assertEqual(live[into]["body"], "keep me + fold me, combined", "body override applied")
+        self.assertEqual(live[into]["priority"], "critical", "critical survivorship")
+        arch = {t["slug"] for t in call(f"/api/topics?project={proj}&include=archive")["topics"]}
+        self.assertIn(frm, arch, "the tombstone is recoverable in the archive")
+        # cycle guard: merging an ancestor into its own descendant is refused
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "widget: ancestor"}]})
+        anc = next(t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]
+                   if t["title"] == "widget: ancestor")
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "widget: descendant", "parent_slug": anc}]})
+        desc = next(t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]
+                    if t["title"] == "widget: descendant")
+        bad = call(f"/api/topics/merge?project={proj}", {"into": desc, "from": anc})
+        self.assertIn("cycle", str(bad.get("error", "")))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -542,6 +542,99 @@ def import_topics(dir=None) -> dict:
             "worklist": _worklist_for(set(added) | {d["as"] for d in disambiguated})}
 
 
+_STATE_RANK = {"seedling": 1, "discussed": 2, "open": 3}
+
+
+def _descendants(tid: int) -> set:
+    """Every topic reachable downward from tid via primary + extra-parent edges."""
+    out, fr = set(), [tid]
+    while fr:
+        cur = fr.pop()
+        kids = [r["id"] for r in _conn.execute("SELECT id FROM topic WHERE parent_id=?", (cur,))]
+        kids += [r["topic_id"] for r in _conn.execute(
+            "SELECT topic_id FROM topic_parent WHERE parent_id=?", (cur,))]
+        for k in kids:
+            if k not in out:
+                out.add(k); fr.append(k)
+    return out
+
+
+def merge_topics(into_slug: str, from_slug: str, actor: str, body: str | None = None) -> dict:
+    """Fold `from` into `into`: re-parent from's children, transfer its parent/extra edges
+    and conversions to into, take the stronger priority/state, optionally rewrite into's
+    body, then tombstone from (state='pruned', merged_into=into). Reversible via the
+    archive until the 14-day sweep. Refuses self-merge and ancestor-into-descendant."""
+    with _lock:
+        into = _conn.execute("SELECT id, state, priority FROM topic WHERE slug=?",
+                             (into_slug,)).fetchone()
+        frm = _conn.execute("SELECT id, state, priority FROM topic WHERE slug=?",
+                            (from_slug,)).fetchone()
+        if not into or not frm:
+            return _fail("topic not found")
+        if into["id"] == frm["id"]:
+            return _fail("cannot merge a topic into itself")
+        into_id, from_id = into["id"], frm["id"]
+        if into_id in _descendants(from_id):
+            return _fail("cycle: cannot merge an ancestor into its own descendant")
+        into_desc = _descendants(into_id) | {into_id}
+        # 1. children of `from` -> children of `into` (drop a now-redundant extra edge)
+        moved = 0
+        for c in _conn.execute("SELECT id FROM topic WHERE parent_id=?", (from_id,)).fetchall():
+            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                          (c["id"], into_id))
+            _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (into_id, c["id"]))
+            moved += 1
+        # 2. extra-parent edges where `from` is the PARENT -> repoint to `into`
+        for e in _conn.execute("SELECT topic_id FROM topic_parent WHERE parent_id=?",
+                               (from_id,)).fetchall():
+            tid = e["topic_id"]
+            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                          (tid, from_id))
+            prim = _conn.execute("SELECT parent_id FROM topic WHERE id=?", (tid,)).fetchone()["parent_id"]
+            dup = _conn.execute("SELECT 1 FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                                (tid, into_id)).fetchone()
+            if tid != into_id and prim != into_id and not dup:
+                _conn.execute("INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
+                              "VALUES (?,?,?,?)", (tid, into_id, "", actor))
+        # 3. parents of `from` -> extra parents of `into` (dedup, skip self/cycle/existing)
+        fparents = [r["parent_id"] for r in _conn.execute(
+            "SELECT parent_id FROM topic WHERE id=? AND parent_id IS NOT NULL", (from_id,))]
+        fparents += [r["parent_id"] for r in _conn.execute(
+            "SELECT parent_id FROM topic_parent WHERE topic_id=?", (from_id,))]
+        into_prim = _conn.execute("SELECT parent_id FROM topic WHERE id=?", (into_id,)).fetchone()["parent_id"]
+        for pid in fparents:
+            if pid in into_desc or pid == into_prim:
+                continue
+            if _conn.execute("SELECT 1 FROM topic_parent WHERE topic_id=? AND parent_id=?",
+                             (into_id, pid)).fetchone():
+                continue
+            try:
+                _conn.execute("INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
+                              "VALUES (?,?,?,?)", (into_id, pid, "merged avenue", actor))
+            except sqlite3.IntegrityError:
+                pass
+        # 4. conversions transfer to the survivor; drop from's own leftover edges
+        _conn.execute("UPDATE topic_link SET topic_id=? WHERE topic_id=?", (into_id, from_id))
+        _conn.execute("DELETE FROM topic_parent WHERE topic_id=?", (from_id,))
+        # 5. survivor body / priority / state
+        if body is not None:
+            _conn.execute("UPDATE topic SET body=? WHERE id=?", (body, into_id))
+        if frm["priority"] == "critical":
+            _conn.execute("UPDATE topic SET priority='critical' WHERE id=?", (into_id,))
+        if _STATE_RANK.get(frm["state"], 0) > _STATE_RANK.get(into["state"], 0):
+            _conn.execute("UPDATE topic SET state=? WHERE id=?", (frm["state"], into_id))
+        _conn.execute("UPDATE topic SET touched_at=datetime('now') WHERE id=?", (into_id,))
+        # 6. tombstone `from`
+        _conn.execute(
+            "UPDATE topic SET state='pruned', merged_into=?, state_changed_at=datetime('now'), "
+            "state_changed_by=?, state_note=? WHERE id=?",
+            (into_slug, actor, f"merged into {into_slug}", from_id))
+        _event(into_id, "merged", actor, f"absorbed {from_slug}")
+        _event(from_id, "merged", actor, f"into {into_slug}")
+        _conn.commit()
+    return {"ok": True, "into": into_slug, "from": from_slug, "moved_children": moved}
+
+
 def _fail(msg: str, **extra) -> dict:
     """Error return from inside an action: roll back any pending writes FIRST -
     on a shared autocommit-off connection they would otherwise be committed by
@@ -1249,6 +1342,10 @@ class Handler(BaseHTTPRequestHandler):
                     project=key))
             if u.path == "/api/topics/import":
                 return self._json(200, import_topics(body.get("dir")))
+            if u.path == "/api/topics/merge":
+                return self._json(200, merge_topics(
+                    str(body.get("into") or ""), str(body.get("from") or ""), actor,
+                    body.get("body")))
             m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
             if m:
                 slug, op = m.group(1), m.group(2)
