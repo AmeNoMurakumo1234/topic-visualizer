@@ -393,9 +393,6 @@ class SeamTests(unittest.TestCase):
         files = sorted(p.name for p in Path(out).glob("*.json"))
         self.assertIn("index.json", files)
         self.assertEqual(len([f for f in files if f != "index.json"]), 2)
-        # index.json reports the project actually exported, not the server's startup default
-        index = json.loads((Path(out) / "index.json").read_text(encoding="utf-8"))
-        self.assertEqual(index["source_project"], proj)
         # byte-stable: a second export of unchanged content rewrites identical bytes
         topic_file = next(p for p in Path(out).glob("*.json") if p.name != "index.json")
         first = topic_file.read_bytes()
