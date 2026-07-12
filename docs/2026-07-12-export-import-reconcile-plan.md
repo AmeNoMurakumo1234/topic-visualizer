@@ -712,12 +712,12 @@ Add to `plugin/server/test_server.py`:
             srv._conn = srv.open_db(str(Path(d) / "age.db"))
             srv._conn.execute(
                 "INSERT INTO topic (slug, title, state, created_by, merged_into, "
-                "state_changed_at) VALUES ('old-tomb','old',’pruned’,'ai','survivor',"
-                "datetime('now','-20 days'))".replace("’", "'"))
+                "state_changed_at) VALUES (?,?,?,?,?, datetime('now','-20 days'))",
+                ("old-tomb", "old", "pruned", "ai", "survivor"))
             srv._conn.execute(
                 "INSERT INTO topic (slug, title, state, created_by, merged_into, "
-                "state_changed_at) VALUES ('young-tomb','young','pruned','ai','survivor',"
-                "datetime('now','-3 days'))")
+                "state_changed_at) VALUES (?,?,?,?,?, datetime('now','-3 days'))",
+                ("young-tomb", "young", "pruned", "ai", "survivor"))
             srv._conn.commit()
             n = srv.expire_merged()
             self.assertEqual(n, 1, "only the >14d tombstone is swept")
