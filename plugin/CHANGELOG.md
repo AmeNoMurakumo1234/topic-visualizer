@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0 - 2026-07-11 - Per-project stores + a project switcher + screenshot-safe motion
+
+- PER-PROJECT STORES: topics are scoped per PROJECT instead of one global tree. Each
+  project gets its own SQLite file (`~/.topic-visualizer/projects/<key>.db`), and the
+  current project AUTO-derives from the loaded session's working directory, encoded the
+  same way Claude names `~/.claude/projects` (`F:\writing\business` ->
+  `F--writing-business`). Existing single-store topics are preserved as the `default`
+  project. Every route + MCP call is `?project=`-aware; connections are cached and pinned
+  per-request under a reentrant lock (ThreadingHTTPServer-safe); seedling expiry sweeps
+  every project. New `GET /api/projects` lists the projects the machine offers.
+- PROJECT SWITCHER (web): a dropdown in the shell header, shown when the adapter reports
+  the new OPTIONAL `projects()` capability (degrades gracefully - no capability, no
+  dropdown). Picking a project re-scopes the tree. The adapter supplies the list, so
+  nothing is hardcoded to a machine: the sqlite adapter offers the machine's Claude
+  projects; a board adapter offers its board projects.
+- SCREENSHOT-SAFE MOTION: perpetual animations (twinkles, meteor, the beacon pulse, the
+  SMIL node pulses) never let the page idle, which hangs some screenshot pipelines. They
+  now stop under `prefers-reduced-motion`, an automation browser (`navigator.webdriver`),
+  or the deterministic `?still=1` (or `?static`) URL lever - append it for a clean shot
+  on any tool. The full graph still renders; a beacon keeps its ring, it just stops
+  pulsing.
+- MACHINE-AGNOSTIC / DE-PERSONALIZED: no default hardcodes an author-specific project or
+  agent - the board backend's project auto-derives from cwd and its author falls back to
+  the generic actor; the worked example + prototypes carry placeholder identity.
+- The adapter contract is now the **v0.5 surface**: adds the optional `projects()` method.
+
 ## 0.4.2 - 2026-07-11 - Consumer-friendly install (no machine paths, no env vars)
 
 - INSTALL.md rewritten to install straight from GitHub as a marketplace

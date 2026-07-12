@@ -72,6 +72,7 @@ backend can verify the cascade server-side, send the array; otherwise iterate.
 | `async create(items)` | the quick-add box | `items = [{title, parent_slug, state, created_by}]` |
 | `async search(q) -> [{slug, score, state}]` | server-ranked search | omit -> client keyword scoring still works |
 | `async health() -> {captured, served, converted, pruned, expired, beacon_warning}` | the seam-health strip | omit -> strip hidden |
+| `async projects() -> {projects: [{key, label, current}], current}` | the project-switcher dropdown | omit -> no dropdown. The list is yours to define (e.g. Claude projects on the machine, or your app's projects); selecting one reloads with `?project=<key>`, which your adapter reads to scope its calls |
 | `async edit(slug, {title, body, parent_slug, critical}, actor)` | the panel Edit form | `parent_slug: ""` re-roots; return `{error}` to surface a message |
 | `async attach(slug, parentSlug, note, actor, remove) ` | "+ add avenue" in the panel | the multi-parent write; return `{error}` to surface |
 | `attachRemove: true` | the per-avenue detach button | only if your store can remove an avenue |
@@ -155,6 +156,7 @@ third backend = one class with `add/serve/search/state/convert/attach/groom`.
 
 ## Versioning note
 
-The adapter contract above is the v0.4 surface. New optional capabilities may be
-added (they degrade gracefully when absent); REQUIRED-method changes will be called
-out loudly in [plugin/CHANGELOG.md](plugin/CHANGELOG.md).
+The adapter contract above is the v0.5 surface (v0.5 added the optional `projects()`
+capability). New optional capabilities may be added (they degrade gracefully when
+absent); REQUIRED-method changes will be called out loudly in
+[plugin/CHANGELOG.md](plugin/CHANGELOG.md).
