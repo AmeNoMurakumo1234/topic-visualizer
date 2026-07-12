@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1 - 2026-07-11 - Worktree-aware project keys + Constellation captures in still mode
+
+Two fixes from a consumer wiring 0.5.0 into a Claude Code repo (whose per-session cwd is
+a throwaway git worktree at `<repo>/.claude/worktrees/<rand>`):
+
+- PROJECT KEY = REPO ROOT, not the ephemeral worktree. `project_key_from_cwd()` now
+  resolves cwd to the canonical git repo root (`git rev-parse --git-common-dir`, shared
+  by every worktree of a repo), so all of a repo's sessions share ONE store instead of
+  scattering into a new empty per-worktree store each session. `list_projects()` folds
+  the `~/.claude/projects` worktree dirs (`<repokey>-claude-worktrees-<rand>`) back to one
+  entry per repo, so the dropdown shows repos, not dozens of worktree folders.
+  `encode_project_path()` now also replaces `.` (matching Claude's dir naming, so
+  `.claude` -> `-claude` and derived keys line up with dropdown entries). `TOPICS_PROJECT`
+  stays the manual override. The git call is windowless (CREATE_NO_WINDOW) and falls back
+  to the raw cwd outside a repo.
+- CONSTELLATION captures in still mode. Under `?still` / `prefers-reduced-motion` /
+  `navigator.webdriver`, the force graph jumps straight to its settled layout (runs every
+  physics tick synchronously, schedules NO animation frame), the label-reflow RAF runs
+  once synchronously, SMIL is paused (`svg.pauseAnimations()`), and a catch-all
+  `.reduced-motion * { animation:none; transition:none }` kills any remaining keyframe or
+  transition. The page paints once and goes idle, so a headless viewer gets a clean frame
+  on all three views (Constellation was the last that could hang).
+
 ## 0.5.0 - 2026-07-11 - Per-project stores + a project switcher + screenshot-safe motion
 
 - PER-PROJECT STORES: topics are scoped per PROJECT instead of one global tree. Each

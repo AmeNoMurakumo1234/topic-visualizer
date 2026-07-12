@@ -277,5 +277,27 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(gt[g]["state"], "discussed", "the state write landed in gamma's store")
 
 
+    def test_15_repo_root_keying_and_worktree_fold(self):
+        import sys as _sys
+        _sys.path.insert(0, str(HERE))
+        import server as srv
+        # dots encode like Claude (so a derived key matches the dropdown dir name)
+        self.assertEqual(srv.encode_project_path(r"C:\repo\.claude\worktrees\x"),
+                         "C--repo--claude-worktrees-x")
+        # a Claude worktree project dir folds back to its repo key (dropdown = 1 per repo)
+        self.assertEqual(srv._fold_worktree("C--NB-Disk-FyiBOS--claude-worktrees-abc123"),
+                         "C--NB-Disk-FyiBOS")
+        self.assertEqual(srv._fold_worktree("C--r--claude-worktrees-a-b-c"), "C--r")
+        # a non-worktree dir is unchanged
+        self.assertEqual(srv._fold_worktree("F--writing-business"), "F--writing-business")
+        # project_key_from_cwd resolves to the git REPO ROOT, not the (sub)dir cwd:
+        # the test runs from server/, a subdir of the plugin repo -> key is the repo root's.
+        root = srv._repo_root()
+        self.assertTrue(root, "the plugin dir is a git repo")
+        self.assertEqual(srv.project_key_from_cwd(), srv.encode_project_path(root))
+        self.assertNotIn("server", srv.project_key_from_cwd().rsplit("-", 1)[-1].lower(),
+                         "key is the repo root, not the server/ subdir")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

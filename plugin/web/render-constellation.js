@@ -198,7 +198,7 @@ window.TopicsRenderers.constellation = (function () {
     cancelAnimationFrame(animId);
     let ticks = 0;
     const maxTicks = core.nodes.length > 250 ? 130 : 220;
-    const step = () => {
+    const tick = () => {                              // one physics step (no paint)
       const nodes = core.nodes;
       for (const a of nodes) for (const b of nodes) {
         if (a === b) continue;
@@ -221,6 +221,19 @@ window.TopicsRenderers.constellation = (function () {
       }
       for (const n of nodes) { n.vx += -n.x * 0.0012; n.vy += -n.y * 0.0012;
         n.x += n.vx *= 0.82; n.y += n.vy *= 0.82; }
+    };
+    // MOTION GATE (still / reduced-motion / automation): jump straight to the settled
+    // layout - run every tick synchronously, paint ONCE, schedule NO frame - so the page
+    // reaches a stable idle state. A view that keeps animating hangs headless capture.
+    if (core.reduced) {
+      for (let i = 0; i < maxTicks; i++) tick();
+      position();
+      if (!userMoved) fit();
+      if (svg && svg.pauseAnimations) { try { svg.pauseAnimations(); } catch (e) {} }
+      return;
+    }
+    const step = () => {
+      tick();
       position();
       // camera pulls back as the graph blooms (every ~15 ticks + once settled)
       if (!userMoved && (ticks % 15 === 0 || ticks === maxTicks - 1)) fit();
@@ -245,7 +258,10 @@ window.TopicsRenderers.constellation = (function () {
       if (count) count.style.display = scale >= 0.55 ? "" : "none";
     }
   }
-  const scheduleLabels = () => { if (!labelRaf) labelRaf = requestAnimationFrame(updateLabels); };
+  const scheduleLabels = () => {
+    if (core.reduced) { updateLabels(); return; }   // still mode: run once, leave no pending frame
+    if (!labelRaf) labelRaf = requestAnimationFrame(updateLabels);
+  };
 
   function unmount() {
     cancelAnimationFrame(animId);

@@ -105,6 +105,12 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 :root.reduced-motion .twinkle,
 :root.reduced-motion .meteor { display: none !important; }
 :root.reduced-motion .tnode.critical { animation: none !important; box-shadow: 0 0 18px #ff9a4a77; }
+/* catch-all: kill EVERY keyframe animation + transition so the page paints once and goes
+   idle - the backstop behind the specific rules above (the Constellation force graph and
+   any SMIL/CSS source), so a headless screenshot reaches a stable frame on ANY view. */
+:root.reduced-motion *,
+:root.reduced-motion *::before,
+:root.reduced-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .twinkle, .meteor { display: none !important; }
   .tnode.critical { animation: none !important; box-shadow: 0 0 18px #ff9a4a77; }

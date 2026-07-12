@@ -16,6 +16,8 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,24 +55,60 @@ def _projects_dir() -> Path:
 
 def encode_project_path(p) -> str:
     """Encode an absolute path to the key Claude uses for ~/.claude/projects: the drive
-    colon and every path separator each become '-' (NOT collapsed, matching Claude
-    exactly): F:\\writing\\business -> F--writing-business ; Z:\\powershell -> Z--powershell.
-    _safe_key normalizes any residue consistently on both this key and scanned dir names."""
-    return re.sub(r"[:/\\]", "-", str(p)) or "default"
+    colon, every path separator, AND dots each become '-' (NOT collapsed, matching Claude
+    exactly - it replaces the dot too, so `.claude` -> `-claude`). F:\\writing\\business ->
+    F--writing-business ; Z:\\powershell -> Z--powershell. So keys line up with dropdown
+    dir names even for paths carrying dots."""
+    return re.sub(r"[:/\\.]", "-", str(p)) or "default"
+
+
+def _repo_root(start=None) -> str | None:
+    """The canonical MAIN working tree of the git repo at `start` (cwd by default),
+    collapsing ALL linked worktrees to one root. Claude Code runs each session in a
+    throwaway worktree (repo/.claude/worktrees/<rand>) as cwd; keying off that scatters
+    every session into a different empty store. `git rev-parse --git-common-dir` returns
+    the shared .git for every worktree of a repo, so its parent is the one true repo root.
+    None if `start` is not inside a git repo (caller falls back to raw cwd)."""
+    try:
+        start = str(start or Path.cwd())
+        kw = {}
+        if sys.platform == "win32":
+            kw["creationflags"] = 0x08000000   # CREATE_NO_WINDOW - no console flash (windowless MCP host)
+        out = subprocess.run(["git", "-C", start, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=5, **kw)
+        common = (out.stdout or "").strip()
+        if out.returncode != 0 or not common:
+            return None
+        # common may be relative to `start` (".git") or absolute; resolve either, take parent
+        root = (Path(start) / common).resolve().parent
+        return str(root)
+    except Exception:
+        return None
 
 
 def project_key_from_cwd() -> str:
-    """The project key for the currently loaded session, or 'default' if undeterminable."""
+    """The project key for the currently loaded session. Resolves to the git REPO ROOT
+    (not the ephemeral worktree cwd) so every session of a repo shares one store; falls
+    back to the raw cwd when not in a git repo. `default` if undeterminable. The
+    TOPICS_PROJECT env override (read by callers) is the manual escape hatch."""
     try:
-        return encode_project_path(Path.cwd())
+        base = _repo_root() or str(Path.cwd())
     except Exception:
         return "default"
+    return encode_project_path(base)
 
 
 def _safe_key(k: str) -> str:
     """A filesystem-safe, machine-agnostic project key (never trust a raw query value)."""
     k = re.sub(r"[^A-Za-z0-9._-]", "-", (k or "").strip()).strip("-")
     return (k or "default")[:120]
+
+
+def _fold_worktree(name: str) -> str:
+    """A Claude worktree project dir (`<repo>/.claude/worktrees/<rand>`) encodes to
+    `<repokey>-claude-worktrees-<rand>`. Fold it back to the repo key so the dropdown
+    shows ONE entry per repo, not one per (throwaway) worktree."""
+    return re.split(r"-+claude-worktrees-", name, maxsplit=1)[0]
 
 
 def project_db_path(key: str) -> str:
@@ -101,7 +139,8 @@ def list_projects(current: str) -> dict:
     if CLAUDE_PROJECTS_DIR.is_dir():
         for d in sorted(CLAUDE_PROJECTS_DIR.iterdir()):
             if d.is_dir() and not d.name.startswith("."):
-                seen[_safe_key(d.name)] = d.name
+                folded = _fold_worktree(d.name)          # collapse N worktrees -> one repo entry
+                seen.setdefault(_safe_key(folded), folded)
     pdir = _projects_dir()
     if pdir.is_dir():
         for f in sorted(pdir.glob("*.db")):
