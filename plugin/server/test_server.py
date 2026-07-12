@@ -349,6 +349,39 @@ class SeamTests(unittest.TestCase):
         p = Path(srv.project_db_path("some-repo-key"))
         self.assertEqual(p.parent, Path(srv.DEFAULT_DB).expanduser().resolve().parent / "projects")
 
+    def test_20_merged_into_column_migrates(self):
+        import sys as _sys, tempfile as _tf
+        _sys.path.insert(0, str(HERE))
+        import server as srv
+        # a fresh DB has the column (schema.sql)
+        with _tf.TemporaryDirectory() as d:
+            conn = srv.open_db(str(Path(d) / "fresh.db"))
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(topic)")}
+            self.assertIn("merged_into", cols, "fresh schema carries merged_into")
+            conn.close()
+            # a legacy DB created WITHOUT the column gets it added idempotently
+            import sqlite3 as _sql
+            legacy = str(Path(d) / "legacy.db")
+            c0 = _sql.connect(legacy)
+            # full pre-merged_into column set (CREATE INDEX in schema.sql references
+            # parent_id/state, so the fixture must carry every column those indexes and
+            # other existing tables assume - only merged_into is missing here)
+            c0.execute("CREATE TABLE topic (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE, "
+                       "title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', "
+                       "parent_id INTEGER REFERENCES topic(id), "
+                       "state TEXT NOT NULL DEFAULT 'seedling', "
+                       "priority TEXT NOT NULL DEFAULT 'normal', tags TEXT NOT NULL DEFAULT '', "
+                       "created_by TEXT NOT NULL, "
+                       "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
+                       "touched_at TEXT NOT NULL DEFAULT (datetime('now')), "
+                       "provenance TEXT NOT NULL DEFAULT '', "
+                       "state_changed_at TEXT, state_changed_by TEXT, state_note TEXT)")
+            c0.commit(); c0.close()
+            conn2 = srv.open_db(legacy)               # open_db must ALTER it in
+            cols2 = {r["name"] for r in conn2.execute("PRAGMA table_info(topic)")}
+            self.assertIn("merged_into", cols2, "open_db migrates a legacy DB")
+            conn2.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

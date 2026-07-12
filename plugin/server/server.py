@@ -197,12 +197,21 @@ def list_projects(current: str) -> dict:
     return {"projects": projects, "current": cur}
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent migration for DBs created before a column existed. CREATE TABLE
+    IF NOT EXISTS never alters an existing table, so additive columns are added here."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(topic)")}
+    if "merged_into" not in cols:
+        conn.execute("ALTER TABLE topic ADD COLUMN merged_into TEXT")
+
+
 def open_db(path: str) -> sqlite3.Connection:
     p = Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)     # a real, user-owned home path
     conn = sqlite3.connect(str(p), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
+    _ensure_columns(conn)
     conn.commit()
     return conn
 
