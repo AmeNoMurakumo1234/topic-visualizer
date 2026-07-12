@@ -121,12 +121,12 @@ class SeamTests(unittest.TestCase):
     def test_07_prune_cascade_verified(self):
         # plant a small branch, then prune with a WRONG cascade -> refused
         r = call("/api/topics", {"actor": "ai", "topics": [
-            {"title": "cars: a branch to prune"},
+            {"title": "widget: a branch to prune"},
         ]})
         root = r["results"][0]["slug"]
         call("/api/topics", {"actor": "ai", "topics": [
-            {"title": "cars: child one", "parent_slug": root},
-            {"title": "cars: child two", "parent_slug": root}]})
+            {"title": "widget: child one", "parent_slug": root},
+            {"title": "widget: child two", "parent_slug": root}]})
         bad = call(f"/api/topics/{root}/state",
                    {"actor": "human", "state": "pruned", "cascade": [root]})
         self.assertIn("subtree changed", str(bad.get("error", "")))
@@ -334,6 +334,20 @@ class SeamTests(unittest.TestCase):
             self.assertIn(k, h)
         self.assertIn(h["embedder"]["status"], ("up", "down", "unknown"))
         self.assertIn("open", h["by_state"])
+
+
+    def test_18_projects_dir_anchors_to_store_root(self):
+        import sys as _sys
+        _sys.path.insert(0, str(HERE))
+        import server as srv
+        # per-project dirs hang off DB_PATH's parent. Anchoring DB_PATH to the HOME default
+        # keeps the zero-setup fallback store off the (throwaway worktree) cwd - audit 6.1 #1.
+        srv.DB_PATH = srv.DEFAULT_DB
+        self.assertEqual(srv._projects_dir(),
+                         Path(srv.DEFAULT_DB).expanduser().resolve().parent / "projects")
+        # a non-default key resolves a file UNDER that home projects dir, never cwd-relative
+        p = Path(srv.project_db_path("some-repo-key"))
+        self.assertEqual(p.parent, Path(srv.DEFAULT_DB).expanduser().resolve().parent / "projects")
 
 
 if __name__ == "__main__":

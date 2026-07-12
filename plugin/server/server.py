@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.6.0"                     # single source of truth (MCP serverInfo reads this)
+VERSION = "0.6.1"                     # single source of truth (MCP serverInfo reads this)
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 

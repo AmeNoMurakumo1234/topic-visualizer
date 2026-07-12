@@ -147,9 +147,9 @@ board adapter as a worked example, and an acceptance checklist.
 
 ## Provenance
 
-Born 2026-07-10/11 inside the Quantum Concepts project, designed in one sustained
-human-AI collaboration: the human named the losses ("the other six things just got
-lost"), the AI built running variants, the human reacted; four rounds, one day. The
+Born 2026-07-10/11 in one sustained human-AI collaboration: the human named the losses
+("the other six things just got lost"), the AI built running variants, the human
+reacted; four rounds, one day. The
 mechanism this plugin implements was used to design itself - the idea for the plugin
 lives as a critical beacon in the tree it describes. Sibling project: the
 [Mind Coherence Suite](https://github.com/AmeNoMurakumo1234/mind-coherence-suite), maintained with the same care.

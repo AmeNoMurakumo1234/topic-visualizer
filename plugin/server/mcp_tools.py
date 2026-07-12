@@ -85,6 +85,12 @@ class ServerBackend:
     def _fallback(self):
         if self._direct is None:
             import server as srv
+            # ANCHOR the store root to the real home path BEFORE resolving the per-project
+            # file - project_db_path()/_projects_dir() read srv.DB_PATH, which is a RELATIVE
+            # default at import ("topics.db"). Without this the fallback wrote to
+            # <cwd>/projects/<key>.db - and under Claude Code the cwd is a throwaway worktree,
+            # so captures scattered per-worktree (the exact bug repo-root keying fixed).
+            srv.DB_PATH = srv.DEFAULT_DB
             db = os.environ.get("TOPICS_DB") or srv.project_db_path(self.project)
             Path(db).parent.mkdir(parents=True, exist_ok=True)
             srv._conn = srv.open_db(db)
@@ -434,7 +440,8 @@ TOOLS = [
     {"name": "topic_get",
      "description": "FULL detail for ONE topic by slug: title, body (the QUESTION), state, "
                     "priority, tags, provenance, ALL parents + extra avenues with their "
-                    "notes, children, recorded conversions, and recent history. Read this "
+                    "notes, children, recorded conversions, and recent history (sqlite "
+                    "backend; the board backend returns the core fields only). Read this "
                     "before deciding convert/prune/keep - search returns only slug/score/state.",
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string"}}, "required": ["slug"]}},
@@ -531,6 +538,12 @@ def _call(name: str, args: dict) -> dict:
             return sres
         if pres is not None and sres is None:
             return pres
+        # both applied: surface any sub-error at the TOP level so it isn't masked as ok
+        # (e.g. board priority is append-only and always errors) and isError fires
+        err = (isinstance(sres, dict) and sres.get("error")) \
+            or (isinstance(pres, dict) and pres.get("error"))
+        if err:
+            return {"error": err, "state_result": sres, "priority_result": pres}
         return {"ok": True, "state_result": sres, "priority_result": pres}
     if name == "topic_convert":
         return b.convert(args["slug"], args["kind"], str(args.get("ref") or ""),

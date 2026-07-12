@@ -178,6 +178,10 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertTrue(pr.get("ok"), pr)
         g2, _ = self.mcp.tool("topic_get", {"slug": slug})
         self.assertEqual(g2["topic"]["priority"], "critical")
+        # combined state+priority must SURFACE a sub-error, not mask it as ok (audit 6.1 #3)
+        bad, err = self.mcp.tool(
+            "topic_state", {"slug": "no-such-slug-xyz", "state": "discussed", "priority": "critical"})
+        self.assertIn("error", bad)
 
 
 class TestMCPServerBackendDirect(unittest.TestCase):

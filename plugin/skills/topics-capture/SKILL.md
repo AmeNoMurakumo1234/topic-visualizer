@@ -49,7 +49,7 @@ awareness of a very long session), sweep NOW: "ideas at risk of being lost to
 summarization - plant them."
 
 **Never speculatively farm topics.** Generating topic lists ("here are 50 things we
-could discuss about cars") is forbidden - the tree grows only by walked paths. This
+could discuss about databases") is forbidden - the tree grows only by walked paths. This
 single rule is what keeps the tree bounded by real attention and prevents the
 graveyard failure (see the repo CHARTER).
 

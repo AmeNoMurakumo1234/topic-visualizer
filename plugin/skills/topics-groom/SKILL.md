@@ -11,10 +11,16 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
 
 ## The round
 
+> Two tools carry the round: **`topic_list`** enumerates the whole store (slug/title/
+> state/priority/parent) so you inventory it in one call instead of hand-unioned
+> searches, and **`topic_get`** reads a topic's full body/question/avenues/conversions
+> before you decide merge/convert/prune/keep. Reach for them in steps 1 and 4.
+
 1. **Duplicates and near-misses.** Topics phrased differently but asking the same
-   question get merged (keep the better-formed one; note the merge). This is also where
-   the synonym gap shows - if search keeps missing kin topics, that is the signal to
-   add semantic indexing, not before.
+   question get merged (keep the better-formed one; note the merge). `topic_list` to see
+   them all; `topic_get` to compare two bodies before merging. This is also where the
+   synonym gap shows - if search keeps missing kin topics, that is the signal to add
+   semantic indexing, not before.
 
 2. **Expiry candidates - by choice, never by silence.** A topic unserved and untouched
    for ~a month is a candidate, not a casualty. Present candidates to the human ONE at

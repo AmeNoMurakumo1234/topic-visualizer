@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.1 - 2026-07-11 - Audit fixes: zero-setup store path, honest errors, full scrub
+
+A fresh-eyes audit before calling 0.6 done. Fixes:
+
+- ZERO-SETUP STORE PATH (the important one). The direct-sqlite fallback (`ServerBackend.
+  _fallback`) and the first-of-day `SessionStart` hook resolved the store BEFORE anchoring
+  `DB_PATH`, so with no server running they wrote to `<cwd>/projects/<key>.db` instead of
+  `~/.topic-visualizer/projects/<key>.db` - and under Claude Code the cwd is a throwaway
+  worktree, so captures scattered per-worktree (the exact bug 0.5.1's repo-root keying
+  killed, reintroduced on the fallback path). Both now anchor to the home store and read
+  the correct PER-PROJECT file. The first-of-day card also opened the legacy `default`
+  store (empty since 0.5.0's per-project split) - it now reads the session's project.
+- HONEST ERRORS: `topic_state` with BOTH a state and a priority no longer masks a failed
+  sub-call as `{ok:true}` (e.g. the board backend's append-only priority always errors) -
+  any sub-error is surfaced at the top level so it isn't swallowed.
+- The `topic_get` description now notes the board backend returns core fields only (no
+  children/history) - that detail is sqlite-only.
+- The topics-groom skill now points at `topic_list` (enumerate) and `topic_get` (read a
+  body) - the two tools 0.6.0 added for exactly that round.
+- FULL IDENTIFIER SCRUB: the shipped demo data and the prototype snapshots hard-coded an
+  agent name + the author's project domains; the README/CONTRIBUTING named the author's
+  business. All replaced with neutral, generic placeholders - the plugin now references
+  nothing but the `Ame No Murakumo` publisher brand.
+
 ## 0.6.0 - 2026-07-11 - Grooming release: read/enumerate topics, in-place priority, honest signals
 
 Field feedback from a full grooming session (41 topics bulk-imported from 5 sessions).

@@ -103,15 +103,15 @@
 
   // demo mode (?demo=N): a deterministic synthetic topic space for scale testing - same seed
   // in both variants, so A and B render the IDENTICAL tree. Includes a mega-fanout root (the
-  // "done with cars" prune case), two 12-deep chains, and organic preferential growth.
+  // "big-branch" prune case), two 12-deep chains, and organic preferential growth.
   function demoData(count) {
     let s = 42 >>> 0;
     const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
     const pick = a => a[Math.floor(rnd() * a.length)];
-    const AREAS = ["the sim", "prose registers", "the GUI", "fate anchors", "the ledger",
-      "publishing", "artwork", "Lyra", "the world map", "combat", "the economy",
-      "memory systems", "beat design", "the audit", "chapter assembly", "naming",
-      "the schedule", "QA rituals", "the spine", "cars"];
+    const AREAS = ["auth", "the API", "onboarding", "billing", "the dashboard", "search",
+      "notifications", "the data model", "caching", "the CLI", "permissions", "logging",
+      "the mobile app", "analytics", "deploys", "the docs", "rate limiting", "the queue",
+      "settings", "the changelog"];
     const ASPECTS = ["pacing", "curation", "token cost", "visual design", "calibration",
       "drift", "coverage", "tooling", "doctrine", "automation", "metrics", "workflow",
       "onboarding", "pruning", "search", "export", "grounding", "voice", "continuity", "scale"];

@@ -1,8 +1,8 @@
 # Contributing
 
-This repo is maintained by the Quantum Concepts agent team (the same family that
-maintains the Mind Coherence Suite), with the owner as final arbiter of taste and
-scope. The working method that built it is the one we recommend for changing it:
+This repo is maintained by a small human-AI team (the same folks behind the Mind
+Coherence Suite), with the owner as final arbiter of taste and scope. The working
+method that built it is the one we recommend for changing it:
 
 - **Design by reaction, not specification.** For anything visual: build two real,
   running variants with real (or demo) data and let a human react. Reactions to

@@ -22,9 +22,14 @@ def _serve():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
         import server as srv
-        db = os.environ.get("TOPICS_DB") or srv.DEFAULT_DB
+        # read the PER-PROJECT store (topics live in projects/<key>.db since 0.5.0, not the
+        # legacy default store); anchor DB_PATH first so project_db_path resolves the home path
+        srv.DB_PATH = srv.DEFAULT_DB
+        proj = os.environ.get("TOPICS_PROJECT") or srv.project_key_from_cwd()
+        db = os.environ.get("TOPICS_DB") or srv.project_db_path(proj)
         if not Path(db).exists():
             return None                       # nothing captured yet - stay silent
+        srv.DB_PATH = db
         srv._conn = srv.open_db(db)
         return srv.serve_card("").get("card")
     except Exception:
