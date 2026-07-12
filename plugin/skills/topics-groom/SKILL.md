@@ -20,7 +20,10 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    question get merged (keep the better-formed one; note the merge). `topic_list` to see
    them all; `topic_get` to compare two bodies before merging. This is also where the
    synonym gap shows - if search keeps missing kin topics, that is the signal to add
-   semantic indexing, not before.
+   semantic indexing, not before. When enumeration turns up near-duplicates, hand off to
+   the **topics-reconcile** skill (`topic_duplicates` -> `topic_get` both ->
+   `topic_merge`/`topic_attach`) rather than merging by hand - it carries the
+   survivor-picking and propagation discipline.
 
 2. **Expiry candidates - by choice, never by silence.** A topic unserved and untouched
    for ~a month is a candidate, not a casualty. Present candidates to the human ONE at
