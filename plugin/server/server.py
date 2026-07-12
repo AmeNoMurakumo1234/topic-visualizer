@@ -26,13 +26,92 @@ HERE = Path(__file__).resolve().parent
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 
-_lock = threading.Lock()      # single-writer discipline over the connection
+_lock = threading.RLock()     # single-writer discipline; REENTRANT so a request can
+                              # pin its project's connection and still call locked helpers
 _conn: sqlite3.Connection | None = None
 DB_PATH = "topics.db"
 
 
 # ---------------------------------------------------------------- store ----
-DEFAULT_DB = str(Path.home() / ".topic-visualizer" / "topics.db")
+# One SQLite file = one topic tree = one PROJECT (schema.sql). Projects are scoped per
+# machine and never hardcoded: the current one auto-derives from the loaded session's
+# working directory, encoded the same way Claude names ~/.claude/projects
+# (F:\writing\business -> F--writing-business), so the store lines up with the project
+# the user is actually in. A downloaded plugin therefore carries the USER's projects.
+DEFAULT_DB = str(Path.home() / ".topic-visualizer" / "topics.db")   # legacy single store
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"          # what projects exist
+
+_conns: dict[str, sqlite3.Connection] = {}   # project key -> connection (lazily opened)
+_default_project = "default"                  # set in main() from cwd / env / --db
+
+
+def _projects_dir() -> Path:
+    """Per-project DB files live beside the default store, so one root (DEFAULT_DB or an
+    explicit --db) controls the whole thing and tests stay isolated."""
+    return Path(DB_PATH).expanduser().resolve().parent / "projects"
+
+
+def encode_project_path(p) -> str:
+    """Encode an absolute path to the key Claude uses for ~/.claude/projects: the drive
+    colon and every path separator each become '-' (NOT collapsed, matching Claude
+    exactly): F:\\writing\\business -> F--writing-business ; Z:\\powershell -> Z--powershell.
+    _safe_key normalizes any residue consistently on both this key and scanned dir names."""
+    return re.sub(r"[:/\\]", "-", str(p)) or "default"
+
+
+def project_key_from_cwd() -> str:
+    """The project key for the currently loaded session, or 'default' if undeterminable."""
+    try:
+        return encode_project_path(Path.cwd())
+    except Exception:
+        return "default"
+
+
+def _safe_key(k: str) -> str:
+    """A filesystem-safe, machine-agnostic project key (never trust a raw query value)."""
+    k = re.sub(r"[^A-Za-z0-9._-]", "-", (k or "").strip()).strip("-")
+    return (k or "default")[:120]
+
+
+def project_db_path(key: str) -> str:
+    """DB file for a project key. 'default' keeps the pre-per-project single store so
+    existing topics are never orphaned; every other key gets its own file."""
+    key = _safe_key(key)
+    return DEFAULT_DB if key == "default" else str(_projects_dir() / f"{key}.db")
+
+
+def _use_project(key: str) -> str:
+    """Point the module-global _conn at this project's (cached, lazily opened) connection.
+    The CALLER MUST HOLD _lock for the whole request so the pin is stable under threading."""
+    global _conn
+    key = _safe_key(key)
+    c = _conns.get(key)
+    if c is None:
+        c = open_db(project_db_path(key))
+        _conns[key] = c
+    _conn = c
+    return key
+
+
+def list_projects(current: str) -> dict:
+    """Every project the dropdown should offer: the Claude projects present on THIS
+    machine (so it knows what exists) plus any topic stores already created, current
+    flagged. Nothing hardcoded to any one machine."""
+    seen: dict[str, str] = {}
+    if CLAUDE_PROJECTS_DIR.is_dir():
+        for d in sorted(CLAUDE_PROJECTS_DIR.iterdir()):
+            if d.is_dir() and not d.name.startswith("."):
+                seen[_safe_key(d.name)] = d.name
+    pdir = _projects_dir()
+    if pdir.is_dir():
+        for f in sorted(pdir.glob("*.db")):
+            seen.setdefault(_safe_key(f.stem), f.stem)
+    cur = _safe_key(current)
+    seen.setdefault(cur, current or "default")
+    seen.setdefault("default", "default")
+    projects = [{"key": k, "label": lbl, "current": k == cur}
+                for k, lbl in sorted(seen.items())]
+    return {"projects": projects, "current": cur}
 
 
 def open_db(path: str) -> sqlite3.Connection:
@@ -679,17 +758,25 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self):
         u = urlparse(self.path)
         qs = parse_qs(u.query)
-        if u.path == "/api/topics":
-            return self._json(200, {"topics": _load_topics(
-                include_archive=qs.get("include", [""])[0] == "archive")})
-        if u.path == "/api/topics/search":
-            return self._json(200, {"results": search(qs.get("q", [""])[0])})
-        if u.path == "/api/topics/serve":
-            return self._json(200, serve_card(qs.get("context", [""])[0]))
-        if u.path == "/api/topics/health":
-            return self._json(200, health())
-        if u.path == "/api/topics/groom":
-            return self._json(200, groom_report())
+        if u.path == "/api/projects":
+            with _lock:
+                return self._json(200, list_projects(
+                    qs.get("project", [None])[0] or _default_project))
+        if u.path.startswith("/api/topics"):
+            key = qs.get("project", [None])[0] or _default_project
+            with _lock:                          # pin this project's connection for the request
+                _use_project(key)
+                if u.path == "/api/topics":
+                    return self._json(200, {"topics": _load_topics(
+                        include_archive=qs.get("include", [""])[0] == "archive")})
+                if u.path == "/api/topics/search":
+                    return self._json(200, {"results": search(qs.get("q", [""])[0])})
+                if u.path == "/api/topics/serve":
+                    return self._json(200, serve_card(qs.get("context", [""])[0]))
+                if u.path == "/api/topics/health":
+                    return self._json(200, health())
+                if u.path == "/api/topics/groom":
+                    return self._json(200, groom_report())
         # background images: whatever PNGs live in the plugin's backgrounds/ folder
         # (empty -> the web falls back to the generated canvas scene). The user
         # picks one; images are meant to be rendered mostly-transparent.
@@ -745,53 +832,85 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json(400, {"error": "bad json"})
         actor = str(body.get("actor") or "unknown")
-        if u.path == "/api/topics":
-            items = body.get("topics") or ([body] if body.get("title") else [])
-            return self._json(200, {"results": add_topics(items, actor)})
-        m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
-        if m:
-            slug, op = m.group(1), m.group(2)
-            if op == "state":
-                return self._json(200, set_state(slug, str(body.get("state")), actor,
-                                                 str(body.get("note") or ""),
-                                                 body.get("cascade")))
-            if op == "links":
-                return self._json(200, convert(slug, body.get("links") or [], actor,
-                                               str(body.get("note") or "")))
-            if op == "edit":
-                return self._json(200, edit_topic(
-                    slug, actor, body.get("title"), body.get("body"),
-                    body.get("parent_slug"), body.get("critical")))
-            if op == "attach":
-                return self._json(200, attach_parent(
-                    slug, str(body.get("parent_slug") or ""), actor,
-                    str(body.get("note") or ""), bool(body.get("remove"))))
+        key = (parse_qs(u.query).get("project", [None])[0]
+               or body.get("project") or _default_project)
+        with _lock:                              # pin this project's connection for the request
+            _use_project(key)
+            if u.path == "/api/topics":
+                items = body.get("topics") or ([body] if body.get("title") else [])
+                return self._json(200, {"results": add_topics(items, actor)})
+            m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
+            if m:
+                slug, op = m.group(1), m.group(2)
+                if op == "state":
+                    return self._json(200, set_state(slug, str(body.get("state")), actor,
+                                                     str(body.get("note") or ""),
+                                                     body.get("cascade")))
+                if op == "links":
+                    return self._json(200, convert(slug, body.get("links") or [], actor,
+                                                   str(body.get("note") or "")))
+                if op == "edit":
+                    return self._json(200, edit_topic(
+                        slug, actor, body.get("title"), body.get("body"),
+                        body.get("parent_slug"), body.get("critical")))
+                if op == "attach":
+                    return self._json(200, attach_parent(
+                        slug, str(body.get("parent_slug") or ""), actor,
+                        str(body.get("note") or ""), bool(body.get("remove"))))
         self._json(404, {"error": "not found"})
 
 
 def main() -> None:
-    global _conn, DB_PATH
+    global _conn, DB_PATH, _default_project
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=DEFAULT_DB)
+    ap.add_argument("--db", default=DEFAULT_DB, help="DB for the 'default' project (back-compat)")
+    ap.add_argument("--project", default=None, help="default project key (else auto from cwd)")
     ap.add_argument("--port", type=int, default=8991)
     ap.add_argument("--web", default=str(HERE.parent / "web"))
     args = ap.parse_args()
     DB_PATH = args.db
-    _conn = open_db(args.db)
-    expired = expire_seedlings()                       # the daily job, run at start too
+    # The default project: explicit --project / TOPICS_PROJECT, else auto from the loaded
+    # session's cwd. An explicit non-standard --db (tests, custom store) pins 'default' to
+    # that file so existing single-store setups keep working unchanged.
+    _default_project = args.project or os.environ.get("TOPICS_PROJECT") or project_key_from_cwd()
+    if args.db != DEFAULT_DB:
+        _conns["default"] = open_db(args.db)
+        _default_project = args.project or "default"
+    with _lock:
+        _use_project(_default_project)
+    expired = expire_all()                              # the daily job, run at start too
     threading.Thread(target=_expiry_loop, daemon=True).start()
     Handler.web_root = Path(args.web)
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(json.dumps({"topic_visualizer_server": f"http://127.0.0.1:{args.port}",
-                      "db": args.db, "expired_on_start": expired}))
+                      "db": args.db, "default_project": _default_project,
+                      "expired_on_start": expired}))
     srv.serve_forever()
+
+
+def expire_all() -> int:
+    """Sweep seedling expiry across EVERY project store, not just the pinned one - each
+    per-project DB has its own seedlings on the same ~21-day clock."""
+    keys = set(_conns) | {_default_project}
+    pdir = _projects_dir()
+    if pdir.is_dir():
+        keys |= {_safe_key(f.stem) for f in pdir.glob("*.db")}
+    total = 0
+    for k in keys:
+        try:
+            with _lock:
+                _use_project(k)
+                total += expire_seedlings()
+        except Exception:
+            pass
+    return total
 
 
 def _expiry_loop():
     while True:
         time.sleep(24 * 3600)
         try:
-            expire_seedlings()
+            expire_all()
         except Exception:
             pass
 

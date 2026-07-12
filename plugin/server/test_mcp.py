@@ -189,7 +189,9 @@ class TestMCPBoardBackend(unittest.TestCase):
         cls.mcp = MCP({"TOPICS_BACKEND": "board",
                        "TOPICS_BOARD_URL": BOARD,
                        "TOPICS_BOARD_PROJECT": "topics-mcp-sandbox",
-                       "TOPICS_BOARD_AUTHOR": "Joule"})
+                       # integration test runs against a real board, which only accepts a
+                       # REGISTERED agent as author - override via env for your own board.
+                       "TOPICS_BOARD_AUTHOR": os.environ.get("TOPICS_TEST_AUTHOR", "Joule")})
 
     @classmethod
     def tearDownClass(cls):

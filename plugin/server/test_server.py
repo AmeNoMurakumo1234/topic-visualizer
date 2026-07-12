@@ -243,6 +243,39 @@ class SeamTests(unittest.TestCase):
                          "the surviving avenue is promoted to primary")
         self.assertEqual(live[both]["extra_parents"], [])
 
+    def test_13_projects_are_isolated_stores(self):
+        # topics captured under different project keys never bleed across
+        a = call("/api/topics?project=alpha",
+                 {"actor": "ai", "title": "alpha-only topic (~10 min)"})["results"][0]["slug"]
+        b = call("/api/topics?project=beta",
+                 {"actor": "ai", "title": "beta-only topic (~10 min)"})["results"][0]["slug"]
+        alpha = {t["slug"] for t in call("/api/topics?project=alpha")["topics"]}
+        beta = {t["slug"] for t in call("/api/topics?project=beta")["topics"]}
+        self.assertIn(a, alpha)
+        self.assertNotIn(b, alpha, "beta's topic must not appear in alpha")
+        self.assertIn(b, beta)
+        self.assertNotIn(a, beta, "alpha's topic must not appear in beta")
+        # and neither leaks into the default project (the harness store)
+        default = {t["slug"] for t in call("/api/topics")["topics"]}
+        self.assertNotIn(a, default)
+        self.assertNotIn(b, default)
+
+    def test_14_projects_endpoint_lists_and_flags_current(self):
+        call("/api/topics?project=gamma", {"actor": "ai", "title": "seed gamma"})
+        listing = call("/api/projects?project=gamma")
+        keys = {p["key"] for p in listing["projects"]}
+        self.assertIn("gamma", keys)
+        self.assertEqual(listing["current"], "gamma")
+        self.assertTrue(any(p["current"] and p["key"] == "gamma"
+                            for p in listing["projects"]))
+        # a state write is also project-scoped: touching gamma's topic doesn't need default
+        g = call("/api/topics?project=gamma")["topics"][0]["slug"]
+        touched = call(f"/api/topics/{g}/state?project=gamma",
+                       {"actor": "human", "state": "discussed"})
+        self.assertTrue(touched.get("ok"))
+        gt = {t["slug"]: t for t in call("/api/topics?project=gamma")["topics"]}
+        self.assertEqual(gt[g]["state"], "discussed", "the state write landed in gamma's store")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

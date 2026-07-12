@@ -11,7 +11,11 @@ window.TopicsAdapter = (function () {
   "use strict";
   // the board's anti-CSRF check requires this exact value (its own app name)
   const HDRS = { "Content-Type": "application/json", "X-Requested-By": "messageboard" };
-  const PROJECT = new URLSearchParams(location.search).get("project") || "quantum-concepts";
+  // Set these to YOUR board's identity - nothing here is hardcoded to the plugin
+  // author's setup. HUMAN = the author name your board uses for the person; PROJECT
+  // defaults to "default" but the shell's project dropdown drives it at runtime.
+  const HUMAN = "you";
+  const PROJECT = new URLSearchParams(location.search).get("project") || "default";
 
   return {
     name: "board",
@@ -62,17 +66,17 @@ window.TopicsAdapter = (function () {
     async attach(slug, parentSlug, note, actor, remove) {
       if (remove) return { error: "the board cannot detach an avenue (replies are append-only)" };
       const r = await fetch("/api/reply", { method: "POST", headers: HDRS,
-        body: JSON.stringify({ slug, author: actor === "human" ? "Murakumo" : actor,
+        body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor,
           body: `also-parent: ${parentSlug}` + (note ? ` | ${note}` : "") }) });
       return await r.json();
     },
     async setState(slug, state, actor, note) {
       if (state === "open") {
         await fetch("/api/reopen", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? "Murakumo" : actor }) });
+          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor }) });
       } else {
         await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? "Murakumo" : actor,
+          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor,
                                  kind: "completed", note: note || "discussed" }) });
       }
     },
@@ -82,8 +86,8 @@ window.TopicsAdapter = (function () {
         if (it.parent_slug) lines.push(`parent: ${it.parent_slug}`);
         if (it.state === "seedling") lines.push("stage: seedling");
         await fetch("/api/post", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ project: PROJECT, author: "Murakumo",
-            type: "proposal", to: "Murakumo",
+          body: JSON.stringify({ project: PROJECT, author: HUMAN,
+            type: "proposal", to: HUMAN,
             title: `OPEN THREAD: ${it.title}`,
             body: (lines.length ? lines.join("\n") + "\n\n" : "") +
                   (it.body || "added via the topic tree quick-add") }) });
@@ -92,7 +96,7 @@ window.TopicsAdapter = (function () {
     async prune(slugs, actor) {
       for (const slug of slugs) {
         await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? "Murakumo" : actor,
+          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor,
                                  kind: "discarded",
                                  note: "pruned from the topic tree" }) });
       }

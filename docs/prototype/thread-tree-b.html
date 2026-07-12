@@ -86,7 +86,7 @@
 <script>
 (() => {
   const PARAMS = new URLSearchParams(location.search);
-  const PROJECT = PARAMS.get("project") || "quantum-concepts";
+  const PROJECT = PARAMS.get("project") || "demo";
   const DEMO = PARAMS.get("demo");
   const W = 220, GX = 80, GY = 18, ROWH = 74;
   let nodes = [], bySlug = {}, roots = [], selected = null;
@@ -279,13 +279,13 @@
     const reopenBtn = panel.querySelector(".reopen");
     if (reopenBtn) reopenBtn.onclick = async () => {
       if (!DEMO) await fetch("/api/reopen", { method: "POST", headers: HDRS,
-        body: JSON.stringify({ slug: n.slug, author: "Murakumo" }) });
+        body: JSON.stringify({ slug: n.slug, author: "you" }) });
       n.state = "open"; panel.className = ""; selected = null; render();
     };
     const discussBtn = panel.querySelector(".discuss");
     if (discussBtn) discussBtn.onclick = async () => {
       if (!DEMO) await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
-        body: JSON.stringify({ slug: n.slug, author: "Murakumo", kind: "completed",
+        body: JSON.stringify({ slug: n.slug, author: "you", kind: "completed",
                                note: "discussed - marked via the thread tree" }) });
       n.state = "discussed"; panel.className = ""; selected = null; render();
     };
@@ -314,7 +314,7 @@
       }
       for (const t of all) await fetch("/api/post/resolve", {
         method: "POST", headers: HDRS,
-        body: JSON.stringify({ slug: t.slug, author: "Murakumo", kind: "discarded",
+        body: JSON.stringify({ slug: t.slug, author: "you", kind: "discarded",
                                note: "pruned from the thread tree by the owner" }) });
       modal.className = ""; panel.className = ""; selected = null; load();
     };

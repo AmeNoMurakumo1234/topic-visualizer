@@ -30,7 +30,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 # ranking brains only; server.py opens no DB and starts nothing at import time
-from server import near_duplicates_in, search_in, rank_candidates  # noqa: E402
+from server import (near_duplicates_in, search_in, rank_candidates,  # noqa: E402
+                    project_key_from_cwd)
 
 ACTOR = os.environ.get("TOPICS_ACTOR", "ai")
 
@@ -66,15 +67,30 @@ class ServerBackend:
 
     def __init__(self):
         self.base = os.environ.get("TOPICS_SERVER_URL", "http://127.0.0.1:8991").rstrip("/")
+        # this session's project (from cwd), so MCP captures land in the same store the
+        # user's session is in - never a hardcoded tree.
+        self.project = os.environ.get("TOPICS_PROJECT") or project_key_from_cwd()
         self._direct = None
+
+    def _p(self, body=None):
+        """Stamp the project onto a POST body (the server reads project from body or query)."""
+        b = dict(body or {})
+        b["project"] = self.project
+        return b
+
+    def _q(self, url):
+        """Append the project to a GET query string."""
+        return url + ("&" if "?" in url else "?") + "project=" + self.project
 
     def _fallback(self):
         if self._direct is None:
             import server as srv
-            db = os.environ.get("TOPICS_DB") or srv.DEFAULT_DB
+            db = os.environ.get("TOPICS_DB") or srv.project_db_path(self.project)
             Path(db).parent.mkdir(parents=True, exist_ok=True)
             srv._conn = srv.open_db(db)
             srv.DB_PATH = db
+            srv._default_project = self.project
+            srv._conns[self.project] = srv._conn
             srv.expire_seedlings()
             self._direct = srv
         return self._direct
@@ -82,36 +98,36 @@ class ServerBackend:
     def add(self, items):
         try:
             return _http("POST", f"{self.base}/api/topics",
-                         {"topics": items, "actor": ACTOR})
+                         self._p({"topics": items, "actor": ACTOR}))
         except Unreachable:
             return {"results": self._fallback().add_topics(items, ACTOR)}
 
     def serve(self, context):
         from urllib.parse import quote
         try:
-            return _http("GET", f"{self.base}/api/topics/serve?context={quote(context)}")
+            return _http("GET", self._q(f"{self.base}/api/topics/serve?context={quote(context)}"))
         except Unreachable:
             return self._fallback().serve_card(context)
 
     def search(self, query):
         from urllib.parse import quote
         try:
-            return _http("GET", f"{self.base}/api/topics/search?q={quote(query)}")
+            return _http("GET", self._q(f"{self.base}/api/topics/search?q={quote(query)}"))
         except Unreachable:
             return {"results": self._fallback().search(query)}
 
     def state(self, slug, state, note):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/state",
-                         {"state": state, "actor": ACTOR, "note": note})
+                         self._p({"state": state, "actor": ACTOR, "note": note}))
         except Unreachable:
             return self._fallback().set_state(slug, state, ACTOR, note)
 
     def convert(self, slug, kind, ref, note):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/links",
-                         {"links": [{"kind": kind, "ref": ref, "note": note}],
-                          "actor": ACTOR, "note": note})
+                         self._p({"links": [{"kind": kind, "ref": ref, "note": note}],
+                                  "actor": ACTOR, "note": note}))
         except Unreachable:
             return self._fallback().convert(
                 slug, [{"kind": kind, "ref": ref, "note": note}], ACTOR, note)
@@ -119,14 +135,14 @@ class ServerBackend:
     def attach(self, slug, parent_slug, note, remove=False):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/attach",
-                         {"parent_slug": parent_slug, "actor": ACTOR,
-                          "note": note, "remove": remove})
+                         self._p({"parent_slug": parent_slug, "actor": ACTOR,
+                                  "note": note, "remove": remove}))
         except Unreachable:
             return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove)
 
     def groom(self):
         try:
-            return _http("GET", f"{self.base}/api/topics/groom")
+            return _http("GET", self._q(f"{self.base}/api/topics/groom"))
         except Unreachable:
             return self._fallback().groom_report()
 
@@ -144,8 +160,10 @@ class BoardBackend:
         self.base = os.environ.get("TOPICS_BOARD_URL",
                                    os.environ.get("MESSAGEBOARD_URL",
                                                   "http://127.0.0.1:9772")).rstrip("/")
-        self.project = os.environ.get("TOPICS_BOARD_PROJECT", "quantum-concepts")
-        self.author = os.environ.get("TOPICS_BOARD_AUTHOR", "Joule")
+        # project auto-derives from the loaded session (cwd), never a hardcoded name -
+        # a downloaded plugin carries the USER's project, not the author's.
+        self.project = os.environ.get("TOPICS_BOARD_PROJECT") or project_key_from_cwd()
+        self.author = os.environ.get("TOPICS_BOARD_AUTHOR", ACTOR)
         # the board's anti-CSRF check requires this exact value (its own app name)
         self.hdrs = {"X-Requested-By": "messageboard"}
 
