@@ -4,9 +4,15 @@
 window.TopicsAdapter = (function () {
   "use strict";
   const HDRS = { "Content-Type": "application/json", "X-Requested-By": "topic-visualizer" };
-  // the project this page is scoped to (from ?project=; the server auto-detects from its
-  // own cwd when absent). Threaded onto every call so the dropdown can switch stores.
-  const PROJECT = new URLSearchParams(location.search).get("project") || "";
+  // the project this page is scoped to. Resolution REMEMBERS your last pick: an explicit
+  // ?project= wins (and is remembered); else the last project you were on (localStorage); else
+  // "" (the server auto-detects from its own cwd). Only a real, non-empty project is remembered.
+  // Threaded onto every call so the dropdown can switch stores; the dropdown switches by
+  // navigating to ?project=, so this one round-trip is all the persistence needed.
+  const _urlProject = new URLSearchParams(location.search).get("project");
+  const _remembered = (() => { try { return localStorage.getItem("topics-project"); } catch (e) { return null; } })();
+  const PROJECT = _urlProject || _remembered || "";
+  if (PROJECT) { try { localStorage.setItem("topics-project", PROJECT); } catch (e) {} }
   const q = u => PROJECT ? u + (u.indexOf("?") >= 0 ? "&" : "?") + "project=" + encodeURIComponent(PROJECT) : u;
 
   return {

@@ -13,9 +13,14 @@ window.TopicsAdapter = (function () {
   const HDRS = { "Content-Type": "application/json", "X-Requested-By": "messageboard" };
   // Set these to YOUR board's identity - nothing here is hardcoded to the plugin
   // author's setup. HUMAN = the author name your board uses for the person; PROJECT
-  // defaults to "default" but the shell's project dropdown drives it at runtime.
+  // defaults to "default" but REMEMBERS your last pick: an explicit ?project= wins (and is
+  // remembered), else the last project (localStorage), else the default. The shell's dropdown
+  // switches by navigating to ?project=, so this round-trip persists it across visits.
   const HUMAN = "you";
-  const PROJECT = new URLSearchParams(location.search).get("project") || "default";
+  const _urlProject = new URLSearchParams(location.search).get("project");
+  const _remembered = (() => { try { return localStorage.getItem("topics-project"); } catch (e) { return null; } })();
+  const PROJECT = _urlProject || _remembered || "default";
+  try { localStorage.setItem("topics-project", PROJECT); } catch (e) {}
 
   return {
     name: "board",
