@@ -183,6 +183,30 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
             "topic_state", {"slug": "no-such-slug-xyz", "state": "discussed", "priority": "critical"})
         self.assertIn("error", bad)
 
+    def test_06_batch_mutations(self):
+        out, _ = self.mcp.tool("topic_add", {"items": [
+            {"title": "batch alpha", "state": "open"}, {"title": "batch beta", "state": "open"},
+            {"title": "batch gamma", "state": "open"}]})
+        a, b2, c = [r["slug"] for r in out["results"]]
+        # ONE call: discuss alpha + promote beta
+        st, _ = self.mcp.tool("topic_state", {"items": [
+            {"slug": a, "state": "discussed"}, {"slug": b2, "priority": "critical"}]})
+        self.assertEqual(len(st["results"]), 2)
+        self.assertTrue(all(not r.get("error") for r in st["results"]), st)
+        # ONE call: gamma gets two extra avenues
+        at, _ = self.mcp.tool("topic_attach", {"items": [
+            {"slug": c, "parent_slug": a}, {"slug": c, "parent_slug": b2}]})
+        self.assertEqual(len(at["results"]), 2)
+        self.assertTrue(all(r.get("ok") for r in at["results"]), at)
+        # ONE call: convert two
+        cv, _ = self.mcp.tool("topic_convert", {"items": [
+            {"slug": a, "kind": "decision", "ref": "d:1"},
+            {"slug": b2, "kind": "document", "ref": "doc:2"}]})
+        self.assertEqual(len(cv["results"]), 2)
+        self.assertTrue(all(r.get("ok") for r in cv["results"]), cv)
+        # single form still works
+        self.assertTrue(self.mcp.tool("topic_state", {"slug": c, "state": "discussed"})[0].get("ok"))
+
 
 class TestMCPServerBackendDirect(unittest.TestCase):
     """Shape 2: no HTTP server -> the in-process sqlite fallback must carry it."""

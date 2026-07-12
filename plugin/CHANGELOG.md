@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-07-11 - Batch mutations
+
+- `topic_state`, `topic_convert`, and `topic_attach` now take an optional `items:[...]`
+  array (the same pattern `topic_add` already used), so a grooming round applies many
+  changes in ONE tool call instead of one-per-op (the reporter's round took 22 sequential
+  calls). Each op is applied independently and returns a per-item result under
+  `{results:[...]}`; the single-arg form is unchanged. Batch beacon-audit demotions,
+  multi-avenue attaches, and end-of-round conversions are now one call each.
+
 ## 0.6.1 - 2026-07-11 - Audit fixes: zero-setup store path, honest errors, full scrub
 
 A fresh-eyes audit before calling 0.6 done. Fixes:

@@ -9,7 +9,7 @@
       "name": "topic-visualizer",
       "source": "./plugin",
       "description": "AI sessions silently plant unpursued topics into a local SQLite tree; three switchable views (Constellation, Lineage, Star Chart) with a shared state language - seedlings, frontier sparkles, rare critical beacons, discussed embers, prune-with-consequence. One card served per day, semantic search, and explicit conversion into work items or recorded decisions, so a maybe never silently becomes a commitment.",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "author": { "name": "Ame No Murakumo" },
       "license": "MIT",
       "keywords": ["topics", "idea-management", "visualization", "human-ai-collaboration", "agent-memory", "mcp"]

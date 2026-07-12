@@ -473,25 +473,39 @@ TOOLS = [
                     "through), pruned (dead branch; sqlite cascades to the live subtree). "
                     "And/or set `priority`: critical (beacon) | normal - this is how the "
                     "groom's beacon audit promotes/demotes an existing topic. At least one "
-                    "of state/priority. Touching a topic graduates a seedling.",
+                    "of state/priority. Touching a topic graduates a seedling. BATCH: pass "
+                    "items:[{slug,state?,priority?,note?}, ...] to change many in one call "
+                    "(per-item results) instead of a call each.",
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string"},
          "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
          "priority": {"type": "string", "enum": ["normal", "critical"]},
-         "note": {"type": "string"}}, "required": ["slug"]}},
+         "note": {"type": "string"},
+         "items": {"type": "array", "description": "batch form (each an op like above)",
+                   "items": {"type": "object", "properties": {
+                       "slug": {"type": "string"},
+                       "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
+                       "priority": {"type": "string", "enum": ["normal", "critical"]},
+                       "note": {"type": "string"}}, "required": ["slug"]}}}}},
     {"name": "topic_convert",
      "description": (
          "The atomic crossing out of EXPLORING: record what a discussed topic became - "
          "decision | work_item | document - and mark it discussed in one act. On the "
          "board backend, kind=work_item with no ref CREATES a real board issue from the "
          "topic and links it. Never convert silently mid-conversation; do it at the "
-         "moment the human ratifies."),
+         "moment the human ratifies. BATCH: pass items:[{slug,kind,ref?,note?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string"},
          "kind": {"type": "string", "enum": ["decision", "work_item", "document"]},
          "ref": {"type": "string", "description": "existing artifact ref; empty on the "
                  "board work_item path mints a new issue"},
-         "note": {"type": "string"}}, "required": ["slug", "kind"]}},
+         "note": {"type": "string"},
+         "items": {"type": "array", "description": "batch form (each an op like above)",
+                   "items": {"type": "object", "properties": {
+                       "slug": {"type": "string"},
+                       "kind": {"type": "string", "enum": ["decision", "work_item", "document"]},
+                       "ref": {"type": "string"}, "note": {"type": "string"}},
+                       "required": ["slug", "kind"]}}}}},
     {"name": "topic_attach",
      "description": (
          "The same semantic topic reached from ANOTHER conversational avenue: attach "
@@ -499,19 +513,65 @@ TOOLS = [
          "many roads in, never a duplicated subtree). Records what the later "
          "discovery added (note) on the topic itself. Use this instead of topic_add "
          "when near_duplicates flags an existing match. Cycle-guarded. remove=true "
-         "detaches an extra avenue (sqlite backend only)."),
+         "detaches an extra avenue (sqlite backend only). BATCH: pass "
+         "items:[{slug,parent_slug,note?,remove?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string", "description": "the existing topic"},
          "parent_slug": {"type": "string", "description": "the additional parent"},
          "note": {"type": "string",
                   "description": "what this avenue added - the rediscovery enrichment"},
-         "remove": {"type": "boolean"}}, "required": ["slug", "parent_slug"]}},
+         "remove": {"type": "boolean"},
+         "items": {"type": "array", "description": "batch form (each an op like above)",
+                   "items": {"type": "object", "properties": {
+                       "slug": {"type": "string"}, "parent_slug": {"type": "string"},
+                       "note": {"type": "string"}, "remove": {"type": "boolean"}},
+                       "required": ["slug", "parent_slug"]}}}}},
     {"name": "topic_groom_report",
      "description": "Seam vital signs + capture calibration (expiry rates per actor "
                     "where available). Read during a grooming round; adjust your "
                     "capture threshold from the evidence.",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
+
+
+def _state_one(b, a: dict) -> dict:
+    """One topic_state op (state and/or priority in place)."""
+    slug, note = str(a.get("slug") or ""), str(a.get("note") or "")
+    state, priority = a.get("state"), a.get("priority")
+    if not state and not priority:
+        return {"error": "needs a state and/or a priority", "slug": slug}
+    pres = b.priority(slug, priority == "critical") if priority else None
+    sres = b.state(slug, state, note) if state else None
+    if sres is not None and pres is None:
+        return sres
+    if pres is not None and sres is None:
+        return pres
+    # both applied: surface any sub-error at the TOP level so it isn't masked as ok
+    # (e.g. board priority is append-only and always errors) and isError fires
+    err = (isinstance(sres, dict) and sres.get("error")) \
+        or (isinstance(pres, dict) and pres.get("error"))
+    if err:
+        return {"error": err, "state_result": sres, "priority_result": pres}
+    return {"ok": True, "state_result": sres, "priority_result": pres}
+
+
+def _convert_one(b, a: dict) -> dict:
+    return b.convert(str(a.get("slug") or ""), a.get("kind"),
+                     str(a.get("ref") or ""), str(a.get("note") or ""))
+
+
+def _attach_one(b, a: dict) -> dict:
+    return b.attach(str(a.get("slug") or ""), str(a.get("parent_slug") or ""),
+                    str(a.get("note") or ""), bool(a.get("remove")))
+
+
+def _single_or_batch(b, args, one):
+    """Every mutation tool takes EITHER its single-op fields OR an `items:[...]` array
+    (same pattern as topic_add). Batch applies each op independently -> {results:[...]}."""
+    items = args.get("items")
+    if items is not None:
+        return {"results": [one(b, it if isinstance(it, dict) else {}) for it in items]}
+    return one(b, args)
 
 
 def _call(name: str, args: dict) -> dict:
@@ -528,29 +588,11 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_search":
         return b.search(str(args.get("query") or ""))
     if name == "topic_state":
-        slug, note = str(args.get("slug") or ""), str(args.get("note") or "")
-        state, priority = args.get("state"), args.get("priority")
-        if not state and not priority:
-            return {"error": "topic_state needs a state and/or a priority"}
-        pres = b.priority(slug, priority == "critical") if priority else None
-        sres = b.state(slug, state, note) if state else None
-        if sres is not None and pres is None:
-            return sres
-        if pres is not None and sres is None:
-            return pres
-        # both applied: surface any sub-error at the TOP level so it isn't masked as ok
-        # (e.g. board priority is append-only and always errors) and isError fires
-        err = (isinstance(sres, dict) and sres.get("error")) \
-            or (isinstance(pres, dict) and pres.get("error"))
-        if err:
-            return {"error": err, "state_result": sres, "priority_result": pres}
-        return {"ok": True, "state_result": sres, "priority_result": pres}
+        return _single_or_batch(b, args, _state_one)
     if name == "topic_convert":
-        return b.convert(args["slug"], args["kind"], str(args.get("ref") or ""),
-                         str(args.get("note") or ""))
+        return _single_or_batch(b, args, _convert_one)
     if name == "topic_attach":
-        return b.attach(args["slug"], args["parent_slug"],
-                        str(args.get("note") or ""), bool(args.get("remove")))
+        return _single_or_batch(b, args, _attach_one)
     if name == "topic_groom_report":
         return b.groom()
     return {"error": f"unknown tool {name!r}"}
