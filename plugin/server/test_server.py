@@ -408,6 +408,42 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(r2["deleted"], 1, "mirror removes the pruned topic's file")
         self.assertFalse((Path(out) / f"{gone_slug}.json").exists())
 
+    def test_22_import_roundtrip_and_idempotent(self):
+        src = "imp_src"
+        call(f"/api/topics?project={src}", {"actor": "ai", "topics": [
+            {"title": "caching: eviction policy (~20 min)", "body": "THE QUESTION: LRU or LFU?"}]})
+        parent = call(f"/api/topics?project={src}")["topics"][0]["slug"]
+        call(f"/api/topics?project={src}", {"actor": "ai", "topics": [
+            {"title": "caching: cold-start warmup", "body": "THE QUESTION: preload what?",
+             "parent_slug": parent}]})
+        out = str(Path(self.tmp.name) / "imp_export")
+        call(f"/api/topics/export?project={src}", {"dir": out, "mode": "mirror"})
+        # import into a DIFFERENT project -> tree reconstructed, parent edge preserved
+        dst = "imp_dst"
+        r = call(f"/api/topics/import?project={dst}", {"dir": out})
+        self.assertEqual(r["added"], 2, r)
+        got = {t["title"]: t for t in call(f"/api/topics?project={dst}")["topics"]}
+        self.assertIn("caching: eviction policy (~20 min)", got)
+        child = got["caching: cold-start warmup"]
+        parent_titles = {t["slug"]: t["title"] for t in call(f"/api/topics?project={dst}")["topics"]}
+        self.assertEqual(parent_titles.get(child["parent_slug"]),
+                         "caching: eviction policy (~20 min)", "parent edge survived import")
+        # idempotent: re-import adds nothing
+        r2 = call(f"/api/topics/import?project={dst}", {"dir": out})
+        self.assertEqual(r2["added"], 0, "unchanged re-import is a no-op")
+        self.assertGreaterEqual(r2["skipped"], 2)
+        # collision with DIFFERENT content -> disambiguated, not overwritten
+        target = child["slug"]
+        import json as _json
+        pf = Path(out) / f"{target}.json"
+        obj = _json.loads(pf.read_text(encoding="utf-8"))
+        obj["body"] = "THE QUESTION: totally different body now"
+        obj.pop("content_hash", None)
+        pf.write_text(_json.dumps(obj), encoding="utf-8")
+        r3 = call(f"/api/topics/import?project={dst}", {"dir": out})
+        self.assertTrue(r3["disambiguated"], "different-content collision disambiguates")
+        self.assertTrue(r3["disambiguated"][0]["as"].startswith(target + "-"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 VERSION = "0.7.0"                     # single source of truth (MCP serverInfo reads this)
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
+MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
 
 _lock = threading.RLock()     # single-writer discipline; REENTRANT so a request can
                               # pin its project's connection and still call locked helpers
@@ -412,6 +413,133 @@ def export_topics(dir=None, mode="mirror", scope=None, project=None) -> dict:
                 f.unlink(); deleted += 1
     return {"dir": str(dest), "written": len(exported), "deleted": deleted,
             "count": len(exported), "mode": mode}
+
+
+def _local_parent_slugs(tid: int) -> list:
+    out = []
+    r = _conn.execute("SELECT p.slug s FROM topic t LEFT JOIN topic p ON p.id=t.parent_id "
+                      "WHERE t.id=?", (tid,)).fetchone()
+    if r and r["s"]:
+        out.append(r["s"])
+    out += [x["slug"] for x in _conn.execute(
+        "SELECT p.slug slug FROM topic_parent tp JOIN topic p ON p.id=tp.parent_id "
+        "WHERE tp.topic_id=?", (tid,))]
+    return out
+
+
+def _local_link_keys(tid: int) -> list:
+    return [f'{x["kind"]}:{x["ref"]}' for x in _conn.execute(
+        "SELECT kind, ref FROM topic_link WHERE topic_id=?", (tid,))]
+
+
+def _within_days(ts, days) -> bool:
+    if not ts:
+        return False
+    r = _conn.execute("SELECT julianday('now') - julianday(?) d", (ts,)).fetchone()
+    return r["d"] is not None and r["d"] <= days
+
+
+def _insert_imported(obj: dict, slug: str) -> int:
+    state = obj.get("state") if obj.get("state") in ("seedling", "open", "discussed") else "open"
+    _conn.execute(
+        """INSERT INTO topic (slug, title, body, state, priority, created_by,
+                              created_at, touched_at, provenance)
+           VALUES (?,?,?,?,?,?, COALESCE(NULLIF(?, ''), datetime('now')),
+                   datetime('now'), ?)""",
+        (slug, obj["title"], obj.get("body", ""), state,
+         "critical" if obj.get("priority") == "critical" else "normal",
+         "import", obj.get("created_at", ""), obj.get("provenance", "")))
+    tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()["id"]
+    _event(tid, "imported", "import", f'from {obj["slug"]}')
+    return tid
+
+
+def _wire_imported(obj: dict, local_slug: str, remap: dict) -> None:
+    tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (local_slug,)).fetchone()["id"]
+
+    def resolve(pslug):
+        row = _conn.execute("SELECT id FROM topic WHERE slug=?",
+                            (remap.get(pslug, pslug),)).fetchone()
+        return row["id"] if row else None
+
+    for i, pslug in enumerate(obj.get("parents") or []):
+        pid = resolve(pslug)
+        if pid is None or pid == tid:
+            continue
+        if i == 0:
+            _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (pid, tid))
+        else:
+            try:
+                _conn.execute("INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
+                              "VALUES (?,?,?,?)", (tid, pid, "", "import"))
+            except sqlite3.IntegrityError:
+                pass
+    for l in obj.get("links") or []:
+        if isinstance(l, dict) and l.get("kind") in ("decision", "work_item", "document"):
+            _conn.execute("INSERT INTO topic_link (topic_id, kind, ref, note) VALUES (?,?,?,?)",
+                          (tid, l["kind"], str(l.get("ref") or ""), str(l.get("note") or "")))
+
+
+def _worklist_for(slugs: set) -> list:
+    return []          # TEMPORARY stub; Task 6 replaces this with find_duplicates filtering
+
+
+def import_topics(dir=None) -> dict:
+    """Additively merge a .topics dir into this project's store. Idempotent (identical
+    content_hash -> skip); a slug collision with DIFFERENT content imports under a
+    disambiguated slug; a within-window merge tombstone is not resurrected. Returns the
+    reconcile worklist (candidate near-dup pairs touching the imported topics)."""
+    src = Path(dir).expanduser() if dir else Path(_repo_root() or Path.cwd()) / ".topics"
+    if not src.is_dir():
+        return {"error": f"no import dir at {src}"}
+    incoming, bad = [], []
+    for f in sorted(p for p in src.glob("*.json") if p.name != "index.json"):
+        try:
+            obj = json.loads(f.read_text(encoding="utf-8"))
+            if not obj.get("slug") or not obj.get("title"):
+                raise ValueError("missing slug/title")
+            incoming.append(obj)
+        except Exception as e:
+            bad.append({"file": f.name, "error": str(e)})
+    added, skipped, disambiguated, remap = [], [], [], {}
+    with _lock:
+        for obj in incoming:
+            slug = obj["slug"]
+            file_hash = obj.get("content_hash") or _content_hash(
+                obj["title"], obj.get("body", ""), obj.get("state", "open"),
+                obj.get("priority", "normal"),
+                obj.get("parents") or [],
+                [f'{l.get("kind")}:{l.get("ref")}' for l in (obj.get("links") or [])])
+            local = _conn.execute(
+                "SELECT id, title, body, state, priority, merged_into, state_changed_at "
+                "FROM topic WHERE slug=?", (slug,)).fetchone()
+            if local is not None:
+                lh = _content_hash(local["title"], local["body"], local["state"],
+                                   local["priority"], _local_parent_slugs(local["id"]),
+                                   _local_link_keys(local["id"]))
+                if lh == file_hash:
+                    skipped.append(slug); remap[slug] = slug; continue
+                if local["merged_into"] and _within_days(
+                        local["state_changed_at"], MERGED_TOMBSTONE_DAYS):
+                    skipped.append(slug); remap[slug] = slug; continue
+                newslug, n = f"{slug}-{file_hash[:6]}", 1
+                while _conn.execute("SELECT 1 FROM topic WHERE slug=?", (newslug,)).fetchone():
+                    n += 1; newslug = f"{slug}-{file_hash[:6]}-{n}"
+                _insert_imported(obj, newslug)
+                remap[slug] = newslug
+                disambiguated.append({"from": slug, "as": newslug})
+            else:
+                _insert_imported(obj, slug)
+                remap[slug] = slug; added.append(slug)
+        wired = set(added) | {d["as"] for d in disambiguated}
+        for obj in incoming:
+            local_slug = remap.get(obj["slug"])
+            if local_slug in wired:
+                _wire_imported(obj, local_slug, remap)
+        _conn.commit()
+    return {"added": len(added), "skipped": len(skipped),
+            "disambiguated": disambiguated, "bad": bad,
+            "worklist": _worklist_for(set(added) | {d["as"] for d in disambiguated})}
 
 
 def _fail(msg: str, **extra) -> dict:
@@ -1119,6 +1247,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, export_topics(
                     body.get("dir"), str(body.get("mode") or "mirror"), body.get("scope"),
                     project=key))
+            if u.path == "/api/topics/import":
+                return self._json(200, import_topics(body.get("dir")))
             m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
             if m:
                 slug, op = m.group(1), m.group(2)
