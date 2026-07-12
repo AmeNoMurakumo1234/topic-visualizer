@@ -129,6 +129,15 @@ git -c user.name="Murakumo" -c user.email="murikumo1234@gmail.com" commit -m "fe
 
 ### Task 2: `export_topics` — write the per-topic dir + HTTP route
 
+> **Amendment (2026-07-12, execution):** the brief's illustrative code wrote `index.json`'s
+> `source_project` from the `_default_project` global, which mislabels the index for any
+> non-default project (the HTTP route repoints `_conn` via `_use_project(key)` but never
+> `_default_project`). Fixed during execution (commit `d36d6a5`): `export_topics` gained a
+> `project=None` kwarg (defaults to `_default_project` for non-request callers), the route
+> captures `key = _use_project(key)` and passes `project=key`, and `test_21` asserts
+> `index["source_project"] == proj`. The MCP fallback keeps calling it positionally
+> (`export_topics(dir, mode, scope)`), which is unaffected by the trailing kwarg.
+
 **Files:**
 - Modify: `plugin/server/server.py` (add `_content_hash`, `_topic_export_dict`, `_subtree_slugs`, `export_topics`; add POST route)
 - Test: `plugin/server/test_server.py` (new `test_21_export_writes_stable_dir`)
