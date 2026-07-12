@@ -31,9 +31,10 @@ window.TopicsAdapter = (function () {
       } catch (e) { return null; }
     },
     async load(includeArchive) {
-      const r = await fetch(`/api/posts?project=${PROJECT}`);
+      // 0524: topics are their own post type; fetch the topic lane explicitly (the default board feed
+      // excludes type='topic'). The OPEN THREAD title prefix stays only as a human-readable label.
+      const r = await fetch(`/api/posts?project=${PROJECT}&type=topic`);
       const items = ((await r.json()).items || [])
-        .filter(p => /^OPEN THREAD/i.test(p.title || ""))
         .filter(p => includeArchive || (p.resolve_kind || "") !== "discarded");
       // rediscoveries live as thread replies ("also-parent: <slug> | <note>") because
       // post bodies are immutable through the board API; only posts WITH replies pay
@@ -102,7 +103,7 @@ window.TopicsAdapter = (function () {
         if (it.state === "seedling") lines.push("stage: seedling");
         const r = await fetch("/api/post", { method: "POST", headers: HDRS,
           body: JSON.stringify({ project: PROJECT, author: HUMAN,
-            type: "proposal", to: HUMAN,
+            type: "topic",                                     // 0524: first-class topic lane (no `to`)
             title: `OPEN THREAD: ${it.title}`.slice(0, 200),   // most boards cap post titles
             body: (lines.length ? lines.join("\n") + "\n\n" : "") +
                   (it.body || "added via the topic tree quick-add") }) });

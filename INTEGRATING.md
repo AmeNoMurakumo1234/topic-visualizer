@@ -112,8 +112,11 @@ running adapter from the birthplace instance. Its store is a message board with
 *immutable post bodies* - worth reading because it shows how far the contract
 stretches without touching the views:
 
-- **Topics are posts** with an `OPEN THREAD:` title prefix; everything else on the
-  board is invisible to the views.
+- **Topics are a first-class post `type='topic'`** (fetched with `?type=topic`), so the
+  host board can keep them out of its own coordination surfaces (feed / queues / health)
+  — a topic never balls anyone. The `OPEN THREAD:` title prefix rides along only as a
+  human-readable label; the *type* is the marker. Everything else on the board is
+  invisible to the views.
 - **Tree structure rides body conventions**: `parent: <slug>` lines (first = primary,
   rest = extra avenues), `stage: seedling`, `priority: critical`.
 - **States map onto what the board already has**: resolve-completed = discussed,
