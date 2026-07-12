@@ -60,7 +60,10 @@ window.TopicsAdapter = (function () {
         const parents = [...(p.body || "").matchAll(/^parent:\s*([a-z0-9-]+)/gmi)].map(m => m[1]);
         const discarded = (p.resolve_kind || "") === "discarded";
         return {
-          slug: p.slug, title: p.title, body: p.body, author: p.author,
+          // strip the storage-only "OPEN THREAD:" marker so the adapter's title matches
+          // the MCP backend's (the view's short() then becomes a redundant safety net)
+          slug: p.slug, title: (p.title || "").replace(/^OPEN THREAD:?\s*/i, ""),
+          body: p.body, author: p.author,
           created: p.created, parentSlug: parents[0] || null,
           extraParents: parents.slice(1).map(s => ({ slug: s, note: "" })).concat(threads[i]),
           state: discarded ? "pruned"                       // archive ghost
@@ -82,35 +85,42 @@ window.TopicsAdapter = (function () {
       return await r.json();
     },
     async setState(slug, state, actor, note) {
-      if (state === "open") {
-        await fetch("/api/reopen", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor }) });
-      } else {
-        await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor,
-                                 kind: "completed", note: note || "discussed" }) });
-      }
+      const author = actor === "human" ? HUMAN : actor;
+      const r = state === "open"
+        ? await fetch("/api/reopen", { method: "POST", headers: HDRS,
+            body: JSON.stringify({ slug, author }) })
+        : await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
+            body: JSON.stringify({ slug, author, kind: "completed", note: note || "discussed" }) });
+      const j = await r.json().catch(() => ({}));
+      return (!r.ok || j.error) ? { error: j.error || `HTTP ${r.status}` } : j;   // surface, don't swallow
     },
     async create(items) {
+      let err = null;
       for (const it of items) {
         const lines = [];
         if (it.parent_slug) lines.push(`parent: ${it.parent_slug}`);
         if (it.state === "seedling") lines.push("stage: seedling");
-        await fetch("/api/post", { method: "POST", headers: HDRS,
+        const r = await fetch("/api/post", { method: "POST", headers: HDRS,
           body: JSON.stringify({ project: PROJECT, author: HUMAN,
             type: "proposal", to: HUMAN,
-            title: `OPEN THREAD: ${it.title}`,
+            title: `OPEN THREAD: ${it.title}`.slice(0, 200),   // most boards cap post titles
             body: (lines.length ? lines.join("\n") + "\n\n" : "") +
                   (it.body || "added via the topic tree quick-add") }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.error) err = j.error || `create failed (HTTP ${r.status})`;
       }
+      return err ? { error: err } : { ok: true };
     },
     async prune(slugs, actor) {
+      const author = actor === "human" ? HUMAN : actor;
       for (const slug of slugs) {
-        await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
-          body: JSON.stringify({ slug, author: actor === "human" ? HUMAN : actor,
-                                 kind: "discarded",
+        const r = await fetch("/api/post/resolve", { method: "POST", headers: HDRS,
+          body: JSON.stringify({ slug, author, kind: "discarded",
                                  note: "pruned from the topic tree" }) });
+        const j = await r.json().catch(() => ({}));   // the shell surfaces res.error ("Prune refused")
+        if (!r.ok || j.error) return { error: j.error || `prune failed for ${slug} (HTTP ${r.status})` };
       }
+      return { ok: true };
     },
   };
 })();

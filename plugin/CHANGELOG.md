@@ -21,6 +21,10 @@
 - Board backend gets read-only `export` + additive `import`; `topic_merge` returns a clear
   "not supported" (the board is already a shared store). New `topic.merged_into` column
   (idempotent migration).
+- Hardened the board-integration EXAMPLE (`docs/examples/adapter-board.js`), the template
+  `INTEGRATING.md` points consumers at: `load()` strips the `OPEN THREAD:` marker on read
+  (matching the MCP backend), `create()` caps the title at 200 chars, and
+  `setState`/`create`/`prune` now surface write errors instead of swallowing them.
 
 ## 0.7.0 - 2026-07-11 - Batch mutations
 
