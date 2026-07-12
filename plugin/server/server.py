@@ -381,10 +381,14 @@ def _write_json(path: Path, obj) -> None:
                     encoding="utf-8")
 
 
-def export_topics(dir=None, mode="mirror", scope=None) -> dict:
+def export_topics(dir=None, mode="mirror", scope=None, project=None) -> dict:
     """Write the live tree to a directory of per-topic files (git-committable). mirror
     (default) makes the dir EXACTLY match the store (deletes stale files); snapshot only
-    adds. scope: None=all live | 'critical' | a slug (that subtree)."""
+    adds. scope: None=all live | 'critical' | a slug (that subtree). project: the resolved
+    project key actually being exported (the caller must pass the key it pinned via
+    _use_project) - defaults to _default_project only for callers outside a request (e.g.
+    direct/CLI use) where no per-request project was resolved."""
+    project = project if project is not None else _default_project
     dest = Path(dir).expanduser() if dir else Path(_repo_root() or Path.cwd()) / ".topics"
     dest.mkdir(parents=True, exist_ok=True)
     topics = _load_topics()
@@ -399,7 +403,7 @@ def export_topics(dir=None, mode="mirror", scope=None) -> dict:
         exported[t["slug"]] = obj
         _write_json(dest / f'{t["slug"]}.json', obj)
     _write_json(dest / "index.json",
-                {"schema_version": 1, "source_project": _default_project,
+                {"schema_version": 1, "source_project": project,
                  "count": len(exported), "topics": sorted(exported)})
     deleted = 0
     if mode == "mirror":
@@ -1107,13 +1111,14 @@ class Handler(BaseHTTPRequestHandler):
         key = (parse_qs(u.query).get("project", [None])[0]
                or body.get("project") or _default_project)
         with _lock:                              # pin this project's connection for the request
-            _use_project(key)
+            key = _use_project(key)
             if u.path == "/api/topics":
                 items = body.get("topics") or ([body] if body.get("title") else [])
                 return self._json(200, {"results": add_topics(items, actor)})
             if u.path == "/api/topics/export":
                 return self._json(200, export_topics(
-                    body.get("dir"), str(body.get("mode") or "mirror"), body.get("scope")))
+                    body.get("dir"), str(body.get("mode") or "mirror"), body.get("scope"),
+                    project=key))
             m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
             if m:
                 slug, op = m.group(1), m.group(2)
