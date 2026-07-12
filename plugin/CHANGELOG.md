@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0 - 2026-07-12 - Board topic lane (type='topic')
+
+- The board backend now stores topics as a first-class `type='topic'` post (was `type='proposal'`
+  with an `OPEN THREAD:` title prefix), and reads them via `/api/posts?type=topic`. This lets a host
+  board exclude topics from its coordination surfaces (feed / owner-queue / health) — a topic no
+  longer balls the owner or shows up as coordination. The `OPEN THREAD:` prefix remains as a human
+  label. Requires a board that understands `type='topic'` (see INTEGRATING.md). The example adapter
+  is updated to match. The sqlite backend is unaffected.
+
 ## 0.8.0 - 2026-07-12 - Export / import / reconcile
 
 - **Share the tree through git, not a server.** `topic_export` writes this project's live
