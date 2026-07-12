@@ -225,7 +225,8 @@ class BoardBackend:
 
     def _load(self):
         import re as _re
-        resp = _http("GET", f"{self.base}/api/posts?project={self.project}")
+        # 0524: topics are their own post type; the default board feed excludes them, so fetch the topic lane.
+        resp = _http("GET", f"{self.base}/api/posts?project={self.project}&type=topic")
         topics = []
         for p in resp.get("items", []):
             title = p.get("title") or ""
@@ -328,7 +329,7 @@ class BoardBackend:
                    str(it.get("body") or "captured via the topics MCP tools")
             r = _http("POST", f"{self.base}/api/post",
                       {"project": self.project, "author": self.author,
-                       "type": "proposal", "to": self.author,
+                       "type": "topic",                     # 0524: first-class topic lane; no `to` -> no ball
                        "title": f"{self.PREFIX}: {title}"[:200], "body": body},
                       self.hdrs)
             item = {"slug": r.get("slug"), "near_duplicates": dups}
