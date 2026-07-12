@@ -113,7 +113,8 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertEqual({t["name"] for t in tools},
                          {"topic_add", "topic_get", "topic_list", "topic_serve",
                           "topic_search", "topic_state", "topic_convert",
-                          "topic_attach", "topic_groom_report"})
+                          "topic_attach", "topic_groom_report",
+                          "topic_export", "topic_import", "topic_merge", "topic_duplicates"})
 
     def test_02_lifecycle(self):
         out, err = self.mcp.tool("topic_add", {"items": [
@@ -206,6 +207,31 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertTrue(all(r.get("ok") for r in cv["results"]), cv)
         # single form still works
         self.assertTrue(self.mcp.tool("topic_state", {"slug": c, "state": "discussed"})[0].get("ok"))
+
+    def test_07_export_import_merge_duplicates(self):
+        import tempfile as _tf
+        out, _ = self.mcp.tool("topic_add", {"items": [
+            {"title": "queue: retry backoff strategy", "body": "THE QUESTION: exp or jitter?",
+             "state": "open"},
+            {"title": "queue: retry backoff approach", "body": "THE QUESTION: exponential with jitter?",
+             "state": "open"}]})
+        a, b = [r["slug"] for r in out["results"]]
+        # duplicates surfaces the near-identical pair
+        dups, _ = self.mcp.tool("topic_duplicates", {})
+        self.assertGreaterEqual(dups["count"], 1, dups)
+        # export writes files to a temp dir (never the repo)
+        with _tf.TemporaryDirectory() as d:
+            ex, _ = self.mcp.tool("topic_export", {"dir": d, "mode": "mirror"})
+            self.assertGreaterEqual(ex["count"], 2)
+            im, _ = self.mcp.tool("topic_import", {"dir": d})
+            self.assertIn("worklist", im)             # re-import of same store = idempotent
+            self.assertEqual(im["added"], 0)
+        # merge folds b into a
+        mg, err = self.mcp.tool("topic_merge", {"into": a, "from": b})
+        self.assertFalse(err, mg)
+        self.assertTrue(mg.get("ok"), mg)
+        g, _ = self.mcp.tool("topic_get", {"slug": b})
+        self.assertEqual(g["topic"]["state"], "pruned", "the folded topic is no longer live")
 
 
 class TestMCPServerBackendDirect(unittest.TestCase):
@@ -303,6 +329,16 @@ class TestMCPBoardBackend(unittest.TestCase):
         # cleanup
         for s in (av, dest):
             self.mcp.tool("topic_state", {"slug": s, "state": "pruned", "note": "e2e cleanup"})
+
+    def test_03_board_export_and_merge_unsupported(self):
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as d:
+            ex, err = self.mcp.tool("topic_export", {"dir": d, "mode": "snapshot"})
+            self.assertFalse(err, ex)
+            self.assertEqual(ex.get("backend"), "board")
+        mg, err = self.mcp.tool("topic_merge", {"into": "x", "from": "y"})
+        self.assertTrue(err, "board merge must report not-supported")
+        self.assertIn("cannot merge", mg.get("error", ""))
 
 
 if __name__ == "__main__":

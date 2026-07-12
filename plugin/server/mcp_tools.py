@@ -176,6 +176,32 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().groom_report()
 
+    def export(self, dir=None, mode="mirror", scope=None):
+        try:
+            return _http("POST", f"{self.base}/api/topics/export",
+                         self._p({"dir": dir, "mode": mode, "scope": scope}))
+        except Unreachable:
+            return self._fallback().export_topics(dir, mode, scope)
+
+    def import_(self, dir=None):
+        try:
+            return _http("POST", f"{self.base}/api/topics/import", self._p({"dir": dir}))
+        except Unreachable:
+            return self._fallback().import_topics(dir)
+
+    def merge(self, into, from_, body=None):
+        try:
+            return _http("POST", f"{self.base}/api/topics/merge",
+                         self._p({"into": into, "from": from_, "body": body}))
+        except Unreachable:
+            return self._fallback().merge_topics(into, from_, ACTOR, body)
+
+    def duplicates(self, band="kin"):
+        try:
+            return _http("GET", self._q(f"{self.base}/api/topics/duplicates?band={band}"))
+        except Unreachable:
+            return self._fallback().find_duplicates(band)
+
 
 # -------------------------------------------------------- board backend ----
 class BoardBackend:
@@ -396,6 +422,72 @@ class BoardBackend:
                 "beacons": beacons,
                 "beacon_ratio_warn": bool(live and beacons / live > 0.10)}
 
+    def export(self, dir=None, mode="mirror", scope=None):
+        from server import _content_hash
+        dest = Path(dir).expanduser() if dir else Path.cwd() / ".topics"
+        dest.mkdir(parents=True, exist_ok=True)
+        topics = self._load()
+        if scope == "critical":
+            topics = [t for t in topics if t["priority"] == "critical"]
+        exported = {}
+        for t in topics:
+            parents = ([t["parent_slug"]] if t.get("parent_slug") else []) + \
+                      [x["slug"] for x in t.get("extra_parents", [])]
+            obj = {"slug": t["slug"], "title": t["title"], "body": t["body"],
+                   "state": t["state"], "priority": t["priority"], "parents": parents,
+                   "links": [], "provenance": "", "created_at": t.get("created_at", ""),
+                   "content_hash": _content_hash(t["title"], t["body"], t["state"],
+                                                 t["priority"], parents, [])}
+            exported[t["slug"]] = obj
+            (dest / f'{t["slug"]}.json').write_text(
+                json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8")
+        (dest / "index.json").write_text(
+            json.dumps({"schema_version": 1, "source_project": self.project,
+                        "count": len(exported), "topics": sorted(exported)},
+                       sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if mode == "mirror":
+            for f in dest.glob("*.json"):
+                if f.name != "index.json" and f.stem not in exported:
+                    f.unlink()
+        return {"dir": str(dest), "written": len(exported), "count": len(exported),
+                "backend": "board"}
+
+    def import_(self, dir=None):
+        src = Path(dir).expanduser() if dir else Path.cwd() / ".topics"
+        if not src.is_dir():
+            return {"error": f"no import dir at {src}"}
+        items = []
+        for f in sorted(p for p in src.glob("*.json") if p.name != "index.json"):
+            try:
+                o = json.loads(f.read_text(encoding="utf-8"))
+                items.append({"title": o["title"], "body": o.get("body", ""),
+                              "parent_slug": (o.get("parents") or [None])[0],
+                              "priority": o.get("priority", "normal"),
+                              "state": o.get("state", "seedling")})
+            except Exception:
+                pass
+        return self.add(items)          # additive; board's own near-dup guard applies
+
+    def merge(self, into, from_, body=None):
+        return {"error": "the board backend cannot merge topics (posts are append-only and "
+                         "the board is already a shared store). Reconcile on the sqlite backend."}
+
+    def duplicates(self, band="kin"):
+        from server import near_duplicates_in
+        topics = self._load()
+        seen, pairs = set(), []
+        for t in topics:
+            others = [x for x in topics if x["slug"] != t["slug"]]
+            for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5):
+                key = tuple(sorted((t["slug"], dpl["slug"])))
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append({"a": key[0], "b": key[1], "score": dpl["score"],
+                              "mode": dpl["mode"], "band": dpl["band"]})
+        return {"pairs": pairs, "count": len(pairs)}
+
 
 _BACKEND = None
 
@@ -531,6 +623,44 @@ TOOLS = [
                     "where available). Read during a grooming round; adjust your "
                     "capture threshold from the evidence.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "topic_export",
+     "description": "Write this project's live topic tree to a directory of per-topic JSON "
+                    "files (git-committable; default <repo>/.topics). mode='mirror' (default) "
+                    "makes the dir exactly match the store (deletes stale files); 'snapshot' "
+                    "only adds. scope: omit for all live, 'critical' for beacons only, or a "
+                    "slug for that subtree. sqlite = full; board = read-only snapshot.",
+     "inputSchema": {"type": "object", "properties": {
+         "dir": {"type": "string", "description": "target dir (default <repo>/.topics)"},
+         "mode": {"type": "string", "enum": ["mirror", "snapshot"]},
+         "scope": {"type": "string", "description": "'critical' | a subtree slug | omit for all"}}}},
+    {"name": "topic_import",
+     "description": "Merge a .topics dir into this project's store, ADDITIVELY and "
+                    "idempotently: unchanged topics skip, a slug collision with different "
+                    "content imports under a disambiguated slug, a recently-merged slug is "
+                    "not resurrected. Never auto-merges. Returns a reconcile WORKLIST of "
+                    "candidate near-duplicate pairs touching the imported topics - walk it "
+                    "next with the topics-reconcile skill (topic_get -> topic_merge/attach).",
+     "inputSchema": {"type": "object", "properties": {
+         "dir": {"type": "string", "description": "source dir (default <repo>/.topics)"}}}},
+    {"name": "topic_merge",
+     "description": "Fold topic `from` into topic `into`: re-parent from's children onto "
+                    "into, transfer its parent/extra edges and conversions, take the stronger "
+                    "priority/state, and tombstone from (recoverable in the archive; hard-"
+                    "removed after 14 days). Optionally pass `body` to set into's combined, "
+                    "rewritten body. The reconcile MERGE decision - always a judgment with "
+                    "both bodies in view, never automatic. sqlite only. Cycle/self-guarded.",
+     "inputSchema": {"type": "object", "properties": {
+         "into": {"type": "string", "description": "the survivor slug"},
+         "from": {"type": "string", "description": "the slug to fold away"},
+         "body": {"type": "string", "description": "optional rewritten combined body"}},
+       "required": ["into", "from"]}},
+    {"name": "topic_duplicates",
+     "description": "List candidate near-duplicate PAIRS across the live tree (the reconcile "
+                    "worklist), semantic when the local embedder is up. band: 'kin' (default) "
+                    "| 'dup_likely' | 'weak'. Above the band is a candidate to REVIEW, never "
+                    "an instruction to merge.",
+     "inputSchema": {"type": "object", "properties": {
+         "band": {"type": "string", "enum": ["weak", "kin", "dup_likely"]}}}},
 ]
 
 
@@ -595,6 +725,14 @@ def _call(name: str, args: dict) -> dict:
         return _single_or_batch(b, args, _attach_one)
     if name == "topic_groom_report":
         return b.groom()
+    if name == "topic_export":
+        return b.export(args.get("dir"), str(args.get("mode") or "mirror"), args.get("scope"))
+    if name == "topic_import":
+        return b.import_(args.get("dir"))
+    if name == "topic_merge":
+        return b.merge(str(args.get("into") or ""), str(args.get("from") or ""), args.get("body"))
+    if name == "topic_duplicates":
+        return b.duplicates(str(args.get("band") or "kin"))
     return {"error": f"unknown tool {name!r}"}
 
 
