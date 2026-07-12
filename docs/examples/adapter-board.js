@@ -19,6 +19,17 @@ window.TopicsAdapter = (function () {
 
   return {
     name: "board",
+    // OPTIONAL: report your app's projects to drive the shell's project dropdown. Here
+    // the board's project list comes from its own API; return {projects:[{key,label,
+    // current}], current} or omit the method to hide the dropdown.
+    async projects() {
+      try {
+        const r = await fetch("/api/issues");
+        const list = ((await r.json()).projects) || [];
+        if (PROJECT && list.indexOf(PROJECT) < 0) list.unshift(PROJECT);
+        return { projects: list.map(p => ({ key: p, label: p, current: p === PROJECT })), current: PROJECT };
+      } catch (e) { return null; }
+    },
     async load(includeArchive) {
       const r = await fetch(`/api/posts?project=${PROJECT}`);
       const items = ((await r.json()).items || [])

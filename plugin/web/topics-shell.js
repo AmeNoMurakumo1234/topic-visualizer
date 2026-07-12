@@ -48,6 +48,29 @@
       if (e.key === "Escape") { searchEl.value = ""; core.setSearch(""); }
     });
   }
+  // project switcher: a dropdown of the store's projects, capability-gated on
+  // adapter.projects() + a #projsel element in the host page (hidden if either is
+  // absent). Switching reloads scoped to ?project=<key> - each adapter reads that and
+  // scopes every call. The project list is whatever the ADAPTER reports (Claude projects
+  // for the local store, board projects for the message board) - nothing hardcoded.
+  const projSel = document.getElementById("projsel");
+  if (projSel && window.TopicsAdapter.projects && !demo) {
+    (async () => {
+      let info = null;
+      try { info = await window.TopicsAdapter.projects(); } catch (e) { info = null; }
+      if (!info || !info.projects || info.projects.length < 1) { projSel.style.display = "none"; return; }
+      const escv = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      projSel.innerHTML = info.projects.map(p =>
+        `<option value="${escv(p.key)}"${p.current ? " selected" : ""}>${escv(p.label || p.key)}</option>`).join("");
+      projSel.style.display = "";
+      projSel.addEventListener("change", () => {
+        const u = new URLSearchParams(location.search);
+        u.set("project", projSel.value);        // keep demo/still/etc; re-scope to the pick
+        location.search = u.toString();
+      });
+    })();
+  }
+
   // Esc closes the side panel (unless typing in an input - those keep their own Esc)
   addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
