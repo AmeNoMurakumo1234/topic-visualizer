@@ -28,7 +28,7 @@ python server.py [--db topics.db] [--port 8991] [--web ../web]
 | `POST /api/topics/{slug}/edit` | `{title?, body?, parent_slug? ("" = root), critical?}` - re-parent is cycle-guarded over the full DAG |
 | `POST /api/topics/{slug}/attach` | multi-parent: `{parent_slug, note, remove?}` - adds an extra avenue + the rediscovery enrichment |
 | `POST /api/topics/export` | `{dir?, mode: mirror\|snapshot, scope?}` - writes byte-stable per-topic files (`mirror` deletes stale files, `snapshot` only adds) |
-| `POST /api/topics/import` | `{dir}` - additive + idempotent; returns `{imported, skipped, disambiguated, worklist}` |
+| `POST /api/topics/import` | `{dir}` - additive + idempotent; returns `{added, skipped, disambiguated, bad, worklist}` |
 | `POST /api/topics/merge` | `{into, from, actor, body?}` - folds `from` into `into` (reparent, re-link, tombstone); "not supported" on the board backend |
 | `GET /` + static | serves the web views from `--web` |
 

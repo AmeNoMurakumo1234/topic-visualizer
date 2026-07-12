@@ -463,6 +463,7 @@ class SeamTests(unittest.TestCase):
         r = call(f"/api/topics/merge?project={proj}",
                  {"into": into, "from": frm, "body": "keep me + fold me, combined"})
         self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r.get("moved_children"), 1, "the folded topic's one child was re-parented")
         live = {t["slug"]: t for t in call(f"/api/topics?project={proj}")["topics"]}
         self.assertNotIn(frm, live, "the folded topic leaves the live tree")
         self.assertIn(into, live)
@@ -523,6 +524,58 @@ class SeamTests(unittest.TestCase):
         r = call(f"/api/topics/import?project=dup_target", {"dir": out})
         self.assertIn("worklist", r)
         self.assertTrue(isinstance(r["worklist"], list))
+
+    def test_26_import_wont_resurrect_merge_tombstone(self):
+        # spec: a within-window merge tombstone must NOT be resurrected by a stale re-import
+        proj = "resur"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "queue: the survivor topic", "body": "keep"},
+            {"title": "queue: the folded topic", "body": "fold"}]})
+        rows = call(f"/api/topics?project={proj}")["topics"]
+        into = next(t["slug"] for t in rows if "survivor" in t["title"])
+        frm = next(t["slug"] for t in rows if "folded" in t["title"])
+        out = str(Path(self.tmp.name) / "resur_export")
+        # snapshot the PRE-merge tree, so the export dir still carries `frm`'s file
+        call(f"/api/topics/export?project={proj}", {"dir": out, "mode": "snapshot"})
+        # merge -> `frm` becomes a fresh (within-window) tombstone
+        call(f"/api/topics/merge?project={proj}", {"into": into, "from": frm})
+        self.assertNotIn(frm, [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]])
+        # re-importing the pre-merge dir must skip the tombstoned slug, not revive it.
+        # If the guard were absent, `frm` (now pruned, differing from the file's seedling
+        # content) would be DISAMBIGUATED into a new live slug - so added==0 AND
+        # disambiguated==[] is what proves the tombstone guard actually fired.
+        r = call(f"/api/topics/import?project={proj}", {"dir": out})
+        live = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]]
+        self.assertNotIn(frm, live, "a within-window merge tombstone is not resurrected on import")
+        self.assertEqual(r["added"], 0, "nothing new is added (survivor idempotent, tombstone skipped)")
+        self.assertEqual(r["disambiguated"], [], "the tombstoned slug is skipped, not disambiguated")
+
+    def test_27_merge_transfers_edges_and_conversions(self):
+        # merge steps 2-4: extra-parent edges (from as parent AND from as child) + conversions
+        proj = "mtx"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "mtx: survivor"}, {"title": "mtx: folded"},
+            {"title": "mtx: a parent avenue"}, {"title": "mtx: a child via folded"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        into, frm = rows["mtx: survivor"], rows["mtx: folded"]
+        pav, child = rows["mtx: a parent avenue"], rows["mtx: a child via folded"]
+        # `folded` gains an extra parent (pav); `child` gains `folded` as an extra parent;
+        # `folded` records a conversion
+        call(f"/api/topics/{frm}/attach?project={proj}", {"actor": "ai", "parent_slug": pav})
+        call(f"/api/topics/{child}/attach?project={proj}", {"actor": "ai", "parent_slug": frm})
+        call(f"/api/topics/{frm}/links?project={proj}",
+             {"actor": "ai", "links": [{"kind": "decision", "ref": "d:mtx"}]})
+        r = call(f"/api/topics/merge?project={proj}", {"into": into, "from": frm})
+        self.assertTrue(r.get("ok"), r)
+        live = {t["slug"]: t for t in call(f"/api/topics?project={proj}")["topics"]}
+        self.assertIn(pav, [x["slug"] for x in live[into]["extra_parents"]],
+                      "folded's parent avenue transfers to the survivor")
+        child_parents = [live[child]["parent_slug"]] + [x["slug"] for x in live[child]["extra_parents"]]
+        self.assertIn(into, child_parents, "folded's child edge repoints to the survivor")
+        self.assertNotIn(frm, child_parents, "no dangling edge to the folded topic")
+        g = call(f"/api/topics/{into}?project={proj}")
+        self.assertIn("d:mtx", [l["ref"] for l in g["topic"]["links"]],
+                      "folded's conversion transfers to the survivor")
 
 
 if __name__ == "__main__":

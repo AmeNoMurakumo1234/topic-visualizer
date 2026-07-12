@@ -564,7 +564,7 @@ def import_topics(dir=None) -> dict:
         _conn.commit()
     return {"added": len(added), "skipped": len(skipped),
             "disambiguated": disambiguated, "bad": bad,
-            "worklist": _worklist_for(set(added) | {d["as"] for d in disambiguated})}
+            "worklist": _worklist_for(wired)}
 
 
 _STATE_RANK = {"seedling": 1, "discussed": 2, "open": 3}
