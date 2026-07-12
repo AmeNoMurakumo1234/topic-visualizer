@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0 - 2026-07-12 - Export / import / reconcile
+
+- **Share the tree through git, not a server.** `topic_export` writes this project's live
+  tree to a directory of byte-stable per-topic files (`<repo>/.topics/<slug>.json`,
+  git-committable); `mirror` mode makes the dir exactly match the store, `snapshot` only
+  adds. No cloud, no daemon - sharing is a commit.
+- **`topic_import` is additive + idempotent.** Unchanged topics skip (content-hash), a
+  slug collision with different content imports under a disambiguated slug, a recently-
+  merged slug is not resurrected. It NEVER auto-merges; it returns a reconcile WORKLIST of
+  candidate near-duplicate pairs touching the imported topics.
+- **`topic_merge` folds one topic into another** - re-parents children, transfers parent/
+  extra edges and conversions to the survivor, takes the stronger priority/state, optional
+  rewritten combined body, and tombstones the loser (recoverable in the archive, hard-
+  removed after 14 days by the prune sweep). Cycle- and self-guarded.
+- **`topic_duplicates`** lists candidate near-dup pairs on demand (the same worklist).
+- **New `topics-reconcile` skill** carries the add-both-reconcile-later judgment: read both
+  with topic_get, then combine / keep-both-linked / leave - similarity is a candidate
+  signal, never an order.
+- Board backend gets read-only `export` + additive `import`; `topic_merge` returns a clear
+  "not supported" (the board is already a shared store). New `topic.merged_into` column
+  (idempotent migration).
+
 ## 0.7.0 - 2026-07-11 - Batch mutations
 
 - `topic_state`, `topic_convert`, and `topic_attach` now take an optional `items:[...]`

@@ -21,11 +21,15 @@ python server.py [--db topics.db] [--port 8991] [--web ../web]
 | `GET /api/topics/serve?context=` | ONE card + 2 alternates (beacons > territory fit > age decay); resurfaces but never graduates a seedling |
 | `GET /api/topics/health` | seam vital signs (captured/served/converted/pruned/expired, beacon ratio) |
 | `GET /api/topics/groom` | health + per-actor capture calibration + expiry candidates |
+| `GET /api/topics/duplicates?band=` | candidate near-duplicate pairs (the reconcile worklist), on demand |
 | `POST /api/topics` | batch capture `{actor, topics: [...]}` -> per-item `{slug, near_duplicates}` |
 | `POST /api/topics/{slug}/state` | `{state: open|discussed|pruned, actor, note, cascade?}` - prune verifies the client-confirmed cascade and SPARES multi-parent survivors |
 | `POST /api/topics/{slug}/links` | atomic conversion `{links: [{kind: decision|work_item|document, ref, note}], actor}` |
 | `POST /api/topics/{slug}/edit` | `{title?, body?, parent_slug? ("" = root), critical?}` - re-parent is cycle-guarded over the full DAG |
 | `POST /api/topics/{slug}/attach` | multi-parent: `{parent_slug, note, remove?}` - adds an extra avenue + the rediscovery enrichment |
+| `POST /api/topics/export` | `{dir?, mode: mirror\|snapshot, scope?}` - writes byte-stable per-topic files (`mirror` deletes stale files, `snapshot` only adds) |
+| `POST /api/topics/import` | `{dir}` - additive + idempotent; returns `{imported, skipped, disambiguated, worklist}` |
+| `POST /api/topics/merge` | `{into, from, actor, body?}` - folds `from` into `into` (reparent, re-link, tombstone); "not supported" on the board backend |
 | `GET /` + static | serves the web views from `--web` |
 
 Beacons are set via `edit` (`critical: true/false`). Seedlings auto-expire after
@@ -47,11 +51,14 @@ downloaded copy carries the USER's machine, never the author's.
 
 ## MCP surface (mcp_tools.py)
 
-Nine tools: `topic_add`, `topic_get`, `topic_list`, `topic_serve`, `topic_search`,
-`topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. Two backends behind
-the same contract (`TOPICS_BACKEND=server|board`); the board backend maps topics onto
-message-board posts and reuses the store-agnostic ranking functions
-(`near_duplicates_in`, `search_in`, `rank_candidates`) imported from this module.
+Thirteen tools: `topic_add`, `topic_get`, `topic_list`, `topic_serve`, `topic_search`,
+`topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`, `topic_export`,
+`topic_import`, `topic_merge`, `topic_duplicates`. Two backends behind the same contract
+(`TOPICS_BACKEND=server|board`); the board backend maps topics onto message-board posts
+and reuses the store-agnostic ranking functions (`near_duplicates_in`, `search_in`,
+`rank_candidates`) imported from this module. The board backend supports read-only
+`export` + additive `import`; `merge` returns a clear "not supported" there (the board
+is already a shared store).
 
 ## Design laws
 
