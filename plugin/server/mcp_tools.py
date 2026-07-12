@@ -220,8 +220,8 @@ class BoardBackend:
         # a downloaded plugin carries the USER's project, not the author's.
         self.project = os.environ.get("TOPICS_BOARD_PROJECT") or project_key_from_cwd()
         self.author = os.environ.get("TOPICS_BOARD_AUTHOR", ACTOR)
-        # the board's anti-CSRF check requires this exact value (its own app name)
-        self.hdrs = {"X-Requested-By": "messageboard"}
+        # the board's anti-CSRF check wants its own app name; overridable for other hosts
+        self.hdrs = {"X-Requested-By": os.environ.get("TOPICS_BOARD_CSRF", "messageboard")}
 
     def _load(self):
         import re as _re

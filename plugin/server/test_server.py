@@ -61,18 +61,18 @@ class SeamTests(unittest.TestCase):
 
     def test_01_batch_capture_and_dedup(self):
         r = call("/api/topics", {"actor": "ai", "topics": [
-            {"title": "the soul question: how do we measure feeling? (~1 hour)",
-             "body": "THE QUESTION: can layered machinery move a stranger?",
+            {"title": "auth: how long should a session stay alive? (~1 hour)",
+             "body": "THE QUESTION: idle timeout vs absolute expiry?",
              "priority": "critical"},
-            {"title": "beta reader recruiting for the first stranger read (~30 min)",
-             "body": "THE QUESTION: what is the minimum viable first read?"},
+            {"title": "caching: cold-start warmup budget (~30 min)",
+             "body": "THE QUESTION: what do we preload on boot?"},
         ]})
         slugs = [x["slug"] for x in r["results"]]
         self.assertEqual(len(slugs), 2)
         # near-duplicate guard fires on a re-plant of the same idea
         r2 = call("/api/topics", {"actor": "ai", "topics": [
-            {"title": "measuring feeling: the soul question again",
-             "body": "how do we measure whether prose moves a stranger?"}]})
+            {"title": "session lifetime: the auth timeout question again",
+             "body": "how long should an auth session stay valid before it expires?"}]})
         self.assertTrue(r2["results"][0]["near_duplicates"],
                         "write-time dedup must surface the existing kin topic")
 
@@ -86,15 +86,15 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(after[slug]["state"], "open", "first touch graduates")
 
     def test_03_serve_ranks_beacon_first(self):
-        # make the soul topic the beacon (it already is from test_01/02 edits)
-        r = call("/api/topics/serve?context=prose%20feeling%20stranger")
+        # the auth-session topic is the beacon (from test_01/02 edits)
+        r = call("/api/topics/serve?context=auth%20session%20expiry")
         self.assertIsNotNone(r["card"])
         self.assertEqual(r["card"]["priority"], "critical",
                          "beacons outrank everything")
 
     def test_04_child_parenting_and_cycle_guard(self):
         r = call("/api/topics", {"actor": "ai", "topics": [
-            {"title": "questionnaire design for stranger reads (~20 min)",
+            {"title": "auth: token rotation cadence (~20 min)",
              "parent_slug": call("/api/topics")["topics"][0]["slug"]}]})
         child = r["results"][0]["slug"]
         parent = call("/api/topics")["topics"][0]["slug"]
@@ -103,7 +103,7 @@ class SeamTests(unittest.TestCase):
         self.assertIn("cycle", str(bad.get("error", "")))
 
     def test_05_search_ranks(self):
-        r = call("/api/topics/search?q=stranger%20reads")
+        r = call("/api/topics/search?q=auth%20session")
         self.assertTrue(r["results"])
         top = r["results"][0]
         self.assertGreater(top["score"], 0)

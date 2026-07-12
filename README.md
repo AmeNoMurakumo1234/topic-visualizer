@@ -118,7 +118,7 @@ committed-space. Read [CHARTER.md](CHARTER.md) - it is the soul of the thing.
 
 ## Status
 
-**Installable (v0.4).** The repo doubles as its own plugin marketplace; two commands in
+**Installable (v0.8).** The repo doubles as its own plugin marketplace; two commands in
 a Claude Code session and you have the MCP tools (zero-setup capture into a local
 SQLite tree), the skills, and the hooks - see [INSTALL.md](INSTALL.md). The same views
 also run vendored against a message-board backend (the birthplace instance) - the

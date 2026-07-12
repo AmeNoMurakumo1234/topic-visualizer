@@ -16,9 +16,9 @@ backend); snapshots live in [docs/prototype/](docs/prototype/):
 - Tabbed shell switching views, remembered choice, lazy loading.
 - Deterministic demo mode (?demo=N) for scale testing without polluting real data.
 
-## Done (the plugin form, 2026-07-11)
+## Done (plugin form — current as of 0.8.0; see plugin/CHANGELOG.md)
 
-1. **The server** (plugin/server/server.py, 13 e2e tests): batch capture w/ dedup,
+1. **The server** (plugin/server/server.py, 27 e2e tests): batch capture w/ dedup,
    seedling lifecycle, serve ranking, search, edit w/ cycle guard, atomic conversion,
    verified prune cascades, expiry, health + groom reports.
 2. **The single-module merge**: topics-core.js + three renderers + shell + adapters.
@@ -28,9 +28,10 @@ backend); snapshots live in [docs/prototype/](docs/prototype/):
    /v1/embeddings endpoint (TOPICS_EMBED_URL); keyword fallback when absent. The
    "only when the synonym gap bites" question resolved early because a local CPU
    embedder was already running here - zero extra install cost.
-5. **The MCP face** (plugin/server/mcp_tools.py, 7 e2e over real stdio): seven tools,
-   TWO backends (plugin sqlite w/ zero-setup direct fallback; message-board posts w/
-   topic_convert minting REAL work items). plugin/.mcp.json registers it.
+5. **The MCP face** (plugin/server/mcp_tools.py, 11 e2e over real stdio): thirteen tools
+   (capture/get/list/serve/search/state/convert/attach/groom + export/import/merge/
+   duplicates), TWO backends (plugin sqlite w/ zero-setup direct fallback; message-board
+   posts w/ topic_convert minting REAL work items). plugin/.mcp.json registers it.
 6. **Archive explorer + panel edit** (web): pruned/expired ghosts, resurrect, edit
    title/body/re-parent/beacon (capability-detected per adapter). Verified live on
    both backends.

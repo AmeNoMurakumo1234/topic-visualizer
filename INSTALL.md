@@ -49,9 +49,9 @@ some builds; the commands above work there too.
 
 ## What you get, immediately
 
-- **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`,
-  `topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. No server
-  needs to be running: the tools fall back to direct SQLite at
+- **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`, and ten more
+  (`topic_get`/`list`/`state`/`convert`/`attach`/`groom_report`/`export`/`import`/`merge`/
+  `duplicates`) - thirteen in all. No server needs to be running: the tools fall back to direct SQLite at
   `~/.topic-visualizer/topics.db` (a plain file in your home dir, created on first
   capture; survives plugin updates). If the topics server IS running they pass
   through it - same store, same behavior.

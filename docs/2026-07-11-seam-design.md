@@ -94,7 +94,7 @@ the tool's soul; features that break the symmetry get declined.
 
 ## Deployment split (honest asymmetry)
 - Plugin: full mechanism (hooks + MCP + server jobs + search endpoint).
-- QC/board instance: same core+views vendored; adapter-board approximates - seedling
+- Message-board host: same core+views vendored; adapter-board approximates - seedling
   as a `stage: seedling` body tag, expiry via the PM groom, hooks as agent wake/close
   ritual lines, search via the client-side fallback. Weaker, documented, acceptable:
   disciplined agents vs strangers.
