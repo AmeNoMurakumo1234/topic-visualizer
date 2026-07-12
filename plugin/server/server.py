@@ -480,8 +480,33 @@ def _wire_imported(obj: dict, local_slug: str, remap: dict) -> None:
                           (tid, l["kind"], str(l.get("ref") or ""), str(l.get("note") or "")))
 
 
+def find_duplicates(min_band="kin") -> dict:
+    """Candidate near-duplicate PAIRS across the live tree - the reconcile worklist.
+    Reuses the write-time dedup ranker (semantic when the embedder is up, keyword
+    otherwise). min_band: 'weak' | 'kin' (default) | 'dup_likely'."""
+    rank = {"weak": 0, "kin": 1, "dup_likely": 2}
+    thr = rank.get(min_band, 1)
+    topics = _load_topics()
+    seen, pairs = set(), []
+    for t in topics:
+        others = [x for x in topics if x["slug"] != t["slug"]]
+        for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5):
+            if rank.get(dpl.get("band", "weak"), 0) < thr:
+                continue
+            key = tuple(sorted((t["slug"], dpl["slug"])))
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append({"a": key[0], "b": key[1], "score": dpl["score"],
+                          "mode": dpl["mode"], "band": dpl["band"]})
+    pairs.sort(key=lambda p: -p["score"])
+    return {"pairs": pairs, "count": len(pairs)}
+
+
 def _worklist_for(slugs: set) -> list:
-    return []          # TEMPORARY stub; Task 6 replaces this with find_duplicates filtering
+    """The reconcile agenda after an import: candidate pairs touching the new topics."""
+    return [p for p in find_duplicates().get("pairs", [])
+            if p["a"] in slugs or p["b"] in slugs]
 
 
 def import_topics(dir=None) -> dict:
@@ -1288,6 +1313,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, serve_card(qs.get("context", [""])[0]))
                 if u.path == "/api/topics/health":
                     return self._json(200, health())
+                if u.path == "/api/topics/duplicates":
+                    return self._json(200, find_duplicates(qs.get("band", ["kin"])[0]))
                 if u.path == "/api/topics/groom":
                     return self._json(200, groom_report())
                 mget = re.match(r"^/api/topics/([a-z0-9][a-z0-9._-]*)$", u.path)

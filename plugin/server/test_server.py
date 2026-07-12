@@ -505,6 +505,25 @@ class SeamTests(unittest.TestCase):
             self.assertIn("young-tomb", rows, "young tombstone kept for undo")
             srv._conn.close()
 
+    def test_25_duplicates_and_worklist(self):
+        proj = "dup"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "the API rate limit design question (~1 hour)",
+             "body": "THE QUESTION: token bucket or fixed window?"},
+            {"title": "designing the API rate limiter approach",
+             "body": "THE QUESTION: token bucket versus fixed window for the API?"}]})
+        d = call(f"/api/topics/duplicates?project={proj}")
+        self.assertGreaterEqual(d["count"], 1, "the near-identical pair is surfaced")
+        pair = d["pairs"][0]
+        for k in ("a", "b", "score", "mode", "band"):
+            self.assertIn(k, pair)
+        # an import returns a worklist naming the freshly-imported near-dup
+        out = str(Path(self.tmp.name) / "wl_export")
+        call(f"/api/topics/export?project={proj}", {"dir": out, "mode": "mirror"})
+        r = call(f"/api/topics/import?project=dup_target", {"dir": out})
+        self.assertIn("worklist", r)
+        self.assertTrue(isinstance(r["worklist"], list))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
