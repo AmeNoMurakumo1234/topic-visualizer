@@ -483,6 +483,28 @@ class SeamTests(unittest.TestCase):
         bad = call(f"/api/topics/merge?project={proj}", {"into": desc, "from": anc})
         self.assertIn("cycle", str(bad.get("error", "")))
 
+    def test_24_merged_tombstones_age_out(self):
+        import sys as _sys, tempfile as _tf
+        _sys.path.insert(0, str(HERE))
+        import server as srv
+        with _tf.TemporaryDirectory() as d:
+            srv._conn = srv.open_db(str(Path(d) / "age.db"))
+            srv._conn.execute(
+                "INSERT INTO topic (slug, title, state, created_by, merged_into, "
+                "state_changed_at) VALUES (?,?,?,?,?, datetime('now','-20 days'))",
+                ("old-tomb", "old", "pruned", "ai", "survivor"))
+            srv._conn.execute(
+                "INSERT INTO topic (slug, title, state, created_by, merged_into, "
+                "state_changed_at) VALUES (?,?,?,?,?, datetime('now','-3 days'))",
+                ("young-tomb", "young", "pruned", "ai", "survivor"))
+            srv._conn.commit()
+            n = srv.expire_merged()
+            self.assertEqual(n, 1, "only the >14d tombstone is swept")
+            rows = {r["slug"] for r in srv._conn.execute("SELECT slug FROM topic")}
+            self.assertNotIn("old-tomb", rows, "aged tombstone hard-deleted")
+            self.assertIn("young-tomb", rows, "young tombstone kept for undo")
+            srv._conn.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

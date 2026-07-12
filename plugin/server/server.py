@@ -1154,6 +1154,25 @@ def expire_seedlings() -> int:
     return len(rows)
 
 
+def expire_merged() -> int:
+    """Hard-remove merge tombstones older than MERGED_TOMBSTONE_DAYS - a merged topic is
+    deliberately dead (folded into its survivor), so it ages faster than a seedling and is
+    then gone for good, with its history/edges cascaded."""
+    with _lock:
+        rows = _conn.execute(
+            "SELECT id FROM topic WHERE merged_into IS NOT NULL AND "
+            "julianday('now') - julianday(state_changed_at) > ?",
+            (MERGED_TOMBSTONE_DAYS,)).fetchall()
+        for r in rows:
+            tid = r["id"]
+            _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (tid,))
+            _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (tid,))
+            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (tid, tid))
+            _conn.execute("DELETE FROM topic WHERE id=?", (tid,))
+        _conn.commit()
+    return len(rows)
+
+
 def health() -> dict:
     """The four vital signs of the seam loop (30-day window) + beacon ratio."""
     with _lock:
@@ -1408,6 +1427,7 @@ def expire_all() -> int:
             with _lock:
                 _use_project(k)
                 total += expire_seedlings()
+                total += expire_merged()
         except Exception:
             pass
     return total
