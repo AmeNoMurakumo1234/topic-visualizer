@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.0 - 2026-07-11 - Grooming release: read/enumerate topics, in-place priority, honest signals
+
+Field feedback from a full grooming session (41 topics bulk-imported from 5 sessions).
+The blockers first:
+
+- **`topic_get {slug}`** (NEW): full detail for one topic - title, body (the QUESTION),
+  state, priority, tags, provenance, ALL parents + extra avenues with their notes,
+  children, recorded conversions, and recent history. A groomer can finally read a body
+  they didn't author before deciding convert/prune/keep (search returns only
+  slug/score/state).
+- **`topic_list`** (NEW): enumerate the whole store (compact rows: slug/title/state/
+  priority/parent, paginated with a total). Inventorying 41 topics no longer needs a
+  hand-unioned keyword sweep.
+- **`topic_state` sets `priority`** in place (critical | normal) - so the groom's beacon
+  audit can actually promote/demote an existing topic instead of re-planting it (which
+  would orphan its edges/notes/history). `state` is now optional; pass either or both.
+- **`topic_add` takes an `actor`** - pass a stable label so per-actor calibration learns
+  from ~2 real authors instead of 4 free-text variants.
+- **Near-duplicate + search results carry a `band`** (dup_likely | kin | weak) and `mode`
+  beside the raw score, so a caller knows where "same territory, plant no twin" begins
+  (keyword scores are unbounded; the bands are documented as heuristic there).
+- **`health` / `groom_report` separate CURRENT state from the 30-day window**: a `by_state`
+  snapshot (seedling/open/discussed/pruned/expired) + `converted_topics`, distinct from
+  the `window` activity counts - so "live vs converted" is never ambiguous. Adds an
+  `embedder` block (`{url, status: up|down|unknown}`) so a groomer KNOWS whether semantic
+  ranking engaged (see README on pointing `TOPICS_EMBED_URL` at your local embedder).
+- **Idempotent `topic_attach`**: re-attaching an existing avenue returns
+  `{ok, already: true}` instead of an error, so a batch's results stay clean.
+- **Readable slugs**: truncate on a WORD boundary (never `...-docume`) + a short content
+  hash for stable uniqueness.
+- **Docs**: where the store lives (`~/.topic-visualizer/projects/<key>.db`) and how to
+  point the plugin at an existing local embedding endpoint.
+- Fixed the stale MCP `serverInfo` version (was pinned at 0.4.2; now a single `VERSION`).
+
+Not in this release (tracked): batch variants of state/attach/convert; `topic_export` /
+`topic_import` for sharing a tree across a team; deriving `actor` automatically from a
+stable session identity.
+
 ## 0.5.1 - 2026-07-11 - Worktree-aware project keys + Constellation captures in still mode
 
 Two fixes from a consumer wiring 0.5.0 into a Claude Code repo (whose per-session cwd is

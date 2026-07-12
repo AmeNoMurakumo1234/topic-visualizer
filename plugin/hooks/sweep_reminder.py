@@ -32,6 +32,17 @@ try:
 except Exception:
     sys.exit(0)
 
+# skip the reminder when a capture ALREADY happened this session - the nudge would be
+# redundant (field feedback 0.6.0). Best-effort scan of the transcript tail; if it is
+# unreadable, fall through to the reminder (a redundant nudge is net-positive vs a miss).
+tpath = payload.get("transcript_path")
+if tpath:
+    try:
+        if b'"topic_add"' in Path(tpath).read_bytes()[-262144:]:
+            sys.exit(0)              # already captured -> stay quiet
+    except Exception:
+        pass
+
 print(json.dumps({
     "decision": "block",
     "reason": ("SESSION-END TOPIC SWEEP (once per session): if any topic-worthy "

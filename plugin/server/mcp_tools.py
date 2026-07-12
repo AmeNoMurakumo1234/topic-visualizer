@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 # ranking brains only; server.py opens no DB and starts nothing at import time
 from server import (near_duplicates_in, search_in, rank_candidates,  # noqa: E402
-                    project_key_from_cwd)
+                    project_key_from_cwd, VERSION)
 
 ACTOR = os.environ.get("TOPICS_ACTOR", "ai")
 
@@ -95,12 +95,36 @@ class ServerBackend:
             self._direct = srv
         return self._direct
 
-    def add(self, items):
+    def add(self, items, actor=None):
+        act = actor or ACTOR
         try:
             return _http("POST", f"{self.base}/api/topics",
-                         self._p({"topics": items, "actor": ACTOR}))
+                         self._p({"topics": items, "actor": act}))
         except Unreachable:
-            return {"results": self._fallback().add_topics(items, ACTOR)}
+            return {"results": self._fallback().add_topics(items, act)}
+
+    def get(self, slug):
+        try:
+            return _http("GET", self._q(f"{self.base}/api/topics/{slug}"))
+        except Unreachable:
+            return self._fallback().get_topic(slug)
+
+    def list_(self, include_archive=False, limit=500, offset=0):
+        u = f"{self.base}/api/topics/list?limit={int(limit)}&offset={int(offset)}"
+        if include_archive:
+            u += "&include=archive"
+        try:
+            return _http("GET", self._q(u))
+        except Unreachable:
+            return self._fallback().list_topics(include_archive, limit, offset)
+
+    def priority(self, slug, critical):
+        # reuse edit_topic's beacon path (sets priority + logs beacon_set/cleared)
+        try:
+            return _http("POST", f"{self.base}/api/topics/{slug}/edit",
+                         self._p({"critical": bool(critical), "actor": ACTOR}))
+        except Unreachable:
+            return self._fallback().edit_topic(slug, ACTOR, critical=bool(critical))
 
     def serve(self, context):
         from urllib.parse import quote
@@ -224,7 +248,8 @@ class BoardBackend:
             return {"error": "topic or parent not found"}
         if t["parent_slug"] == parent_slug or any(
                 x["slug"] == parent_slug for x in t["extra_parents"]):
-            return {"error": "already attached to that parent"}
+            return {"ok": True, "already": True, "attached": parent_slug,
+                    "note": "already attached to that parent"}
         # cycle guard over the loaded DAG: no ancestor path from the new parent
         # may reach this topic
         frontier, seen = [parent_slug], set()
@@ -247,7 +272,9 @@ class BoardBackend:
             return {"error": "reply failed", "detail": r}
         return {"ok": True, "attached": parent_slug}
 
-    def add(self, items):
+    def add(self, items, actor=None):
+        if actor:
+            self.author = actor          # a caller-supplied stable actor overrides the default
         existing = self._load()
         results = []
         for it in items:
@@ -277,6 +304,27 @@ class BoardBackend:
                 item["error"] = r["error"]
             results.append(item)
         return {"results": results}
+
+    def get(self, slug):
+        t = next((x for x in self._load() if x["slug"] == slug), None)
+        return {"topic": t} if t else {"error": "not found"}
+
+    def list_(self, include_archive=False, limit=500, offset=0):
+        rows = [{"slug": t["slug"], "title": t["title"], "state": t["state"],
+                 "priority": t["priority"], "parent": t["parent_slug"]}
+                for t in self._load()]
+        try:
+            limit = max(1, min(int(limit), 2000)); offset = max(0, int(offset))
+        except Exception:
+            limit, offset = 500, 0
+        page = rows[offset:offset + limit]
+        return {"topics": page, "total": len(rows), "offset": offset,
+                "limit": limit, "returned": len(page)}
+
+    def priority(self, slug, critical):
+        return {"error": "the board backend cannot change priority after capture (post "
+                         "bodies are immutable through the API). Set it at capture time "
+                         "(topic_add priority=critical), or use the sqlite backend."}
 
     def serve(self, context):
         cands = rank_candidates(self._load(), context)
@@ -378,7 +426,25 @@ TOOLS = [
                           "description": "critical = beacon; RARE (<10% of live topics)"},
              "state": {"type": "string", "enum": ["open", "seedling"],
                        "description": "seedling = tentative capture, auto-expires untouched"},
-         }, "required": ["title"]}}}, "required": ["items"]}},
+         }, "required": ["title"]}},
+         "actor": {"type": "string", "description": "who is capturing - pass a STABLE label "
+                   "(same string every session) so per-actor calibration can learn; "
+                   "defaults to TOPICS_ACTOR"}},
+       "required": ["items"]}},
+    {"name": "topic_get",
+     "description": "FULL detail for ONE topic by slug: title, body (the QUESTION), state, "
+                    "priority, tags, provenance, ALL parents + extra avenues with their "
+                    "notes, children, recorded conversions, and recent history. Read this "
+                    "before deciding convert/prune/keep - search returns only slug/score/state.",
+     "inputSchema": {"type": "object", "properties": {
+         "slug": {"type": "string"}}, "required": ["slug"]}},
+    {"name": "topic_list",
+     "description": "ENUMERATE the store (compact rows: slug, title, state, priority, "
+                    "parent) - the inventory a groom needs. Paginated (limit/offset; "
+                    "returns total). include_archive adds pruned/expired.",
+     "inputSchema": {"type": "object", "properties": {
+         "include_archive": {"type": "boolean"},
+         "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
     {"name": "topic_serve",
      "description": (
          "Get ONE topic card worth raising now (plus 2 alternates) - beacons first, "
@@ -395,13 +461,17 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
     {"name": "topic_state",
-     "description": "Move a topic: open (reopen), discussed (we actually talked it "
-                    "through), pruned (dead branch; on the sqlite backend this cascades "
-                    "to the live subtree). Touching any topic graduates a seedling.",
+     "description": "Change a topic in place (no re-planting, so edges/notes/history "
+                    "survive). Set `state`: open (reopen), discussed (we talked it "
+                    "through), pruned (dead branch; sqlite cascades to the live subtree). "
+                    "And/or set `priority`: critical (beacon) | normal - this is how the "
+                    "groom's beacon audit promotes/demotes an existing topic. At least one "
+                    "of state/priority. Touching a topic graduates a seedling.",
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string"},
          "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
-         "note": {"type": "string"}}, "required": ["slug", "state"]}},
+         "priority": {"type": "string", "enum": ["normal", "critical"]},
+         "note": {"type": "string"}}, "required": ["slug"]}},
     {"name": "topic_convert",
      "description": (
          "The atomic crossing out of EXPLORING: record what a discussed topic became - "
@@ -440,13 +510,28 @@ TOOLS = [
 def _call(name: str, args: dict) -> dict:
     b = _backend()
     if name == "topic_add":
-        return b.add(args.get("items") or [])
+        return b.add(args.get("items") or [], args.get("actor"))
+    if name == "topic_get":
+        return b.get(str(args.get("slug") or ""))
+    if name == "topic_list":
+        return b.list_(bool(args.get("include_archive")),
+                       args.get("limit", 500), args.get("offset", 0))
     if name == "topic_serve":
         return b.serve(str(args.get("context") or ""))
     if name == "topic_search":
         return b.search(str(args.get("query") or ""))
     if name == "topic_state":
-        return b.state(args["slug"], args["state"], str(args.get("note") or ""))
+        slug, note = str(args.get("slug") or ""), str(args.get("note") or "")
+        state, priority = args.get("state"), args.get("priority")
+        if not state and not priority:
+            return {"error": "topic_state needs a state and/or a priority"}
+        pres = b.priority(slug, priority == "critical") if priority else None
+        sres = b.state(slug, state, note) if state else None
+        if sres is not None and pres is None:
+            return sres
+        if pres is not None and sres is None:
+            return pres
+        return {"ok": True, "state_result": sres, "priority_result": pres}
     if name == "topic_convert":
         return b.convert(args["slug"], args["kind"], str(args.get("ref") or ""),
                          str(args.get("note") or ""))
@@ -481,7 +566,7 @@ def main() -> None:
             resp = {"protocolVersion": (msg.get("params") or {}).get(
                         "protocolVersion", "2024-11-05"),
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "topic-visualizer", "version": "0.4.2"}}
+                    "serverInfo": {"name": "topic-visualizer", "version": VERSION}}
         elif method == "tools/list":
             resp = {"tools": TOOLS}
         elif method == "tools/call":

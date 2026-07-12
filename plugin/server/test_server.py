@@ -181,9 +181,10 @@ class SeamTests(unittest.TestCase):
         self.assertEqual([x["slug"] for x in t["extra_parents"]], [a2])
         self.assertIn("rediscovered", t["body"], "the later discovery enriches the body")
         self.assertIn("found again", t["body"])
-        # duplicates + cycles refused
-        self.assertIn("error", call(f"/api/topics/{dest}/attach",
-                                    {"actor": "ai", "parent_slug": a2}))
+        # re-attaching an existing avenue is IDEMPOTENT (ok+already), not an error (0.6.0)
+        dup = call(f"/api/topics/{dest}/attach", {"actor": "ai", "parent_slug": a2})
+        self.assertTrue(dup.get("ok") and dup.get("already"), dup)
+        # cycles are still refused
         self.assertIn("error", call(f"/api/topics/{a1}/attach",
                                     {"actor": "ai", "parent_slug": dest}),
                       "attaching your own descendant is a cycle")
@@ -297,6 +298,42 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(srv.project_key_from_cwd(), srv.encode_project_path(root))
         self.assertNotIn("server", srv.project_key_from_cwd().rsplit("-", 1)[-1].lower(),
                          "key is the repo root, not the server/ subdir")
+
+
+    def test_16_get_list_slug_bands(self):
+        r = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "the grooming enumeration question versus documentation debt (~1 hour)",
+             "body": "THE QUESTION: how does a groomer read a body they did not author?"}]})
+        slug = r["results"][0]["slug"]
+        # slug 10: word-boundary (never a mid-word cut) + a short hash suffix
+        self.assertFalse(slug.endswith("-docume") or slug.endswith("-versu"), slug)
+        self.assertRegex(slug, r"-[0-9a-f]{6}$")
+        # topic_get 2: FULL detail incl. body + history (search only returns slug/score/state)
+        g = call(f"/api/topics/{slug}")
+        self.assertEqual(g["topic"]["slug"], slug)
+        self.assertIn("THE QUESTION", g["topic"]["body"])
+        self.assertEqual(g["topic"]["history"][0]["event"], "created")   # newest-first
+        self.assertIn("children", g["topic"])
+        # topic_list 3: enumeration (slug/title/state/priority/parent), paginated
+        lst = call("/api/topics/list")
+        self.assertIn(slug, [t["slug"] for t in lst["topics"]])
+        self.assertIn("total", lst)
+        self.assertTrue(all(("title" in t and "state" in t) for t in lst["topics"]))
+        # near-duplicates carry a mode + a readable band (item 5)
+        r2 = call("/api/topics", {"actor": "ai", "topics": [
+            {"title": "the grooming enumeration question versus documentation debt redux",
+             "body": "THE QUESTION: same territory as before"}]})
+        dups = r2["results"][0]["near_duplicates"]
+        if dups:
+            self.assertIn(dups[0].get("band"), ("dup_likely", "kin", "weak"))
+            self.assertIn(dups[0].get("mode"), ("semantic", "keyword"))
+
+    def test_17_health_current_vs_window(self):
+        h = call("/api/topics/health")
+        for k in ("by_state", "window", "converted_topics", "embedder"):
+            self.assertIn(k, h)
+        self.assertIn(h["embedder"]["status"], ("up", "down", "unknown"))
+        self.assertIn("open", h["by_state"])
 
 
 if __name__ == "__main__":

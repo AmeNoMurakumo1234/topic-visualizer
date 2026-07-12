@@ -15,7 +15,9 @@ python server.py [--db topics.db] [--port 8991] [--web ../web]
 | Method + path | Does |
 |---|---|
 | `GET /api/topics[?include=archive]` | every topic (+ pruned/expired ghosts with archive) |
-| `GET /api/topics/search?q=` | ranked search: facet words filter, rest ranks semantically (embedder up) or by keyword |
+| `GET /api/topics/list[?include=archive&limit=&offset=]` | ENUMERATE (compact: slug/title/state/priority/parent) + total; the inventory a groom needs |
+| `GET /api/topics/{slug}` | FULL detail: body, all parents + avenues, children, conversions, recent history |
+| `GET /api/topics/search?q=` | ranked search: facet words filter, rest ranks semantically (embedder up) or by keyword; each hit carries `mode` + a `band` (dup_likely\|kin\|weak) |
 | `GET /api/topics/serve?context=` | ONE card + 2 alternates (beacons > territory fit > age decay); resurfaces but never graduates a seedling |
 | `GET /api/topics/health` | seam vital signs (captured/served/converted/pruned/expired, beacon ratio) |
 | `GET /api/topics/groom` | health + per-actor capture calibration + expiry candidates |
@@ -30,11 +32,24 @@ Beacons are set via `edit` (`critical: true/false`). Seedlings auto-expire after
 ~21 untouched days (daily job); everything stays browsable and resurrectable in the
 archive.
 
+## Configuration + where the store lives
+
+All optional; the plugin runs with zero setup. Every value is an env var, so a
+downloaded copy carries the USER's machine, never the author's.
+
+| Env | Default | What |
+|---|---|---|
+| (none) | `~/.topic-visualizer/projects/<project>.db` | **where topics live** - one SQLite file per project, keyed to the git repo root of the loaded session (the legacy single store `~/.topic-visualizer/topics.db` is the `default` project). Back up or share by copying the file. |
+| `TOPICS_PROJECT` | auto (repo root) | pin the project key explicitly instead of deriving it from cwd |
+| `TOPICS_EMBED_URL` | `http://127.0.0.1:8082` | **semantic ranking**: any OpenAI-style endpoint that answers `POST /v1/embeddings` (`{"input": [...]}` -> `{"data":[{"embedding":[...]}]}`). Point it at your local embedder (e.g. a llama.cpp / nomic server) and search + near-dup + serve upgrade from keyword to semantic. `groom_report().health.embedder.status` tells you whether it engaged (`up`/`down`/`unknown`). Down or absent -> graceful keyword fallback. |
+| `TOPICS_BACKEND` | `server` | `board` maps topics onto message-board posts instead of the local sqlite store |
+| `TOPICS_ACTOR` | `ai` | default capture attribution (or pass `actor` to `topic_add`) |
+
 ## MCP surface (mcp_tools.py)
 
-Seven tools: `topic_add`, `topic_serve`, `topic_search`, `topic_state`,
-`topic_convert`, `topic_attach`, `topic_groom_report`. Two backends behind the same
-contract (`TOPICS_BACKEND=server|board`); the board backend maps topics onto
+Nine tools: `topic_add`, `topic_get`, `topic_list`, `topic_serve`, `topic_search`,
+`topic_state`, `topic_convert`, `topic_attach`, `topic_groom_report`. Two backends behind
+the same contract (`TOPICS_BACKEND=server|board`); the board backend maps topics onto
 message-board posts and reuses the store-agnostic ranking functions
 (`near_duplicates_in`, `search_in`, `rank_candidates`) imported from this module.
 

@@ -104,8 +104,9 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertEqual(init["serverInfo"]["name"], "topic-visualizer")
         tools = self.mcp.rpc("tools/list")["tools"]
         self.assertEqual({t["name"] for t in tools},
-                         {"topic_add", "topic_serve", "topic_search", "topic_state",
-                          "topic_convert", "topic_attach", "topic_groom_report"})
+                         {"topic_add", "topic_get", "topic_list", "topic_serve",
+                          "topic_search", "topic_state", "topic_convert",
+                          "topic_attach", "topic_groom_report"})
 
     def test_02_lifecycle(self):
         out, err = self.mcp.tool("topic_add", {"items": [
@@ -146,11 +147,30 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
                                 {"slug": child, "parent_slug": bslug,
                                  "note": "reached again while exploring B"})
         self.assertTrue(at.get("ok"), at)
-        # duplicate attach rejected; self-cycle rejected
+        # duplicate attach is IDEMPOTENT (ok+already), not an error (0.6.0); self-cycle rejected
         dup, _ = self.mcp.tool("topic_attach", {"slug": child, "parent_slug": bslug})
-        self.assertIn("error", dup)
+        self.assertTrue(dup.get("ok") and dup.get("already"), dup)
         cyc, _ = self.mcp.tool("topic_attach", {"slug": bslug, "parent_slug": bslug})
         self.assertIn("error", cyc)
+
+    def test_04_get_list_priority(self):
+        out, _ = self.mcp.tool("topic_add", {"actor": "stable-actor-x", "items": [
+            {"title": "0.6.0 groomer read the body before deciding (~1 hour)",
+             "body": "THE QUESTION: can a groomer read what they did not author?"}]})
+        slug = out["results"][0]["slug"]
+        # topic_get: full body (search never returned it)
+        g, _ = self.mcp.tool("topic_get", {"slug": slug})
+        self.assertEqual(g["topic"]["slug"], slug)
+        self.assertIn("THE QUESTION", g["topic"]["body"])
+        # topic_list: enumeration
+        lst, _ = self.mcp.tool("topic_list", {})
+        self.assertIn(slug, [t["slug"] for t in lst["topics"]])
+        self.assertIn("total", lst)
+        # topic_state can now set priority in place (beacon audit executes)
+        pr, _ = self.mcp.tool("topic_state", {"slug": slug, "priority": "critical"})
+        self.assertTrue(pr.get("ok"), pr)
+        g2, _ = self.mcp.tool("topic_get", {"slug": slug})
+        self.assertEqual(g2["topic"]["priority"], "critical")
 
 
 class TestMCPServerBackendDirect(unittest.TestCase):

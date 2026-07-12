@@ -11,6 +11,7 @@ Design: docs/2026-07-11-seam-design.md. Schema: schema.sql (v3).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -25,6 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
+VERSION = "0.6.0"                     # single source of truth (MCP serverInfo reads this)
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 
@@ -206,15 +208,22 @@ def open_db(path: str) -> sqlite3.Connection:
 
 
 def _slugify_locked(title: str, salt: int = 0) -> str:
-    """Mint a free slug. CALLER MUST HOLD _lock - minting and inserting under one
-    lock hold closes the check-then-act race two concurrent captures had."""
-    base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "topic"
-    if salt:
-        base = f"{base}-r{salt}"
-    slug, n = base, 1
+    """Mint a free slug. CALLER MUST HOLD _lock (mint+insert under one hold closes the
+    check-then-act race). Truncates on a WORD BOUNDARY (never mid-word like '...-docume')
+    and appends a short content hash for stable uniqueness, so near-identical titles get
+    distinct, still-readable slugs without a numeric-collision walk."""
+    words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
+    base = ""
+    for w in words:
+        if base and len(base) + 1 + len(w) > 48:      # stop at the last WHOLE word that fits
+            break
+        base = f"{base}-{w}" if base else w
+    base = base or "topic"
+    h = hashlib.sha1((title + (f"#{salt}" if salt else "")).encode("utf-8")).hexdigest()[:6]
+    slug, n = f"{base}-{h}", 1
     while _conn.execute("SELECT 1 FROM topic WHERE slug=?", (slug,)).fetchone():
         n += 1
-        slug = f"{base}-{n}"
+        slug = f"{base}-{h}-{n}"
     return slug
 
 
@@ -260,6 +269,60 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
         t["extra_parents"] = xparents.get(r["id"], [])
         out.append(t)
     return out
+
+
+def get_topic(slug: str) -> dict:
+    """FULL detail for ONE topic - what a groomer needs before deciding
+    convert/prune/keep: title, body, the QUESTION, state, priority, tags, provenance,
+    ALL parents (primary + extra avenues w/ their notes), children, recorded
+    conversions, and recent history. (search only returns slug/score/state.)"""
+    with _lock:
+        r = _conn.execute(
+            "SELECT t.*, p.slug AS parent_slug FROM topic t "
+            "LEFT JOIN topic p ON p.id=t.parent_id WHERE t.slug=?", (slug,)).fetchone()
+        if not r:
+            return _fail("not found")
+        tid = r["id"]
+        links = [{"kind": x["kind"], "ref": x["ref"], "note": x["note"]}
+                 for x in _conn.execute(
+                     "SELECT kind, ref, note FROM topic_link WHERE topic_id=?", (tid,))]
+        extra = [{"slug": x["parent_slug"], "note": x["note"], "added_by": x["added_by"],
+                  "added_at": x["added_at"]}
+                 for x in _conn.execute(
+                     "SELECT tp.note, tp.added_by, tp.added_at, p.slug AS parent_slug "
+                     "FROM topic_parent tp JOIN topic p ON p.id=tp.parent_id "
+                     "WHERE tp.topic_id=?", (tid,))]
+        children = [x["slug"] for x in _conn.execute(
+            "SELECT slug FROM topic WHERE parent_id=?", (tid,))]
+        events = [{"event": x["event"], "actor": x["actor"], "note": x["note"], "at": x["at"]}
+                  for x in _conn.execute(
+                      "SELECT event, actor, note, at FROM topic_event WHERE topic_id=? "
+                      "ORDER BY id DESC LIMIT 12", (tid,))]
+    t = _row_to_topic(r)
+    t.pop("id", None)
+    t.update({"extra_parents": extra, "links": links, "children": children,
+              "history": events})
+    return {"topic": t}
+
+
+def list_topics(include_archive=False, limit=500, offset=0) -> dict:
+    """ENUMERATE the store (compact): slug, title, state, priority, primary parent, per
+    row. The inventory a groom needs - search only surfaces matches, so 41 topics used to
+    take a hand-unioned keyword sweep. Paginated (total returned so the caller can page)."""
+    try:
+        limit = max(1, min(int(limit), 2000)); offset = max(0, int(offset))
+    except Exception:
+        limit, offset = 500, 0
+    q = ("SELECT t.slug, t.title, t.state, t.priority, p.slug AS parent "
+         "FROM topic t LEFT JOIN topic p ON p.id=t.parent_id")
+    if not include_archive:
+        q += " WHERE t.state IN ('seedling','open','discussed')"
+    q += " ORDER BY t.id"
+    with _lock:
+        rows = _conn.execute(q).fetchall()
+    page = [dict(r) for r in rows[offset:offset + limit]]
+    return {"topics": page, "total": len(rows), "offset": offset,
+            "limit": limit, "returned": len(page)}
 
 
 def _fail(msg: str, **extra) -> dict:
@@ -325,6 +388,12 @@ def _embed(texts):
     return [_embed_cache[x] for x in texts]
 
 
+def _embed_status() -> str:
+    """up | down | unknown - so a groomer KNOWS whether semantic ranking actually engaged
+    (vs silently falling back to keyword). Reflects the last probe of TOPICS_EMBED_URL."""
+    return "up" if _embed_up is True else "down" if _embed_up is False else "unknown"
+
+
 def _cosine(a, b):
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
@@ -368,20 +437,32 @@ def _score(query_toks: list[str], text: str) -> float:
     return hit / math.sqrt(len(toks) + 8)
 
 
+def _dup_band(score, mode):
+    """A readable confidence band beside the raw score - the caller shouldn't have to
+    guess where 'same territory, plant no twin' begins. Semantic scores are cosine (0..1);
+    keyword scores are unbounded, so its cutoffs are heuristic (documented as such)."""
+    if mode == "semantic":
+        return "dup_likely" if score >= 0.85 else "kin" if score >= 0.6 else "weak"
+    return "dup_likely" if score >= 1.2 else "kin" if score >= 0.55 else "weak"
+
+
 def near_duplicates_in(title, body, topics, limit=3):
     """Write-time dedup guard over a given topic list (store-agnostic; the MCP board
-    backend reuses this). Semantic when the embedder is up, keyword otherwise."""
+    backend reuses this). Semantic when the embedder is up, keyword otherwise. Each hit
+    carries `mode` + a `band` (dup_likely | kin | weak) beside the raw score."""
     ranked = semantic_rank(title + " " + body[:200], topics)
     out = []
     if ranked is not None:
-        out = [{"slug": x["slug"], "title": x["title"], "score": round(s, 3)}
+        out = [{"slug": x["slug"], "title": x["title"], "score": round(s, 3),
+                "mode": "semantic", "band": _dup_band(s, "semantic")}
                for s, x in ranked if s > 0.62]
     else:
         q = _tokens(title + " " + body[:200])
         for x in topics:
             s = _score(q, x["title"] + " " + x["body"][:200])
             if s > 0.55:
-                out.append({"slug": x["slug"], "title": x["title"], "score": round(s, 3)})
+                out.append({"slug": x["slug"], "title": x["title"], "score": round(s, 3),
+                            "mode": "keyword", "band": _dup_band(s, "keyword")})
         out.sort(key=lambda y: -y["score"])
     return out[:limit]
 
@@ -621,8 +702,9 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
             return {"ok": True, "removed": n}
         if tid == pid:
             return _fail("a topic cannot parent itself")
-        if row["parent_id"] == pid:
-            return _fail("already the primary parent")
+        if row["parent_id"] == pid:                  # idempotent: already parented -> not an error
+            return {"ok": True, "already": True, "attached": parent_slug,
+                    "note": "already the primary parent"}
         # cycle guard over the FULL DAG: the new parent must not sit anywhere inside
         # this topic's descendant closure (primary + extra edges both count)
         frontier, seen = [tid], {tid}
@@ -640,8 +722,10 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
             _conn.execute(
                 "INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
                 "VALUES (?,?,?,?)", (tid, pid, note, actor))
-        except sqlite3.IntegrityError:
-            return _fail("already attached to that parent")
+        except sqlite3.IntegrityError:               # idempotent: this avenue already exists
+            _conn.rollback()
+            return {"ok": True, "already": True, "attached": parent_slug,
+                    "note": "already attached to that parent"}
         # rediscovery enrichment: the later avenue leaves a visible trace on the topic
         stamp = time.strftime("%Y-%m-%d")
         addendum = f"\n\n[rediscovered {stamp} via {parent_slug}]" + (f" {note}" if note else "")
@@ -683,7 +767,7 @@ def search_in(query, topics, limit=40):
     ranked = semantic_rank(query, topics)
     if ranked is not None:
         return [{"slug": x["slug"], "score": round(s, 4), "state": x["state"],
-                 "mode": "semantic"}
+                 "mode": "semantic", "band": _dup_band(s, "semantic")}
                 for s, x in ranked if s > 0.22][:limit]
     q = _tokens(query)
     scored = []
@@ -691,7 +775,8 @@ def search_in(query, topics, limit=40):
         s = _score(q, x["title"] + " " + x["body"])
         if s > 0:
             scored.append({"slug": x["slug"], "score": round(s, 4),
-                           "state": x["state"], "mode": "keyword"})
+                           "state": x["state"], "mode": "keyword",
+                           "band": _dup_band(s, "keyword")})
     scored.sort(key=lambda y: -y["score"])
     return scored[:limit]
 
@@ -777,12 +862,26 @@ def health() -> dict:
             "state IN ('seedling','open')").fetchone()["c"]
         opens = _conn.execute(
             "SELECT COUNT(*) c FROM topic WHERE state IN ('seedling','open')").fetchone()["c"]
+        # CURRENT-STATE snapshot (distinct from the 30-day activity window above): the real
+        # distribution right now, so 'live' vs 'converted' is never ambiguous.
+        by_state = {s: 0 for s in ("seedling", "open", "discussed", "pruned", "expired")}
+        for r in _conn.execute("SELECT state, COUNT(*) c FROM topic GROUP BY state"):
+            by_state[r["state"]] = r["c"]
+        converted_topics = _conn.execute(
+            "SELECT COUNT(DISTINCT topic_id) c FROM topic_link").fetchone()["c"]
     ratio = (beacons / opens) if opens else 0.0
-    return {"window_days": 30, "captured": created, "served": served,
-            "discussed": discussed, "converted": converted,
-            "pruned": pruned, "expired": expired, "live_topics": live,
-            "beacon_ratio": round(ratio, 3),
-            "beacon_warning": ratio > BEACON_WARN_RATIO}
+    return {"window_days": 30,
+            # 30-day ACTIVITY window (events), not current state:
+            "window": {"captured": created, "served": served, "discussed": discussed,
+                       "converted": converted, "pruned": pruned, "expired": expired},
+            # CURRENT state snapshot:
+            "by_state": by_state, "converted_topics": converted_topics,
+            "live_topics": live, "beacons": beacons,
+            "beacon_ratio": round(ratio, 3), "beacon_warning": ratio > BEACON_WARN_RATIO,
+            "embedder": {"url": EMBED_URL, "status": _embed_status()},
+            # legacy flat keys (kept for back-compat; prefer window{} / by_state{}):
+            "captured": created, "served": served, "discussed": discussed,
+            "converted": converted, "pruned": pruned, "expired": expired}
 
 
 def groom_report() -> dict:
@@ -850,6 +949,10 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/topics":
                     return self._json(200, {"topics": _load_topics(
                         include_archive=qs.get("include", [""])[0] == "archive")})
+                if u.path == "/api/topics/list":
+                    return self._json(200, list_topics(
+                        include_archive=qs.get("include", [""])[0] == "archive",
+                        limit=qs.get("limit", ["500"])[0], offset=qs.get("offset", ["0"])[0]))
                 if u.path == "/api/topics/search":
                     return self._json(200, {"results": search(qs.get("q", [""])[0])})
                 if u.path == "/api/topics/serve":
@@ -858,6 +961,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, health())
                 if u.path == "/api/topics/groom":
                     return self._json(200, groom_report())
+                mget = re.match(r"^/api/topics/([a-z0-9][a-z0-9._-]*)$", u.path)
+                if mget:                             # GET /api/topics/<slug> -> full detail
+                    return self._json(200, get_topic(mget.group(1)))
         # background images: whatever PNGs live in the plugin's backgrounds/ folder
         # (empty -> the web falls back to the generated canvas scene). The user
         # picks one; images are meant to be rendered mostly-transparent.
