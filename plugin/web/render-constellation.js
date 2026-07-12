@@ -150,10 +150,12 @@ window.TopicsRenderers.constellation = (function () {
              d="M0,-8 L2.2,-2.2 L8,0 L2.2,2.2 L0,8 L-2.2,2.2 L-8,0 L-2.2,-2.2 Z"></path>`
         : `<circle class="core" r="${R}" ${n.parent ? `style="filter: hue-rotate(${n.hue || 0}deg)"` : `style="fill: url(#tvSunGrad)"`}></circle>`;
       const beacon = (n.critical && n.state !== "discussed")
-        ? `<circle class="beacon" r="${R + 6}">
-             <animate attributeName="r" values="${R + 3};${R + 11};${R + 3}" dur="1.8s" repeatCount="indefinite"/>
-             <animate attributeName="stroke-opacity" values="0.9;0.15;0.9" dur="1.8s" repeatCount="indefinite"/>
-           </circle>` : "";
+        ? (core.reduced                              // static ring under motion gate (still reads critical)
+            ? `<circle class="beacon" r="${R + 8}"></circle>`
+            : `<circle class="beacon" r="${R + 6}">
+                 <animate attributeName="r" values="${R + 3};${R + 11};${R + 3}" dur="1.8s" repeatCount="indefinite"/>
+                 <animate attributeName="stroke-opacity" values="0.9;0.15;0.9" dur="1.8s" repeatCount="indefinite"/>
+               </circle>`) : "";
       const label = core.short(n.title);
       // invisible catch circle: forgiving hit target (>= 18px) without changing
       // the visible star size - drawn FIRST so it sits under the art, transparent

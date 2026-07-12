@@ -11,6 +11,26 @@
 window.TopicsCore = (function () {
   "use strict";
 
+  /* Motion gate: idle every PERPETUAL animation (ambient twinkles, the meteor, the
+   * beacon pulse, the SMIL node pulses) when the viewer asked for reduced motion OR an
+   * automation/headless browser is driving (navigator.webdriver). A page that never
+   * stops animating never reaches a stable frame - which is exactly what hangs
+   * screenshot capture (seen on two machines). So a bot gets a still, capturable render
+   * and motion-sensitive users get calm. Pure browser signals - no env vars, works on
+   * any machine. */
+  const REDUCED = (() => {
+    try {
+      // ?still / ?static: a deterministic, tool-agnostic lever - append it to freeze the
+      // page for a clean screenshot no matter what your capture tool signals.
+      const q = new URLSearchParams(location.search);
+      if (q.has("still") || q.has("static")) return true;
+      return (typeof matchMedia === "function"
+              && matchMedia("(prefers-reduced-motion: reduce)").matches)
+             || !!(navigator && navigator.webdriver);
+    } catch (e) { return false; }
+  })();
+  try { if (REDUCED) document.documentElement.classList.add("reduced-motion"); } catch (e) {}
+
   /* ---------- tiny utils ---------- */
   // esc: the ONE HTML/attribute escape. Topic titles, bodies, and notes are
   // AI-authored text from arbitrary conversations - every innerHTML
@@ -318,17 +338,19 @@ window.TopicsCore = (function () {
 
     /* --- motion: twinkles + ONE rare meteor (CSS-animated, ~29s cycle) --- */
     for (const t of stage.querySelectorAll(".twinkle, .meteor")) t.remove();
-    for (let i = 0; i < 14; i++) {
-      const t = document.createElement("div");
-      t.className = "twinkle";
-      t.style.left = (rnd() * 100) + "%"; t.style.top = (rnd() * 100) + "%";
-      t.style.animationDelay = (rnd() * 3.2) + "s";
-      stage.appendChild(t);
+    if (!REDUCED) {                                  // skip perpetual motion under reduced/automation
+      for (let i = 0; i < 14; i++) {
+        const t = document.createElement("div");
+        t.className = "twinkle";
+        t.style.left = (rnd() * 100) + "%"; t.style.top = (rnd() * 100) + "%";
+        t.style.animationDelay = (rnd() * 3.2) + "s";
+        stage.appendChild(t);
+      }
+      const m = document.createElement("div");
+      m.className = "meteor";
+      m.style.top = (8 + rnd() * 30) + "%";
+      stage.appendChild(m);
     }
-    const m = document.createElement("div");
-    m.className = "meteor";
-    m.style.top = (8 + rnd() * 30) + "%";
-    stage.appendChild(m);
   }
 
   /* ---------- the core object ---------- */
@@ -340,6 +362,7 @@ window.TopicsCore = (function () {
       actor: (options && options.actor) || "human",
       nodes: [], bySlug: {}, roots: [],
       selected: null,
+      reduced: REDUCED,            // renderers skip SMIL pulses when motion is gated off
       onChange: () => {},          // shell sets this: re-render the active renderer
       short, weight, subtree, demoData, esc,
       labelBudget, labelAllowedSet, styleLabel, paintStars,

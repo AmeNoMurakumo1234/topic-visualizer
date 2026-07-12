@@ -90,6 +90,18 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .tnode.critical { animation: pulse 1.8s ease-in-out infinite; border-color: #ff9a4a; }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 10px #ff9a4a44; }
                    50% { box-shadow: 0 0 26px #ff9a4abb; } }
+/* Motion gate: kill every PERPETUAL animation so the page reaches a stable frame -
+   fixes screenshot-capture hangs on the animated canvas + honours reduced-motion. The
+   .reduced-motion class is set by topics-core (reduced-motion pref OR automation);
+   the @media query is the CSS-only fallback. The beacon still reads critical (its
+   amber border stays) - it just stops pulsing. */
+:root.reduced-motion .twinkle,
+:root.reduced-motion .meteor { display: none !important; }
+:root.reduced-motion .tnode.critical { animation: none !important; box-shadow: 0 0 18px #ff9a4a77; }
+@media (prefers-reduced-motion: reduce) {
+  .twinkle, .meteor { display: none !important; }
+  .tnode.critical { animation: none !important; box-shadow: 0 0 18px #ff9a4a77; }
+}
 .tnode .sum { font-size: 12px; line-height: 1.35; }
 .tnode .chips { margin-top: 5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .chip { font-size: 10px; color: var(--dim); border: 1px solid var(--line);

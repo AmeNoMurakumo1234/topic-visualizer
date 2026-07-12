@@ -164,10 +164,12 @@ window.TopicsRenderers.starchart = (function () {
              ? `style="fill: url(#tvSunGrad)"`
              : `style="filter: hue-rotate(${n.hue || 0}deg)"`}></circle>`;
       const beacon = (n.critical && n.state !== "discussed")
-        ? `<circle class="beacon" r="${r + 6}">
-             <animate attributeName="r" values="${r + 3};${r + 11};${r + 3}" dur="1.8s" repeatCount="indefinite"/>
-             <animate attributeName="stroke-opacity" values="0.9;0.15;0.9" dur="1.8s" repeatCount="indefinite"/>
-           </circle>` : "";
+        ? (core.reduced                              // static ring under motion gate (still reads critical)
+            ? `<circle class="beacon" r="${r + 8}"></circle>`
+            : `<circle class="beacon" r="${r + 6}">
+                 <animate attributeName="r" values="${r + 3};${r + 11};${r + 3}" dur="1.8s" repeatCount="indefinite"/>
+                 <animate attributeName="stroke-opacity" values="0.9;0.15;0.9" dur="1.8s" repeatCount="indefinite"/>
+               </circle>`) : "";
       const label = depth <= 2 || isFocus ? core.short(n.title) : "";
       const cut = depth <= 1 ? 46 : 30;
       g.innerHTML = `
