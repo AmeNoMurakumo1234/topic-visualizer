@@ -61,10 +61,10 @@ a throwaway git worktree at `<repo>/.claude/worktrees/<rand>`):
   transition. The page paints once and goes idle, so a headless viewer gets a clean frame
   on all three views (Constellation was the last that could hang).
 - CLEAN PROJECT LABELS in the switcher dropdown. It showed the full encoded key
-  (`C--NB-Disk-FyiBOS`); now it shows just the folder name (`FyiBOS`). The real name is
-  read from the project's session transcript (the `~/.claude/projects` dir name is a lossy
-  encoding), worktree-stripped, so hyphenated names survive intact (`quantum-concepts`
-  stays `quantum-concepts`, not `concepts`). No drive/path leak.
+  (`C--Repos-MyApp`); now it shows just the folder name (`MyApp`). The real name is read
+  from the project's session transcript (the `~/.claude/projects` dir name is a lossy
+  encoding), worktree-stripped, so hyphenated names survive intact (`my-cool-app` stays
+  `my-cool-app`, not `app`). No drive/path leak.
 - RESPONSIVE HEADER. It wraps cleanly onto extra rows when narrow instead of smushing;
   controls are grouped so related ones travel together - the project switcher + the three
   view toggles as one unit (the toggle trio never splits or clips), the
@@ -77,8 +77,8 @@ a throwaway git worktree at `<repo>/.claude/worktrees/<rand>`):
 - PER-PROJECT STORES: topics are scoped per PROJECT instead of one global tree. Each
   project gets its own SQLite file (`~/.topic-visualizer/projects/<key>.db`), and the
   current project AUTO-derives from the loaded session's working directory, encoded the
-  same way Claude names `~/.claude/projects` (`F:\writing\business` ->
-  `F--writing-business`). Existing single-store topics are preserved as the `default`
+  same way Claude names `~/.claude/projects` (`C:\Repos\my-app` ->
+  `C--Repos-my-app`). Existing single-store topics are preserved as the `default`
   project. Every route + MCP call is `?project=`-aware; connections are cached and pinned
   per-request under a reentrant lock (ThreadingHTTPServer-safe); seedling expiry sweeps
   every project. New `GET /api/projects` lists the projects the machine offers.

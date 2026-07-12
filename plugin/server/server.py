@@ -40,8 +40,8 @@ DB_PATH = "topics.db"
 # One SQLite file = one topic tree = one PROJECT (schema.sql). Projects are scoped per
 # machine and never hardcoded: the current one auto-derives from the loaded session's
 # working directory, encoded the same way Claude names ~/.claude/projects
-# (F:\writing\business -> F--writing-business), so the store lines up with the project
-# the user is actually in. A downloaded plugin therefore carries the USER's projects.
+# (C:\Repos\my-app -> C--Repos-my-app), so the store lines up with the project the user
+# is actually in. A downloaded plugin therefore carries the USER's projects.
 DEFAULT_DB = str(Path.home() / ".topic-visualizer" / "topics.db")   # legacy single store
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"          # what projects exist
 
@@ -58,9 +58,9 @@ def _projects_dir() -> Path:
 def encode_project_path(p) -> str:
     """Encode an absolute path to the key Claude uses for ~/.claude/projects: the drive
     colon, every path separator, AND dots each become '-' (NOT collapsed, matching Claude
-    exactly - it replaces the dot too, so `.claude` -> `-claude`). F:\\writing\\business ->
-    F--writing-business ; Z:\\powershell -> Z--powershell. So keys line up with dropdown
-    dir names even for paths carrying dots."""
+    exactly - it replaces the dot too, so `.claude` -> `-claude`). C:\\Repos\\MyApp ->
+    C--Repos-MyApp ; Z:\\tools -> Z--tools. So keys line up with dropdown dir names even
+    for paths carrying dots."""
     return re.sub(r"[:/\\.]", "-", str(p)) or "default"
 
 
@@ -116,8 +116,8 @@ def _fold_worktree(name: str) -> str:
 def _repo_name_from_path(cwd: str) -> str:
     """The human-facing folder NAME for a path: strip a Claude worktree suffix
     (`/.claude/worktrees/<rand>`) to the repo, then take the last real path segment. So
-    C:\\NB-Disk\\FyiBOS -> FyiBOS, and .../quantum-concepts stays quantum-concepts (split on
-    real separators, never the lossy encoded dashes). No path/drive leak in the label."""
+    C:\\Repos\\MyApp -> MyApp, and .../my-cool-app stays my-cool-app (split on real
+    separators, never the lossy encoded dashes). No path/drive leak in the label."""
     p = str(cwd).replace("\\", "/").rstrip("/")
     p = re.split(r"/\.claude/worktrees/", p, maxsplit=1)[0].rstrip("/")
     return p.split("/")[-1] or p

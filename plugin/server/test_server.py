@@ -286,11 +286,11 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(srv.encode_project_path(r"C:\repo\.claude\worktrees\x"),
                          "C--repo--claude-worktrees-x")
         # a Claude worktree project dir folds back to its repo key (dropdown = 1 per repo)
-        self.assertEqual(srv._fold_worktree("C--NB-Disk-FyiBOS--claude-worktrees-abc123"),
-                         "C--NB-Disk-FyiBOS")
+        self.assertEqual(srv._fold_worktree("C--Repos-MyApp--claude-worktrees-abc123"),
+                         "C--Repos-MyApp")
         self.assertEqual(srv._fold_worktree("C--r--claude-worktrees-a-b-c"), "C--r")
         # a non-worktree dir is unchanged
-        self.assertEqual(srv._fold_worktree("F--writing-business"), "F--writing-business")
+        self.assertEqual(srv._fold_worktree("C--Repos-my-app"), "C--Repos-my-app")
         # project_key_from_cwd resolves to the git REPO ROOT, not the (sub)dir cwd:
         # the test runs from server/, a subdir of the plugin repo -> key is the repo root's.
         root = srv._repo_root()

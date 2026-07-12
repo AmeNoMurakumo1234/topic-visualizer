@@ -58,10 +58,17 @@ class MCP:
 
 def _board_up() -> bool:
     try:
-        urllib.request.urlopen(BOARD + "/api/posts?project=topics-mcp-sandbox", timeout=3)
+        urllib.request.urlopen(BOARD + "/api/posts?project=topics-test", timeout=3)
         return True
     except Exception:
         return False
+
+
+# The board leg is an INTEGRATION test against a real message board whose author must be a
+# registered agent - both are site-specific, so it runs ONLY when explicitly configured
+# (a board reachable at TOPICS_BOARD_URL + a valid TOPICS_TEST_AUTHOR). Nothing about any
+# particular board, project, or agent is baked in; a downloaded copy just skips it.
+_BOARD_CONFIGURED = _board_up() and bool(os.environ.get("TOPICS_TEST_AUTHOR"))
 
 
 class TestMCPServerBackendHTTP(unittest.TestCase):
@@ -199,19 +206,19 @@ class TestMCPServerBackendDirect(unittest.TestCase):
         self.assertEqual(card["card"]["slug"], slug)
 
 
-@unittest.skipUnless(_board_up(), "message board not running - board leg skipped")
+@unittest.skipUnless(
+    _BOARD_CONFIGURED,
+    "board leg skipped: set TOPICS_TEST_AUTHOR (a valid agent) + a reachable TOPICS_BOARD_URL to run it")
 class TestMCPBoardBackend(unittest.TestCase):
-    """Shape 3: topics as OPEN THREAD board posts, sandbox project. Exercises the
-    full lifecycle including topic_convert minting a REAL board issue."""
+    """Shape 3: topics as OPEN THREAD board posts. Exercises the full lifecycle including
+    topic_convert minting a REAL board issue. Site-specific -> configured via env only."""
 
     @classmethod
     def setUpClass(cls):
         cls.mcp = MCP({"TOPICS_BACKEND": "board",
                        "TOPICS_BOARD_URL": BOARD,
-                       "TOPICS_BOARD_PROJECT": "topics-mcp-sandbox",
-                       # integration test runs against a real board, which only accepts a
-                       # REGISTERED agent as author - override via env for your own board.
-                       "TOPICS_BOARD_AUTHOR": os.environ.get("TOPICS_TEST_AUTHOR", "Joule")})
+                       "TOPICS_BOARD_PROJECT": os.environ.get("TOPICS_TEST_PROJECT", "topics-test"),
+                       "TOPICS_BOARD_AUTHOR": os.environ["TOPICS_TEST_AUTHOR"]})
 
     @classmethod
     def tearDownClass(cls):
