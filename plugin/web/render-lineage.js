@@ -47,6 +47,22 @@ window.TopicsRenderers.lineage = (function () {
   const apply = () => { if (world) world.style.transform =
     `translate(${tx}px,${ty}px) scale(${scale})`; };
 
+  // toggle a node's expand state while keeping IT fixed on screen (a collapse must never make the
+  // clicked node jump or scroll out of view). Uses the node's own ly, which persists across render.
+  function toggleOpen(n) {
+    const lyBefore = n.ly;
+    n.open = !n.open; render();
+    ty += (lyBefore - n.ly) * scale; apply();
+  }
+  // select a node AND offer expand/collapse in the detail panel, so you never have to hunt the tiny
+  // +/- caret. Re-selects after a toggle so the button label flips.
+  function selectNode(n) {
+    core.select(n, n.children.length ? [{
+      label: n.open ? "Collapse branch" : "Expand branch", className: "expandbtn",
+      onClick: () => { toggleOpen(n); selectNode(n); }
+    }] : undefined);
+  }
+
   /* Two-pass layout: cards are VARIABLE height (wrapped titles, multi-line chips),
    * so first build + MEASURE the real card heights, then stack rows on the measured
    * heights - a fixed row slot is exactly the overlap bug we shipped once. */
@@ -103,8 +119,8 @@ window.TopicsRenderers.lineage = (function () {
         </div>
         ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {
-        if (ev.target.classList.contains("caret")) { n.open = !n.open; render(); return; }
-        core.select(n);
+        if (ev.target.classList.contains("caret")) { toggleOpen(n); return; }
+        selectNode(n);
       });
       cards.appendChild(d);
       domOf[n.slug] = d;
