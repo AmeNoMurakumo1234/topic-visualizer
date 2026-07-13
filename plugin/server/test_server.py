@@ -816,6 +816,24 @@ class SeamTests(unittest.TestCase):
         self.assertTrue(before <= after, "no out-of-scope file was removed by a scoped mirror export")
 
 
+    def test_40_redundant_ancestor_parent_hint(self):
+        """CONSUMER: a card with two parents where one is an ANCESTOR of the other (C under a hub AND
+        under a hub-child) surfaces as a redundant-parent cleanup - keep the nearer, drop the ancestor."""
+        proj = "rap"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "rap: CI hub"}, {"title": "rap: deploy-skip q"}, {"title": "rap: verify docs-only q"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        hub, skip, verify = r["rap: CI hub"], r["rap: deploy-skip q"], r["rap: verify docs-only q"]
+        call(f"/api/topics/{skip}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})     # skip under hub
+        call(f"/api/topics/{verify}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})   # verify under hub
+        call(f"/api/topics/{verify}/attach?project={proj}", {"actor": "ai", "parent_slug": skip})  # + avenue to skip
+        rp = call(f"/api/topics/groom?project={proj}")["coherence"]["redundant_parents"]
+        m = [x for x in rp if x["child"] == verify]
+        self.assertTrue(m, "the redundant-ancestor-parent case is detected")
+        self.assertEqual(m[0]["redundant_parent"], hub, "the hub (ancestor) is the redundant edge")
+        self.assertEqual(m[0]["keep_parent"], skip, "the nearer parent (skip) is kept")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

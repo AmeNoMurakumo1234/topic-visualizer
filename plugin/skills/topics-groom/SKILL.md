@@ -87,6 +87,15 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
 
    **Coherence, not just width** (`coherence` in the report + your own read - width is necessary,
    never sufficient):
+   - **redundant ancestor parent** (`redundant_parents` - the strongest, near-certain signal): a card
+     with two parents where one is an ANCESTOR of the other reaches that ancestor TWICE (directly, and
+     transitively via the nearer parent), so the direct edge is a duplicate longer path. Keep the
+     NEAREST parent, drop the ancestor - the card then sits under the nearer parent alone and is the
+     ancestor's grandchild through it. Action: if the ancestor is the card's current PRIMARY,
+     `topic_reparent {slug: child, parent_slug: keep_parent}` (it collapses the now-redundant avenue
+     and drops the old primary edge); if the ancestor is an AVENUE, `topic_attach {slug: child,
+     parent_slug: redundant_parent, remove: true}`. Unlike the sibling hint below, this needs no
+     judgment - it's a provable duplicate.
    - **avenue-between-siblings** -> reparent (above); the report computes these.
    - **junk-drawer nodes** (`possible_buckets`): a parent whose title is a BUCKET, not a question
      ("conversations we haven't had", "misc") hides a real sub-cluster - open it, reparent the

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.39.0 - 2026-07-13 - Groom detects a redundant ancestor parent (consumer)
+
+- A consumer found a subtle grooming residue: a card with two parents where one parent is an
+  ANCESTOR of the other. The card reaches that ancestor twice - directly AND transitively via the
+  nearer parent - so the direct edge is a duplicate longer path. The card should sit under the
+  NEAREST parent alone and be the ancestor's grandchild through it.
+- New read-only coherence signal `groom_report().coherence.redundant_parents` detects it
+  (`{child, redundant_parent, keep_parent}`). It is a near-certain cleanup - a *provable* duplicate
+  path, not a judgment, so it ranks above the sibling-avenue hint. The `topics-groom` skill's shape
+  step now lists it first with the action: `topic_reparent` the card to `keep_parent` if the ancestor
+  is its primary, else `topic_attach {..., remove: true}` the ancestor avenue.
+- ZERO risk to the (already careful) mutation process: the signal is a DETECTOR only; the reshape
+  uses the existing, audited `topic_reparent` / `topic_attach`. Verified end-to-end: detect ->
+  reparent -> the card has a single nearest parent, is the ancestor's grandchild, the redundant edge
+  is dropped, and the hint clears.
+
 ## 0.38.0 - 2026-07-13 - Third-audit sweep: cosmetic floor confirmed; 5 small items fixed, 1 flagged
 
 A third Fable-5 pass gave every 0.37 fix an explicit clean bill ("no bug introduced by this round's

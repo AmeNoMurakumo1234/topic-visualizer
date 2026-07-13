@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.38.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.39.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1580,6 +1580,45 @@ def groom_report() -> dict:
         buckets = [{"slug": r["slug"], "title": r["title"], "children": r["children"]}
                    for r in parents_kids
                    if bucket_re.search(r["title"] or "") and "?" not in (r["title"] or "")]
+        # REDUNDANT ANCESTOR PARENT: a card with two parents where one is an ANCESTOR of the other.
+        # The card reaches that ancestor twice - directly AND transitively via the nearer parent - so
+        # the direct edge is a duplicate longer path. Higher-confidence than a sibling avenue (it's a
+        # provable duplicate, not a judgment): keep the NEAREST parent, drop the ancestor edge, and the
+        # card becomes the ancestor's grandchild through the nearer parent.
+        parents_of: dict = {}
+        LIVE = "('seedling','open','discussed')"
+        for r in _conn.execute(
+                f"SELECT c.slug AS c, p.slug AS p FROM topic c JOIN topic p ON p.id=c.parent_id "
+                f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
+            parents_of.setdefault(r["c"], set()).add(r["p"])
+        for r in _conn.execute(
+                f"SELECT c.slug AS c, p.slug AS p FROM topic_parent tp "
+                f"JOIN topic c ON c.id=tp.topic_id JOIN topic p ON p.id=tp.parent_id "
+                f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
+            parents_of.setdefault(r["c"], set()).add(r["p"])
+
+        def _reaches(start, target):     # does walking UP from `start` (all parent edges) hit `target`?
+            seen, frontier = set(), list(parents_of.get(start, ()))
+            while frontier:
+                cur = frontier.pop()
+                if cur == target:
+                    return True
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                frontier += list(parents_of.get(cur, ()))
+            return False
+
+        redundant_parents = []
+        for child, ps in parents_of.items():
+            if len(ps) < 2:
+                continue
+            for anc in ps:               # anc is redundant if a NEARER parent already reaches it
+                nearer = [p for p in ps if p != anc and _reaches(p, anc)]
+                if nearer:
+                    redundant_parents.append(
+                        {"child": child, "redundant_parent": anc, "keep_parent": nearer[0]})
+        redundant_parents = redundant_parents[:20]
     return {"health": h,
             "fan_out": {"target": "3-7 children is a SOFT band, not the goal - real relational "
                                   "DEPTH outranks it (see coherence.reparent_hints). Wider MAY "
@@ -1588,9 +1627,11 @@ def groom_report() -> dict:
                         "widest": [dict(r) for r in wide]},
             "coherence": {
                 "note": "Width is necessary, never sufficient. Prefer real relational depth over "
-                        "hitting the fan target. Mixed-altitude / mixed-voice siblings and a theme "
-                        "split across siblings need JUDGMENT - the report can't compute them; the "
-                        "topics-groom skill lists what to look for.",
+                        "hitting the fan target. redundant_parents is a near-certain cleanup (a "
+                        "duplicate longer path); reparent_hints is a strong depth hint; possible_buckets "
+                        "is advisory. Mixed-altitude / mixed-voice siblings and a theme split across "
+                        "siblings need JUDGMENT - the report can't compute them; the skill lists those.",
+                "redundant_parents": redundant_parents,
                 "reparent_hints": [dict(r) for r in reparent_hints],
                 "possible_buckets": buckets},
             "capture_calibration": [dict(r) for r in by_actor],
