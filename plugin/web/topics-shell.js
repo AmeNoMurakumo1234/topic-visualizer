@@ -176,10 +176,84 @@
     })();
   }
 
+  // --- live refresh --------------------------------------------------------------------------
+  // A visual that is 2 hours stale lies. So we poll a CHEAP change-signal (adapter.revision() - one
+  // record, NOT the tree) and only re-load when topics actually change; core.load() re-renders in
+  // place, preserving the camera. A burst is COALESCED (refresh once the signal settles, not per
+  // mutation). A manual button forces it now; a toggle pauses the poll (persisted). Adapters that
+  // predate revision() simply opt out - no button, old behavior.
+  function setupLiveRefresh() {
+    const adapter = window.TopicsAdapter;
+    if (demo || typeof adapter.revision !== "function") return;
+    const POLL_MS = 12000;
+    let renderedRev = null, pendingRev = null, timer = null, busy = false;
+
+    // inject the controls into the header (works across host pages; no host HTML edit needed)
+    const host = document.querySelector("header") || document.body;
+    const box = document.createElement("div");
+    box.className = "hgroup hrefresh";
+    box.style.cssText = "display:flex;align-items:center;gap:8px;margin-left:8px";
+    box.innerHTML =
+      '<button id="refreshnow" title="Reload the topic tree now" style="cursor:pointer;' +
+      'background:none;border:1px solid currentColor;border-radius:4px;color:inherit;font:inherit;' +
+      'padding:2px 8px;opacity:.7">↻</button>' +
+      '<label title="Auto-refresh when topics change" style="display:flex;align-items:center;gap:4px;' +
+      'cursor:pointer;opacity:.7;font-size:12px"><input type="checkbox" id="autorefresh"> live</label>' +
+      '<span id="refreshstatus" style="font-size:11px;opacity:.55;min-width:52px"></span>';
+    host.appendChild(box);
+    const btn = box.querySelector("#refreshnow");
+    const chk = box.querySelector("#autorefresh");
+    const status = box.querySelector("#refreshstatus");
+
+    let flashTimer = null;
+    function idle() { return chk.checked ? "live" : "paused"; }
+    function flash(msg, sticky) {
+      status.textContent = msg;
+      clearTimeout(flashTimer);
+      if (!sticky) flashTimer = setTimeout(() => { status.textContent = idle(); }, 2500);
+    }
+    async function refreshNow() {
+      if (busy) return;
+      busy = true;
+      try {
+        const rev = await adapter.revision();
+        await core.load();
+        if (rev != null) renderedRev = pendingRev = rev;
+        flash("updated");
+      } catch (e) { /* keep the current view; the next tick retries */ }
+      finally { busy = false; }
+    }
+    async function poll() {
+      if (busy) return;
+      let rev;
+      try { rev = await adapter.revision(); } catch (e) { return; }
+      if (rev == null) return;                       // could not check - keep the current view
+      if (renderedRev === null) { renderedRev = pendingRev = rev; return; }   // baseline
+      if (rev === renderedRev) { pendingRev = rev; return; }   // nothing new since last render
+      if (rev !== pendingRev) { pendingRev = rev; return; }    // still moving - wait for it to settle
+      await refreshNow();                            // settled AND differs from rendered -> refresh once
+    }
+    function start() { stop(); timer = setInterval(poll, POLL_MS); }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    // seed the baseline from the just-loaded state so the first poll never spuriously refreshes
+    adapter.revision().then(r => { renderedRev = pendingRev = r; }).catch(() => {});
+
+    const on = localStorage.getItem("topics-autorefresh") !== "off";
+    chk.checked = on;
+    status.textContent = idle();
+    if (on) start();
+    chk.addEventListener("change", () => {
+      localStorage.setItem("topics-autorefresh", chk.checked ? "on" : "off");
+      if (chk.checked) { status.textContent = "live"; start(); } else { stop(); status.textContent = "paused"; }
+    });
+    btn.addEventListener("click", () => { flash("…", true); refreshNow(); });
+  }
+
   // validate the stored view (legacy shells stored a/b/c) - never boot into nothing
   const LEGACY = { a: "constellation", b: "lineage", c: "starchart" };
   let saved = localStorage.getItem("topics-view") || "starchart";
   saved = LEGACY[saved] || saved;
   if (!window.TopicsRenderers[saved]) saved = "starchart";
-  core.load().then(() => show(saved));
+  core.load().then(() => { show(saved); setupLiveRefresh(); });
 })();

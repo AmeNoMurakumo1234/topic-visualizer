@@ -24,6 +24,17 @@ window.TopicsAdapter = (function () {
 
   return {
     name: "board",
+    // OPTIONAL: a cheap change-signal for live refresh. The shell polls this on an interval and
+    // re-loads only when it changes, so the tree never goes stale. Make it CHEAP - one record, not
+    // the whole tree. Here: the board sorts posts updated-desc, so limit=1 gives the newest updated
+    // + the total. Return null on error so the shell keeps the current view. Omit to opt out.
+    async revision() {
+      try {
+        const j = await (await fetch(`/api/posts?project=${PROJECT}&type=topic&limit=1`)).json();
+        const top = (j.items && j.items[0]) || {};
+        return `${j.total || 0}:${top.updated || ""}`;
+      } catch (e) { return null; }
+    },
     // OPTIONAL: report your app's projects to drive the shell's project dropdown. Here
     // the board's project list comes from its own API; return {projects:[{key,label,
     // current}], current} or omit the method to hide the dropdown.

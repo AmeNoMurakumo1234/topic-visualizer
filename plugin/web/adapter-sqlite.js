@@ -17,6 +17,20 @@ window.TopicsAdapter = (function () {
 
   return {
     name: "sqlite",
+    // cheap change-signal for live refresh: topic count + a fold of (slug|state), so adds, removes,
+    // and state changes all move it. Small LOCAL call (a huge tree can add a server /rev endpoint
+    // later). Returns null on error so the shell keeps the current view instead of blanking it.
+    async revision() {
+      try {
+        const items = (await (await fetch(q("/api/topics"))).json()).topics || [];
+        let h = 0;
+        for (const t of items) {
+          const s = t.slug + "|" + (t.state || "");
+          for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+        }
+        return items.length + ":" + h;
+      } catch (e) { return null; }
+    },
     // the projects the local machine offers (Claude projects + existing stores); drives
     // the shell's project dropdown. Omitted-gracefully if the server predates /api/projects.
     async projects() {
