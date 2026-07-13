@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.35.0 - 2026-07-13 - Audit fixes: 7 confirmed bugs fixed (each verified), 3 design items flagged
+
+A Fable-5 read-only audit surfaced ~10 issues; each was verified against the actual code and
+reproduced before any change (a false "fix" is its own bug). Confirmed and fixed:
+
+- **[HIGH] Restore could overwrite a real capture via slug reuse.** Slugs hash the TITLE only, so a
+  merged + hard-removed topic frees its slug for a same-titled new capture; restore then overwrote
+  that capture with the snapshot body. Restore now guards identity (a re-inserted set + a
+  created_at-vs-checkpoint check) and preserves the newer capture - the "never lose a capture"
+  invariant holds. (Verified: reused slug keeps its own body.)
+- **[HIGH] `expire_merged` FK abort + ride-along commit.** A post-merge capture can be parented
+  under a tombstone (capture never checks parent state); the tombstone's 14-day hard-removal then
+  tripped the `parent_id` foreign key, aborting the whole sweep and leaving partial deletes a later
+  commit persisted. Fix: re-home such children to root before the delete (kills the FK) + the sweep
+  is now atomic (rollback on any failure).
+- **[HIGH] Checkpoint snapshot dropped `rel`/`role`/provenance/identity** (version skew - checkpoints
+  predate those columns): a groom's `see_also` avenues reverted to `co_parent` on undo, hubs came
+  back as plain topics, provenance was lost. Snapshot + restore now carry them; old checkpoints read
+  defensively.
+- **[LOW] Nested empty hubs were half-swept** on undo (single pass) - now a repeat-until-fixpoint
+  sweep clears the whole chain.
+- **[LOW] A `see_also` generated a reparent hint** (`reparent_hints` ignored `rel`) - now only a
+  `co_parent` avenue between siblings is a depth hint.
+- **[LOW] Title-only edits logged a spurious `reparented` event** (the web panel always sends
+  `parent_slug`) - `edit_topic` now skips a no-op reparent.
+- **[LOW] Constellation drew dangling avenue edges under "hide discussed"** - the xlink loop now
+  applies the same hide skip as the node loop.
+
+Each fix has a regression test (38 total) or a traced reproduction. Three items were NOT auto-applied
+because they are design decisions, not clear bugs - flagged for the owner: restore-of-restore is
+itself unundoable + drops post-checkpoint conversions on pre-existing topics; the request lock is
+held during embedder network I/O (with a dual-process sqlite fallback on stall); and `import_topics`
+lacks a cycle guard + can mint slugs the HTTP mutation route can't address.
+
 ## 0.34.0 - 2026-07-13 - Undo sweeps empty groom hubs (scaffolding is not a capture)
 
 - Consumer follow-up on the undo: reparents reverted correctly and no real capture was lost, but a

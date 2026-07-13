@@ -177,6 +177,9 @@ window.TopicsRenderers.constellation = (function () {
     // extra avenues into a topic. A co_parent is a REAL second parent (solid, like a tree edge);
     // a see_also is a quiet dashed cross-link. Both drawn under the nodes, arrow toward the child.
     for (const x of core.xlinks || []) {
+      // match the node loop's hideDiscussed skip - else an avenue into a hidden discussed node
+      // draws as an arrow into empty space (the node still has stale coordinates)
+      if (hideDiscussed && (x.from.state === "discussed" || x.to.state === "discussed")) continue;
       const e = document.createElementNS(SVG_NS, "path");
       e.setAttribute("class", "edge xlink" + (x.kind === "co_parent" ? " coparent" : ""));
       // parent -> child so the arrowhead lands on the CHILD (direction grammar)

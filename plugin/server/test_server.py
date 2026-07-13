@@ -695,6 +695,70 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(res["removed_hubs"], 1, "exactly the one empty hub was swept")
 
 
+    def test_33_restore_preserves_avenue_kind(self):
+        """AUDIT #3: the checkpoint snapshot omitted tp.rel, so restore reset every see_also avenue to
+        co_parent. Restore must preserve the avenue's kind."""
+        proj = "prk"
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "prk: A"}, {"title": "prk: B"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        A, B = r["prk: A"], r["prk: B"]
+        call(f"/api/topics/{A}/attach?project={proj}", {"actor": "ai", "parent_slug": B, "kind": "see_also"})
+        self.assertTrue(call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai"}).get("ok"))
+        call(f"/api/topics/{A}/attach?project={proj}", {"actor": "ai", "parent_slug": B, "kind": "co_parent"})
+        self.assertTrue(call(f"/api/topics/restore?project={proj}", {"actor": "human"}).get("ok"))
+        av = call(f"/api/topics/{A}?project={proj}")["topic"]["extra_parents"]
+        self.assertEqual(next(a["kind"] for a in av if a["slug"] == B), "see_also",
+                         "restore preserves see_also (did not reset it to co_parent)")
+
+    def test_34_restore_sweeps_nested_empty_hubs(self):
+        """AUDIT #8: a single sweep pass leaves an outer hub behind (childless only after the inner is
+        swept). The fixpoint sweep must clear the whole chain."""
+        proj = "nh"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [{"title": "nh: base"}]})
+        base = call(f"/api/topics?project={proj}")["topics"][0]["slug"]
+        self.assertTrue(call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai"}).get("ok"))
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "nh: OUTER hub", "role": "hub"}]})
+        outer = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"] if "outer" in t["slug"]][0]
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "nh: INNER hub", "role": "hub", "parent_slug": outer}]})
+        inner = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"] if "inner" in t["slug"]][0]
+        call(f"/api/topics/{base}/edit?project={proj}", {"actor": "ai", "parent_slug": inner})  # reverts away
+        res = call(f"/api/topics/restore?project={proj}", {"actor": "human"})
+        live = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]]
+        self.assertNotIn(inner, live, "inner hub swept")
+        self.assertNotIn(outer, live, "OUTER hub also swept (fixpoint, not a single pass)")
+        self.assertEqual(res["removed_hubs"], 2)
+
+    def test_35_title_edit_logs_no_spurious_reparent(self):
+        """AUDIT #9: the web panel always sends parent_slug, so a title-only edit logged a bogus
+        'reparented' event. A no-op reparent must log nothing."""
+        proj = "noop"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [{"title": "noop: root"}]})
+        s = call(f"/api/topics?project={proj}")["topics"][0]["slug"]
+        call(f"/api/topics/{s}/edit?project={proj}",
+             {"actor": "human", "title": "noop: renamed", "parent_slug": ""})   # same (root) parent
+        events = [e["event"] for e in call(f"/api/topics/{s}?project={proj}")["topic"]["history"]]
+        self.assertNotIn("reparented", events, "a no-op reparent logs no event")
+        self.assertIn("edited", events)
+
+    def test_36_see_also_is_not_a_reparent_hint(self):
+        """AUDIT #7: reparent_hints must not suggest nesting under a see_also (explicitly 'not a
+        parent'); only a co_parent avenue between siblings is a depth hint."""
+        proj = "sah"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "sah: hub"}, {"title": "sah: A"}, {"title": "sah: B"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        hub, A, B = r["sah: hub"], r["sah: A"], r["sah: B"]
+        call(f"/api/topics/{A}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})
+        call(f"/api/topics/{B}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})
+        call(f"/api/topics/{B}/attach?project={proj}", {"actor": "ai", "parent_slug": A, "kind": "see_also"})
+        hints = call(f"/api/topics/groom?project={proj}")["coherence"]["reparent_hints"]
+        self.assertEqual([(h["child"], h["suggested_parent"]) for h in hints], [],
+                         "a see_also between siblings is NOT a reparent hint")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

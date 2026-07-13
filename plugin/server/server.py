@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.34.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.35.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -703,10 +703,11 @@ def _snapshot_payload() -> dict:
     """Full snapshot of the topic tables, keyed by slug (slugs survive reparent/merge; ids do
     too, but slugs are the stable public key). topic_event is intentionally excluded."""
     topics = [dict(r) for r in _conn.execute(
-        "SELECT t.slug, t.title, t.body, t.state, t.priority, t.tags, t.merged_into, "
+        "SELECT t.slug, t.title, t.body, t.state, t.priority, t.tags, t.merged_into, t.role, "
+        "t.provenance, t.created_by, t.created_at, "
         "p.slug AS parent_slug FROM topic t LEFT JOIN topic p ON p.id=t.parent_id")]
     parents = [dict(r) for r in _conn.execute(
-        "SELECT c.slug AS topic_slug, p.slug AS parent_slug, tp.note, tp.added_by, tp.added_at "
+        "SELECT c.slug AS topic_slug, p.slug AS parent_slug, tp.note, tp.added_by, tp.added_at, tp.rel "
         "FROM topic_parent tp JOIN topic c ON c.id=tp.topic_id JOIN topic p ON p.id=tp.parent_id")]
     links = [dict(r) for r in _conn.execute(
         "SELECT t.slug AS topic_slug, l.kind, l.ref, l.note "
@@ -774,37 +775,58 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
             r = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
             return r["id"] if r else None
 
-        # pass 1: ensure every snapshot topic exists (re-insert any the groom hard-removed)
+        ckpt_at = row["created_at"] or ""
+        # pass 1: re-insert any snapshot topic the groom hard-removed - WITH its snapshot identity
+        # (created_at/created_by/provenance/role), so pass 2 recognizes it and future sweeps behave.
+        reinserted = set()
         for slug, t in snap_topics.items():
             if not _tid(slug):
                 _conn.execute(
-                    "INSERT INTO topic (slug, title, body, state, priority, tags, created_by) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (slug, t["title"], t["body"], t["state"], t["priority"],
-                     t.get("tags") or "", actor))
-        # pass 2: reset each snapshot topic to its snapshot fields + primary parent (+ un-tombstone)
+                    "INSERT INTO topic (slug, title, body, state, priority, tags, created_by, "
+                    "provenance, role, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (slug, t["title"], t["body"], t["state"], t["priority"], t.get("tags") or "",
+                     t.get("created_by") or actor, t.get("provenance") or "", t.get("role") or "topic",
+                     t.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S")))
+                reinserted.add(slug)
+        # pass 2: reset each snapshot topic to its snapshot fields + primary parent (+ un-tombstone).
+        # SLUG-REUSE GUARD: a live row NEWER than the checkpoint that we did NOT just re-insert is a
+        # DIFFERENT topic that reused a hard-removed slug - preserve it, never overwrite (a real
+        # capture is never lost). Only these "restorable" slugs get their fields/edges rebuilt.
         reverted = 0
+        restorable = set()
         for slug, t in snap_topics.items():
+            cur = _conn.execute("SELECT created_at FROM topic WHERE slug=?", (slug,)).fetchone()
+            if not cur:
+                continue
+            if slug not in reinserted and (cur["created_at"] or "") > ckpt_at:
+                continue                              # slug reused by a post-checkpoint capture - keep it
+            restorable.add(slug)
             pid = _tid(t["parent_slug"]) if t.get("parent_slug") else None
             _conn.execute(
                 "UPDATE topic SET title=?, body=?, state=?, priority=?, tags=?, parent_id=?, "
-                "merged_into=? WHERE slug=?",
+                "merged_into=?, role=? WHERE slug=?",
                 (t["title"], t["body"], t["state"], t["priority"], t.get("tags") or "",
-                 pid, t.get("merged_into"), slug))
+                 pid, t.get("merged_into"), t.get("role") or "topic", slug))
             reverted += 1
-        # rebuild avenues + conversions for snapshot topics (a merge transfers these)
-        for slug in snap_topics:
+        # rebuild avenues + conversions for RESTORABLE snapshot topics (a merge transfers these),
+        # preserving the avenue's kind (rel); never touch a reused capture's edges.
+        for slug in restorable:
             tid = _tid(slug)
             _conn.execute("DELETE FROM topic_parent WHERE topic_id=?", (tid,))
             _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (tid,))
         for e in snap["parents"]:
+            if e["topic_slug"] not in restorable:
+                continue
             c, p = _tid(e["topic_slug"]), _tid(e["parent_slug"])
             if c and p:
                 _conn.execute("INSERT OR IGNORE INTO topic_parent "
-                              "(topic_id, parent_id, note, added_by, added_at) VALUES (?,?,?,?,?)",
+                              "(topic_id, parent_id, note, added_by, added_at, rel) VALUES (?,?,?,?,?,?)",
                               (c, p, e.get("note") or "", e.get("added_by") or "",
-                               e.get("added_at") or time.strftime("%Y-%m-%d %H:%M:%S")))
+                               e.get("added_at") or time.strftime("%Y-%m-%d %H:%M:%S"),
+                               e.get("rel") or "co_parent"))
         for l in snap["links"]:
+            if l["topic_slug"] not in restorable:
+                continue
             t = _tid(l["topic_slug"])
             if t:
                 _conn.execute("INSERT INTO topic_link (topic_id, kind, ref, note) VALUES (?,?,?,?)",
@@ -823,21 +845,28 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
         # CHILDLESS is empty scaffolding from the undone groom -> remove it, so undo is a clean
         # revert (not a tree littered with empty hubs). A hub still holding a mid-groom capture is
         # NOT empty and stays; a real capture is never role='hub', so the "never lose it" law holds.
+        # repeat-until-fixpoint: an outer hub only becomes childless after its inner hub is swept,
+        # so a single pass would leave nested-hub chains half-cleaned.
         removed_hubs = 0
-        for r in _conn.execute("SELECT id, slug FROM topic WHERE role='hub'").fetchall():
-            if r["slug"] in snap_topics:
-                continue                              # existed at the checkpoint - part of the tree
-            has_child = _conn.execute(
-                "SELECT 1 FROM topic WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
-            has_avenue_child = _conn.execute(
-                "SELECT 1 FROM topic_parent WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
-            if has_child or has_avenue_child:
-                continue                              # still holds something real -> keep it
-            _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (r["id"],))
-            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (r["id"], r["id"]))
-            _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (r["id"],))
-            _conn.execute("DELETE FROM topic WHERE id=?", (r["id"],))
-            removed_hubs += 1
+        while True:
+            swept = 0
+            for r in _conn.execute("SELECT id, slug FROM topic WHERE role='hub'").fetchall():
+                if r["slug"] in snap_topics:
+                    continue                          # existed at the checkpoint - part of the tree
+                has_child = _conn.execute(
+                    "SELECT 1 FROM topic WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
+                has_avenue_child = _conn.execute(
+                    "SELECT 1 FROM topic_parent WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
+                if has_child or has_avenue_child:
+                    continue                          # still holds something real -> keep it
+                _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (r["id"],))
+                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (r["id"], r["id"]))
+                _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (r["id"],))
+                _conn.execute("DELETE FROM topic WHERE id=?", (r["id"],))
+                removed_hubs += 1
+                swept += 1
+            if not swept:
+                break
         # preserved = post-checkpoint topics that REMAIN (after the scaffolding sweep)
         preserved = sum(1 for r in _conn.execute("SELECT slug FROM topic")
                         if r["slug"] not in snap_topics)
@@ -1144,7 +1173,7 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                body: str | None = None, parent_slug: str | None = None,
                critical: bool | None = None) -> dict:
     with _lock:
-        row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
+        row = _conn.execute("SELECT id, parent_id FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
             return _fail("not found")
         tid = row["id"]
@@ -1152,6 +1181,14 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
             _conn.execute("UPDATE topic SET title=? WHERE id=?", (title, tid))
         if body is not None:
             _conn.execute("UPDATE topic SET body=? WHERE id=?", (body, tid))
+        # skip a NO-OP reparent (same parent) so a title/body-only edit logs no spurious 'reparented'
+        # event - the web panel always sends parent_slug, unchanged or not.
+        if parent_slug is not None:
+            if parent_slug == "" and row["parent_id"] is None:
+                parent_slug = None
+            elif parent_slug and row["parent_id"] and _conn.execute(
+                    "SELECT 1 FROM topic WHERE id=? AND slug=?", (row["parent_id"], parent_slug)).fetchone():
+                parent_slug = None
         if parent_slug is not None:
             if parent_slug == "":
                 _conn.execute("UPDATE topic SET parent_id=NULL WHERE id=?", (tid,))
@@ -1377,13 +1414,21 @@ def expire_merged() -> int:
             "SELECT id FROM topic WHERE merged_into IS NOT NULL AND "
             "julianday('now') - julianday(state_changed_at) > ?",
             (MERGED_TOMBSTONE_DAYS,)).fetchall()
-        for r in rows:
-            tid = r["id"]
-            _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (tid,))
-            _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (tid,))
-            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (tid, tid))
-            _conn.execute("DELETE FROM topic WHERE id=?", (tid,))
-        _conn.commit()
+        try:
+            for r in rows:
+                tid = r["id"]
+                # a POST-merge capture can be parented under the tombstone (capture never checks the
+                # parent's state); re-home such children to root FIRST, or the DELETE below trips the
+                # topic.parent_id foreign key and aborts the whole sweep.
+                _conn.execute("UPDATE topic SET parent_id=NULL WHERE parent_id=?", (tid,))
+                _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (tid,))
+                _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (tid,))
+                _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (tid, tid))
+                _conn.execute("DELETE FROM topic WHERE id=?", (tid,))
+            _conn.commit()
+        except Exception:
+            _conn.rollback()          # never leave partial deletes pending for a later commit to persist
+            raise
     return len(rows)
 
 
@@ -1463,6 +1508,7 @@ def groom_report() -> dict:
             "JOIN topic c ON c.id = tp.topic_id "
             "JOIN topic p ON p.id = tp.parent_id "
             "WHERE c.parent_id IS NOT NULL AND c.parent_id = p.parent_id "  # same primary parent = siblings
+            "  AND tp.rel = 'co_parent' "            # a see_also is explicitly NOT a parent - no hint
             "  AND c.state IN ('seedling','open','discussed') "
             "  AND p.state IN ('seedling','open','discussed') LIMIT 20").fetchall()
         # junk-drawer heuristic (ADVISORY, fuzzy on purpose): a parent whose title is a BUCKET,
