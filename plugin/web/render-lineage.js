@@ -67,7 +67,18 @@ window.TopicsRenderers.lineage = (function () {
     { label: "discussed", test: c => c.state === "discussed" },
     { label: "seedling", test: c => c.state === "seedling" },
   ];
-  function hideBranch(n) { n.revealed = false; n.open = false; render(); }
+  // hide a specific child + its subtree - the inverse of following an avenue-out to reveal one child.
+  // Works whether the child shows via a partial reveal OR under a fully-open parent: in the open case
+  // we DEMOTE the parent to partial (reveal every sibling, drop just this one) so the rest of the view
+  // is untouched. The parent is held visually anchored across the relayout.
+  function hideBranch(n) {
+    const par = n.parent && core.bySlug[n.parent];
+    const lyBefore = par ? par.ly : 0;
+    if (par && par.open) { par.open = false; par.children.forEach(c => { if (c !== n) c.revealed = true; }); }
+    n.revealed = false; n.open = false;
+    render();
+    if (par) { ty += (lyBefore - par.ly) * scale; apply(); }
+  }
   function selectNode(n) {
     const btns = [];
     if (n.children.length) {
@@ -80,8 +91,8 @@ window.TopicsRenderers.lineage = (function () {
           onClick: () => { hidden.forEach(c => { c.revealed = true; }); render(); selectNode(n); } });
       }
     }
-    const par = n.parent && core.bySlug[n.parent];
-    if (par && n.revealed && !par.open) btns.push({
+    const par = n.parent && core.bySlug[n.parent];   // any non-root child can be hidden from its parent
+    if (par) btns.push({
       label: "Hide this branch", className: "hidebtn",
       onClick: () => { hideBranch(n); selectNode(par); } });
     core.select(n, btns.length ? btns : undefined);
