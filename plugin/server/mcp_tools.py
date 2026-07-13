@@ -620,16 +620,22 @@ class BoardBackend:
             (dest / f'{t["slug"]}.json').write_text(
                 json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8")
-        (dest / "index.json").write_text(
-            json.dumps({"schema_version": 1, "source_project": self.project,
-                        "count": len(exported), "topics": sorted(exported)},
-                       sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        if mode == "mirror":
-            for f in dest.glob("*.json"):
-                if f.name != "index.json" and f.stem not in exported:
-                    f.unlink()
-        return {"dir": str(dest), "written": len(exported), "count": len(exported),
-                "backend": "board"}
+        # index + mirror-delete only for a FULL export - a SCOPED export is a subset, so mirroring it
+        # would wipe every out-of-scope file (parity with server.export_topics; F1/F2). NOTE: the board
+        # only supports scope='critical'; a slug scope is not a subtree filter here and exports all.
+        deleted = 0
+        if scope is None:
+            (dest / "index.json").write_text(
+                json.dumps({"schema_version": 1, "source_project": self.project,
+                            "count": len(exported), "topics": sorted(exported)},
+                           sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            if mode == "mirror":
+                for f in dest.glob("*.json"):
+                    if f.name != "index.json" and f.stem not in exported:
+                        f.unlink(); deleted += 1
+        return {"dir": str(dest), "written": len(exported), "deleted": deleted,
+                "count": len(exported), "backend": "board",
+                **({"note": "scoped export is additive; out-of-scope files kept"} if scope else {})}
 
     def import_(self, dir=None):
         src = Path(dir).expanduser() if dir else Path.cwd() / ".topics"

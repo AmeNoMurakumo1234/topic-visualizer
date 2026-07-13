@@ -110,11 +110,11 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         init = self.mcp.rpc("initialize", {"protocolVersion": "2024-11-05"})
         self.assertEqual(init["serverInfo"]["name"], "topic-visualizer")
         tools = self.mcp.rpc("tools/list")["tools"]
+        # assert against the LIVE tool registry (not a hardcoded set) so this can't rot as tools are
+        # added - the stdio server must expose exactly what mcp_tools.TOOLS declares
+        import mcp_tools
         self.assertEqual({t["name"] for t in tools},
-                         {"topic_add", "topic_get", "topic_list", "topic_serve",
-                          "topic_search", "topic_state", "topic_convert",
-                          "topic_attach", "topic_groom_report", "topic_doctor", "topic_open",
-                          "topic_export", "topic_import", "topic_merge", "topic_duplicates"})
+                         {t["name"] for t in mcp_tools.TOOLS})
 
     def test_02_lifecycle(self):
         out, err = self.mcp.tool("topic_add", {"items": [

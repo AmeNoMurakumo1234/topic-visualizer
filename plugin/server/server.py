@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.37.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.38.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -210,6 +210,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         ccols = {r["name"] for r in conn.execute("PRAGMA table_info(groom_checkpoint)")}
         if ccols and "auto" not in ccols:             # safety-checkpoint marker (before-restore)
             conn.execute("ALTER TABLE groom_checkpoint ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+            # one-time backfill: 0.36 safety checkpoints were identified only by this label prefix
+            # (label matching is fine HERE - it's exactly the legacy rows that used the convention)
+            conn.execute("UPDATE groom_checkpoint SET auto=1 WHERE label LIKE 'auto: before restore%'")
     except sqlite3.OperationalError:
         pass                                          # table not created yet (schema.sql runs first)
     xcols = {r["name"] for r in conn.execute("PRAGMA table_info(topic_parent)")}
@@ -419,9 +422,10 @@ def export_topics(dir=None, mode="mirror", scope=None, project=None) -> dict:
         obj = _topic_export_dict(t)
         exported[t["slug"]] = obj
         _write_json(dest / f'{t["slug"]}.json', obj)
-    _write_json(dest / "index.json",
-                {"schema_version": 1, "source_project": project,
-                 "count": len(exported), "topics": sorted(exported)})
+    if scope is None:                               # a scoped export is additive: don't rewrite the
+        _write_json(dest / "index.json",            # full mirror's index to only the scoped subset (F2)
+                    {"schema_version": 1, "source_project": project,
+                     "count": len(exported), "topics": sorted(exported)})
     deleted = 0
     # mirror deletes stale files - but ONLY for a FULL export. A SCOPED export is a subset, so
     # mirroring it would wipe every out-of-scope file (a committed full mirror gone in one call);
@@ -1183,6 +1187,11 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
                 """UPDATE topic SET state=?, state_changed_at=datetime('now'),
                    state_changed_by=?, state_note=?, touched_at=datetime('now')
                    WHERE id=?""", (state, actor, note, tid))
+            # resurrecting a merged tombstone (-> open) makes it an ordinary LIVE topic: clear the
+            # stale merged_into, else a later prune re-arms the 14-day hard-delete sweep (F6). No-op
+            # for a normal reopen (merged_into already NULL); restore pass-3 does the same.
+            if state == "open":
+                _conn.execute("UPDATE topic SET merged_into=NULL WHERE id=?", (tid,))
             _event(tid, ev, actor, note)
         _conn.commit()
     return {"ok": True, "changed": len(ids)}

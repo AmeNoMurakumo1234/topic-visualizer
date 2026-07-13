@@ -799,6 +799,23 @@ class SeamTests(unittest.TestCase):
         self.assertTrue(any(not c["auto"] for c in cps), "the real groom checkpoint is auto=False")
 
 
+    def test_39_scoped_export_is_additive(self):
+        """AUDIT F1/F2: a SCOPED mirror export must NOT delete out-of-scope files (that would wipe a
+        committed full mirror) and must not rewrite the full index down to the subset."""
+        import os, tempfile
+        proj = "exp"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "exp: plain keeper"}, {"title": "exp: critical keeper", "priority": "critical"}]})
+        d = tempfile.mkdtemp()
+        call(f"/api/topics/export?project={proj}", {"dir": d, "mode": "mirror"})   # full mirror
+        before = set(os.listdir(d))
+        r = call(f"/api/topics/export?project={proj}",
+                 {"dir": d, "mode": "mirror", "scope": "critical"})               # scoped, mirror mode
+        after = set(os.listdir(d))
+        self.assertEqual(r.get("deleted"), 0, "a scoped export deletes nothing")
+        self.assertTrue(before <= after, "no out-of-scope file was removed by a scoped mirror export")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

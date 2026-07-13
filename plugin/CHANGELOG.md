@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.38.0 - 2026-07-13 - Third-audit sweep: cosmetic floor confirmed; 5 small items fixed, 1 flagged
+
+A third Fable-5 pass gave every 0.37 fix an explicit clean bill ("no bug introduced by this round's
+edits" - the fix-a-bug-injects-a-bug cycle has stopped) and called the calibration: **cosmetic floor
+reached.** Swept the residue it surfaced:
+
+- **[MED] The board backend's scoped mirror export still deleted out-of-scope files** - the 0.37
+  scoped-export fix landed in `server.py` but was never ported to the board copy. Ported the
+  `scope is None` delete guard (+ made it additive) to `BoardBackend.export`.
+- **[LOW] A scoped export rewrote the full mirror's `index.json` down to the subset** - the index is
+  now written only for a full (unscoped) export, on both backends.
+- **[LOW] 0.36-era safety checkpoints migrated to `auto=0`** - a one-time migration backfills
+  `auto=1` on the legacy `auto: before restore` rows, so an old DB's Undo can't target them.
+- **[LOW] The MCP test suite was RED** (it asserted the pre-0.33 fifteen-tool set) - now asserts
+  against the live `mcp_tools.TOOLS` registry, so it can't rot again. The MCP suite is a working gate.
+- **[LOW] A resurrected merged topic, if later re-pruned, was hard-deleted** (the last drop of the
+  0.37 resurrect leak) - `set_state` now clears `merged_into` on reopen.
+
+Flagged, not applied: a mid-drag `pointerup` racing `unmount()` could throw in a renderer (the inner
+drag listeners aren't on the abort signal) - realistically unreachable without a failed pointer
+capture, and the clean fix is fiddly enough not to rush into a sanity pass. Still deferred by
+decision: export/import `rel`/`role`/`tags` fidelity (needs a versioned format) and restore's
+try/rollback. 41 server tests + the MCP suite green.
+
 ## 0.37.0 - 2026-07-13 - Second-audit fixes: 8 more (incl. one fix-injected bug), 2 flagged
 
 A second Fable-5 pass verified the first round's fixes (clean bills on the restore/reconcile core and
