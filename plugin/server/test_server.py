@@ -599,6 +599,15 @@ class VersionCoherenceTests(unittest.TestCase):
         self.assertEqual(len(set(v.values())), 1,
                          f"version fields disagree - sync them: {v}")
 
+    def test_changelog_covers_current_version(self):
+        """The CHANGELOG silently rotted once (frozen at 0.9 while the plugin shipped to 0.28) because
+        updating it wasn't part of the bump ritual. Now it IS the ritual: a release with no matching
+        `## <VERSION>` heading is a red test. If it fails: add a CHANGELOG.md entry for this version."""
+        import server as srv
+        changelog = (HERE.parent / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## {srv.VERSION} ", changelog,
+                      f"CHANGELOG.md has no entry for {srv.VERSION} - add one before shipping")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

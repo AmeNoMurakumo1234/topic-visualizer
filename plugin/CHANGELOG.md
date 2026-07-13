@@ -1,5 +1,128 @@
 # Changelog
 
+## 0.29.0 - 2026-07-13 - Changelog backfilled + kept honest by a test
+
+- Backfilled every release from 0.9.1 through 0.28.0. The changelog had frozen at 0.9 while the
+  plugin shipped 19 versions - a stale, abandoned doc is worse than none. To stop the rot at its
+  root (updating it was never part of the release ritual), a new test
+  `test_changelog_covers_current_version` now fails any release whose VERSION has no `## <version>`
+  heading here - so a CHANGELOG entry is enforced at the same gate as version-field coherence.
+
+## 0.28.0 - 2026-07-13 - Star Chart critical-pull
+
+- Star Chart criticals now read identically to Constellation: orange label + beacon halo + a
+  1.22x size bump, so a critical topic looks the same in all three views. Discussed nodes already
+  carried the shared teal recolor; the Star Chart legend now matches. Closes the cross-view
+  attention-layer sweep begun in 0.26.
+
+## 0.27.0 - 2026-07-13 - Hide any visible branch
+
+- Lineage's "Hide this branch" now works on ANY visible child, not just a revealed one under a
+  partial parent (0.25 gated it too narrowly, so a fully-expanded tree offered no hide affordance).
+  On a fully-open parent it demotes to partial - reveals every sibling, drops only the chosen
+  branch - so nothing else in the view moves. The true inverse of revealing one avenue-out.
+
+## 0.26.0 - 2026-07-13 - Constellation attention layer
+
+- Criticals pop (orange label + halo + size bump). "Discussed" changes from a near-invisible fade
+  (read as "ignore me") to a legible teal ring at half opacity (reads as "touched"). A "hide
+  discussed" legend toggle declutters on demand, dropping those nodes AND their edges. Emphasis,
+  not collapse - hiding by default would gut the whole-shape view Constellation exists to show.
+
+## 0.25.0 - 2026-07-13 - Lineage panel actions
+
+- Two actions on a selected Lineage node, so you steer the tree from the detail panel instead of
+  hunting the tiny +/- caret: "Show critical/discussed/seedling (N)" partially reveals just that
+  category's still-hidden children, and "Hide this branch" un-reveals a single revealed child.
+
+## 0.24.0 - 2026-07-13 - Partial-layout fix + smart initial state
+
+- Fixed the partial-expansion layout: a revealed child now lays out under its parent (the layout
+  pass was still positioning it as a far-away leaf). Initial state: a node with many children is
+  never dumped fully-expanded on first visit (big trees auto-open only shallow + narrow nodes), and
+  every critical topic's path is revealed on load so beacons always show via partial expansion.
+
+## 0.23.0 - 2026-07-13 - Lineage partial expansion
+
+- Reveal-to-child instead of blast-all: expanding a collapsed node reveals a path to one child
+  rather than dumping the entire subtree. `revealPath` threads open just the ancestors needed.
+
+## 0.22.0 - 2026-07-13 - Lineage collapse polish
+
+- Collapsing a node keeps that node visually fixed (no more vanishing-camera jump on collapse), and
+  expand/collapse is available from the detail panel, not only the caret.
+
+## 0.21.0 - 2026-07-13 - Lineage collapses by default at scale
+
+- Past a handful of nodes, Lineage opens collapsed beyond the top level - a drill-down view, not a
+  wall of everything. Small trees (<=35 nodes) still open fully.
+
+## 0.20.0 - 2026-07-13 - Grooming becomes a judgment shaper
+
+- The topics-groom skill's shape step now guides merge + nest + reparent toward a 3-7-children
+  branching band, driven by judgment (semantic similarity PROPOSES clusters; you decide which are
+  real). Retired the idea of autonomous mechanical grooming - a similarity-only regroup picks the
+  wrong axis and is worse than no grooming.
+
+## 0.19.0 - 2026-07-13 - Header + panel layout
+
+- The header reads as planned rows instead of smushing on wide screens; the linked-item chips in
+  the right panel hang above their row instead of cramming into three columns.
+
+## 0.18.0 - 2026-07-13 - No-admin persistence + upgrade-aware launcher
+
+- Autostart via the Startup folder (no admin needed - schtasks required elevation); an
+  upgrade-aware self-healing launcher resolves the newest installed version dir; plus three
+  doctor/path fixes.
+
+## 0.17.0 - 2026-07-12 - Self-healing autostart
+
+- A silent UI-uninstall now cleans up its own autostart artifact instead of leaving a dangling
+  launcher pointing at a removed version.
+
+## 0.16.0 - 2026-07-12 - Graceful teardown
+
+- A new `topics-teardown` skill + installer `--uninstall`/`--stop` release the machine as cleanly
+  as onboarding set it up: stop processes by EXACT script path (never a command-line substring),
+  remove the service and the autostart artifact.
+
+## 0.15.0 - 2026-07-12 - Surface the visualizer + discipline skill
+
+- `topic_open` MCP tool opens the web visualizer on demand; a top-level `topics` discipline skill
+  teaches the capture -> serve -> groom loop as one practice.
+
+## 0.14.0 - 2026-07-12 - Service installer + version coherence
+
+- `install_service.py` sets the server/embedder to run in the background; `VersionCoherenceTests`
+  enforce that the three version fields (plugin.json, marketplace.json, server VERSION) stay in
+  lockstep, so a bump that misses a file cannot ship.
+
+## 0.13.0 - 2026-07-12 - Bundled CPU embedder
+
+- Ships `serve_embedder.py` (sentence-transformers all-MiniLM-L6-v2, CPU) so semantic search and
+  write-time dedup work out of the box - no external embedding endpoint required.
+
+## 0.12.0 - 2026-07-12 - Guided onboarding skill (the headline fix)
+
+- `topics-setup`: a guided first-run skill that walks a consumer from install to a working,
+  semantically-ranked store. The field report's headline ask - onboarding was the cliff.
+
+## 0.11.0 - 2026-07-12 - Doctor + degraded banner
+
+- `topic_doctor` MCP tool + `--doctor` CLI diagnose the install (store path, embedder reachability,
+  service state); a loud banner in the UI when running degraded - the plugin never silently runs at
+  half value.
+
+## 0.10.0 - 2026-07-12 - Live refresh
+
+- The web views poll a cheap change-signal and refresh so the tree is never stale (plus a manual
+  refresh). Toggling off the polling also stops it - your call.
+
+## 0.9.1 - 2026-07-12 - Remember last project
+
+- The web adapters remember the last-viewed project (localStorage `topics-project`) and reopen to
+  it instead of resetting to the default each visit.
+
 ## 0.9.0 - 2026-07-12 - Board topic lane (type='topic')
 
 - The board backend now stores topics as a first-class `type='topic'` post (was `type='proposal'`
