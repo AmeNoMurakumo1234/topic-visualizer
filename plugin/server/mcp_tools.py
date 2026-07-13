@@ -149,6 +149,47 @@ class ServerBackend:
         out["verdict"] = "ok" if not degraded else "degraded"
         return out
 
+    def open_visualizer(self):
+        """Ensure the visualizer host is up and hand back its URL - so the web UI is not a feature you
+        must KNOW to go start by hand. If the server is down, start it (best-effort, detached) so the
+        tree is viewable NOW, and point at /topics-setup to make it PERSIST across restarts."""
+        import subprocess
+        import time
+        base = self.base.rstrip("/")
+        url = base + "/"
+        port = base.rsplit(":", 1)[-1]
+
+        def _up():
+            try:
+                _http("GET", base + "/api/version")
+                return True
+            except Unreachable:
+                return False
+
+        if _up():
+            return {"url": url, "running": True}
+        script = str(Path(__file__).resolve().parent / "server.py")
+        exe = Path(sys.executable)
+        pyw = exe.with_name("pythonw.exe")
+        py = str(pyw if pyw.exists() else exe)
+        try:
+            kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+            if os.name == "nt":
+                kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
+            subprocess.Popen([py, script, "--port", port], **kwargs)
+        except Exception as e:
+            return {"url": url, "running": False, "started": False,
+                    "hint": f'could not auto-start ({e}). Start it: python "{script}" --port {port}'}
+        for _ in range(15):                    # up to ~3s for it to bind
+            time.sleep(0.2)
+            if _up():
+                break
+        return {"url": url, "running": _up(), "started": True,
+                "hint": "Started a one-off server so you can view the tree now. Run the /topics-setup "
+                        "skill to make the visualizer persist across restarts."}
+
     def add(self, items, actor=None):
         act = actor or ACTOR
         try:
@@ -679,6 +720,12 @@ TOOLS = [
                     "embedder being absent (semantic ranking off, keyword-only). A non-empty "
                     "'degraded' array means act. Run it during setup and whenever ranking looks off.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "topic_open",
+     "description": "Ensure the visualizer host is running and return its URL, so the web tree is one "
+                    "call away instead of a server you must remember to start by hand. Starts a one-off "
+                    "server if it is down (run /topics-setup to make it persist). Use when the human "
+                    "wants to SEE the topic tree.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "topic_export",
      "description": "Write this project's live topic tree to a directory of per-topic JSON "
                     "files (git-committable; default <repo>/.topics). mode='mirror' (default) "
@@ -783,6 +830,8 @@ def _call(name: str, args: dict) -> dict:
         return b.groom()
     if name == "topic_doctor":
         return b.doctor()
+    if name == "topic_open":
+        return b.open_visualizer()
     if name == "topic_export":
         return b.export(args.get("dir"), str(args.get("mode") or "mirror"), args.get("scope"))
     if name == "topic_import":

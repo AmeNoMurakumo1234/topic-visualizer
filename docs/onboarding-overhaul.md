@@ -1,7 +1,8 @@
 # Topic Visualizer - Onboarding Overhaul (design + roadmap)
 
-**Status:** design / roadmap, 2026-07-12. **Source:** the consumer field report (the onboarding-cliff
-report) - a heavy user who already built the missing pieces consumer-side and offered them back.
+**Status:** COMPLETE (all 5 slices shipped, 0.11.0 -> 0.15.0), 2026-07-12. **Source:** the consumer field
+report (the onboarding-cliff report) - a heavy user who already built the missing pieces consumer-side and
+offered them back.
 **Working model:** owner-shipped plugin (every commit under the owner's identity). Contributors stage
 edits; the owner commits + pushes + bumps `version`; consumers pull via
 `/plugin marketplace update topic-visualizer` (same-version content will NOT re-pull - the bump ships it).
@@ -92,7 +93,7 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
   MCP face warns when it and the HTTP backend are on different upgrade clocks.
 - **Depends on:** Slice 3 (so persistence covers the embedder too).
 
-### Slice 5 - surface the visualizer + the when-to-use reflex   [P2/P3]
+### Slice 5 - surface the visualizer + the when-to-use reflex   [DONE 0.15.0]
 - **Goal:** a first-class "open the visualizer" affordance (ensures the host is up, hands back the URL);
   ship the always-on discipline of *when* a passing thought becomes a topic as its own skill (or folded
   into `topics-capture`), so agents get the reflex out of the box, not just the tools.
