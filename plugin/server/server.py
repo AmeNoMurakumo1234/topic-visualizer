@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.12.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.13.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1291,9 +1291,9 @@ def doctor() -> dict:
     if not semantic_on:
         degraded.append(
             "Semantic ranking is OFF - search, dedup, and serve run in KEYWORD mode. "
-            f"No embedder answered at {EMBED_URL or '(TOPICS_EMBED_URL unset)'}. Start one "
-            "('topics serve-embedder', coming) or point TOPICS_EMBED_URL at your own "
-            "OpenAI-style /v1/embeddings endpoint.")
+            f"No embedder answered at {EMBED_URL or '(TOPICS_EMBED_URL unset)'}. Fix: run the "
+            "bundled embedder (python <plugin>/server/serve_embedder.py, or the /topics-setup "
+            "skill), or point TOPICS_EMBED_URL at your own OpenAI-style /v1/embeddings endpoint.")
     return {
         "version": VERSION,
         "verdict": "ok" if not degraded else "degraded",

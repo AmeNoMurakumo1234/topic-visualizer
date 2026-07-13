@@ -125,7 +125,7 @@ class ServerBackend:
             degraded.append(
                 "The topics SERVER is not running: capture works via the sqlite fallback, but the "
                 "visualizer (web UI) needs the server up, and nothing persists it across restarts. "
-                "Start it - see 'topics-setup' (coming).")
+                "Start it - run the /topics-setup skill (it installs a login service for you).")
         data = http_doctor
         if data is None:                            # server down, or too old for /api/doctor
             try:

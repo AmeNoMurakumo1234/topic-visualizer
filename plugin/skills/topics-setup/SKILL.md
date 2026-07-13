@@ -50,10 +50,11 @@ If the doctor says semantic ranking is OFF, ask:
 > embedder - I start a small local one; (b) bring-your-own - point at an OpenAI-style /v1/embeddings
 > endpoint you already run; (c) skip - stay in keyword mode." [a / b / c]
 
-- **(a) bundled:** run the plugin's bundled embedder (`topics serve-embedder`, i.e.
-  `python "<PLUGIN>/server/serve_embedder.py"`) and, if the user chose persistence in Step 1, add it to
-  the SAME autostart so both come up at login. If this version has no bundled embedder yet, say so and
-  fall back to (b) or (c).
+- **(a) bundled (recommended):** run the plugin's bundled embedder,
+  `python "<PLUGIN>/server/serve_embedder.py"` (CPU, all-MiniLM-L6-v2, auto-downloads ~80MB once). If
+  the user chose persistence in Step 1, add it to the SAME autostart so both come up at login. It needs
+  `sentence-transformers` (`pip install sentence-transformers`); if that is missing it prints exactly
+  that and exits - install it and retry, or fall back to (b)/(c).
 - **(b) BYO:** set `TOPICS_EMBED_URL` to their endpoint (persist it in their environment, not just this
   shell) and verify the doctor now reports the embedder reachable.
 - **(c) skip:** fine - but state plainly that search/dedup/serve will run keyword-only, and that the

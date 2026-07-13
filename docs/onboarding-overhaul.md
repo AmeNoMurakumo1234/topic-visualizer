@@ -76,7 +76,7 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
 - **Depends on:** Slice 1 (the green-check) and Slice 3 (to actually stand up semantic); can ship earlier
   in a guide-with-manual-fallback form.
 
-### Slice 3 - bundle the embedder (`topics serve-embedder`)   [P1, heaviest]
+### Slice 3 - bundle the embedder (`topics serve-embedder`)   [DONE 0.13.0]
 - **Goal:** a minimal CPU `/v1/embeddings` launcher around a small auto-downloaded model (or a wrapped
   llama.cpp embedding binary), exposed as `topics serve-embedder`. Keep `TOPICS_EMBED_URL` as the BYO
   escape hatch; STOP defaulting to a port we serve nothing on.
