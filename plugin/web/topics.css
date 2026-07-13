@@ -90,9 +90,17 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .node text.more { fill: #f0b24a; }
 .node .count { fill: #05070f; font-size: 9px; font-weight: 700; stroke: none; }
 .node path.leafstar { stroke: none; }
-.node.discussed circle.core, .node.discussed path.leafstar { opacity: 0.28; }
-.node.discussed text { opacity: 0.45; }
+/* discussed = TOUCHED, not unimportant: stay visible with a distinct teal ring rather
+   than fading toward invisible (old opacity:0.28 read as "ignore me") */
+.node.discussed circle.core, .node.discussed path.leafstar { opacity: 0.5; stroke: #5f9098; stroke-width: 1.4; }
+.node.discussed text { opacity: 0.6; }
+.node.discussed text.label { fill: #8fb5bb; opacity: 0.78; }
+/* critical = the thing your eye should land on first: orange label + the beacon halo + a size bump (JS) */
+.node.critical text.label { fill: #ffb26a; font-weight: 600; }
 .node circle.beacon { fill: none; stroke: #ff9a4a; stroke-width: 2; pointer-events: none; }
+/* constellation legend declutter toggle */
+.lgtoggle { cursor: pointer; user-select: none; opacity: 0.85; }
+.lgtoggle input { vertical-align: middle; margin: 0 3px 0 0; cursor: pointer; }
 .node circle.halo { fill: none; stroke: #f0b24a; stroke-opacity: 0.6;
                     stroke-dasharray: 3 4; stroke-width: 1.3; }
 .tv-crumbs { position: absolute; top: 10px; left: 14px; z-index: 5; font-size: 12px;

@@ -6,6 +6,7 @@ window.TopicsRenderers.constellation = (function () {
   "use strict";
   let core, stage, svg, view, fogG, edgesG, nodesG;
   let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, userMoved = false;
+  let hideDiscussed = false;              // legend toggle: declutter already-talked-about topics
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   const DEFS = `
@@ -68,6 +69,10 @@ window.TopicsRenderers.constellation = (function () {
       const next = Math.max(0.25, Math.min(3, scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
       tx = mx - (mx - tx) * (next / scale); ty = my - (my - ty) * (next / scale);
       scale = next; apply(); }, { passive: false });
+
+    // legend toggle (injected by the shell just before mount): declutter discussed topics
+    const cb = document.querySelector("#legend .hidediscussed");
+    if (cb) { cb.checked = hideDiscussed; cb.onchange = () => { hideDiscussed = cb.checked; render(); }; }
   }
 
   const apply = () => { if (view) { view.setAttribute("transform",
@@ -118,6 +123,7 @@ window.TopicsRenderers.constellation = (function () {
     seedPositions();
     fogG.innerHTML = ""; edgesG.innerHTML = ""; nodesG.innerHTML = "";
     for (const n of core.nodes) {
+      if (hideDiscussed && n.state === "discussed") continue;   // declutter: drop touched topics + their up-edge
       if (!n.parent) {
         const f = document.createElementNS(SVG_NS, "circle");
         f.setAttribute("class", "fog"); f.dataset.slug = n.slug;
@@ -125,14 +131,15 @@ window.TopicsRenderers.constellation = (function () {
         f.setAttribute("fill", "url(#tvFogGrad)");
         f.style.filter = `hue-rotate(${n.hue || 0}deg)`;
         fogG.appendChild(f);
-      } else {
-        const e = document.createElementNS(SVG_NS, "path");
+      } else if (!(hideDiscussed && (core.bySlug[n.parent] || {}).state === "discussed")) {
+        const e = document.createElementNS(SVG_NS, "path");   // skip edges into a hidden discussed parent (no dangle)
         e.setAttribute("class", "edge"); e.dataset.a = n.slug; e.dataset.b = n.parent;
         e.style.stroke = `hsl(${(222 + (n.hue || 0)) % 360}, 65%, 72%)`;
         edgesG.appendChild(e);
       }
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute("class", "node" + (n.parent ? "" : " root") +
+        (n.critical ? " critical" : "") +
         (n.state === "discussed" ? " discussed" : "") +
         (n.state === "seedling" ? " seedling" : "") +
         (n.state === "pruned" || n.state === "expired" ? " archived" : "") +
@@ -140,7 +147,7 @@ window.TopicsRenderers.constellation = (function () {
         (core.selected === n ? " selected" : ""));
       g.dataset.slug = n.slug;
       const r = 14 + Math.min(14, core.subtree(n).length * 2);
-      const leaf = !n.children.length, R = leaf ? 11 : r * 1.6;
+      const leaf = !n.children.length, R = (leaf ? 11 : r * 1.6) * (n.critical ? 1.22 : 1);
       n.pri = (n.parent ? 0 : 6) + (n.critical ? 4 : 0) +
               Math.min(4, Math.log2(core.subtree(n).length + 1)) +
               (n.state === "discussed" ? -2 : 0);
@@ -274,7 +281,8 @@ window.TopicsRenderers.constellation = (function () {
            legend: `<span style="color:#f0b24a">&#9679;</span> root sun &nbsp;
                     <span style="color:#7fa7ff">&#9679;</span> open &nbsp;
                     <span style="color:#d9f2ff">&#10022;</span> frontier leaf &nbsp;
-                    <span style="color:#ff9a4a">&#9678;</span> critical &nbsp;
-                    <span style="color:#5a5f75">&#9679;</span> discussed`,
+                    <span style="color:#ffb26a;text-shadow:0 0 6px #ff9a4a">&#9678;</span> <span style="color:#ffb26a">critical</span> &nbsp;
+                    <span style="color:#7fb0b6">&#9673;</span> discussed
+                    &nbsp;<label class="lgtoggle"><input type="checkbox" class="hidediscussed"> hide discussed</label>`,
            hint: "drag = pan, wheel = zoom, click node = detail" };
 })();
