@@ -9,9 +9,11 @@ window.TopicsRenderers.lineage = (function () {
   const SVG_NS = "http://www.w3.org/2000/svg";
   let core, stage, world, wires, cards;
   let tx = 20, ty = 20, scale = 1;
+  let critsRevealed = false;               // reveal beacons once per mount (initial state)
 
   function mount(container, coreRef) {
     core = coreRef; stage = container;
+    critsRevealed = false;
     stage.innerHTML = `<div class="tv-world"><svg class="tv-wires"></svg><div class="tv-cards"></div></div>`;
     world = stage.querySelector(".tv-world");
     wires = stage.querySelector(".tv-wires");
@@ -79,9 +81,16 @@ window.TopicsRenderers.lineage = (function () {
     // Constellation is for. Rendering every node expanded is what makes it unusable at scale, so on
     // any tree past a handful of nodes we default to COLLAPSED beyond the top level and let the user
     // open the branch they want. Small trees stay fully open (nothing to gain by hiding them).
-    const autoDepth = Object.keys(core.bySlug || {}).length <= 35 ? Infinity : 1;
+    // initial state: small trees open fully; on a big tree open only SHALLOW + NARROW nodes, so a node
+    // with LOTS of children is never dumped fully-expanded on first visit. Criticals are surfaced anyway
+    // via the reveal pass below (partial expansion). User carets override this per node.
+    const small = Object.keys(core.bySlug || {}).length <= 35, FANCAP = 7;
+    if (!critsRevealed) {                    // one-time per Lineage mount: reveal the path to every
+      critsRevealed = true;                  // critical node, so beacons always show on first visit
+      (core.nodes || []).forEach(t => { if (t.critical) core.revealPath(t); });
+    }
     const collect = (n, depth) => {
-      if (n.open === undefined) n.open = depth < autoDepth;   // user carets override this per-node
+      if (n.open === undefined) n.open = small || (depth < 1 && n.children.length <= FANCAP);
       n.lx = 40 + depth * (W + GX);
       visible.push(n);
       // PARTIAL expand: when a node is not fully open, still show any children individually revealed
@@ -149,7 +158,7 @@ window.TopicsRenderers.lineage = (function () {
       colBottom[n.lx] = n.ly + n.lh;
     };
     const place = n => {
-      const kids = n.open ? n.children : [];
+      const kids = n.open ? n.children : n.children.filter(c => c.revealed);  // match collect (partial)
       if (!kids.length) {
         n.ly = cursor; settle(n); cursor = Math.max(cursor, n.ly + n.lh + GY);
         return;
