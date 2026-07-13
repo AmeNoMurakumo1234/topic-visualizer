@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.32.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.33.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -204,6 +204,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(topic)")}
     if "merged_into" not in cols:
         conn.execute("ALTER TABLE topic ADD COLUMN merged_into TEXT")
+    xcols = {r["name"] for r in conn.execute("PRAGMA table_info(topic_parent)")}
+    if "rel" not in xcols:                            # co_parent | see_also (avenue relationship)
+        conn.execute("ALTER TABLE topic_parent ADD COLUMN rel TEXT NOT NULL DEFAULT 'co_parent'")
 
 
 def open_db(path: str) -> sqlite3.Connection:
@@ -258,7 +261,7 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
         rows = _conn.execute(q).fetchall()
         link_rows = _conn.execute(
             "SELECT topic_id, kind, ref, note FROM topic_link").fetchall()
-        xpq = """SELECT tp.topic_id, tp.note, tp.added_by, tp.added_at,
+        xpq = """SELECT tp.topic_id, tp.note, tp.added_by, tp.added_at, tp.rel,
                         p.slug AS parent_slug
                  FROM topic_parent tp JOIN topic p ON p.id = tp.parent_id"""
         if not include_archive:
@@ -270,8 +273,10 @@ def _load_topics(include_archive: bool = False) -> list[dict]:
             {"kind": lr["kind"], "ref": lr["ref"], "note": lr["note"]})
     xparents: dict = {}
     for xr in xp_rows:
+        # kind = the avenue's relationship: co_parent (a real second parent, drawn/positioned AS a
+        # parent) or see_also (a weak cross-link). Set by JUDGMENT at attach/groom, default co_parent.
         xparents.setdefault(xr["topic_id"], []).append(
-            {"slug": xr["parent_slug"], "note": xr["note"],
+            {"slug": xr["parent_slug"], "note": xr["note"], "kind": xr["rel"] or "co_parent",
              "added_by": xr["added_by"], "added_at": xr["added_at"]})
     out = []
     for r in rows:
@@ -297,9 +302,9 @@ def get_topic(slug: str) -> dict:
                  for x in _conn.execute(
                      "SELECT kind, ref, note FROM topic_link WHERE topic_id=?", (tid,))]
         extra = [{"slug": x["parent_slug"], "note": x["note"], "added_by": x["added_by"],
-                  "added_at": x["added_at"]}
+                  "added_at": x["added_at"], "kind": x["rel"] or "co_parent"}
                  for x in _conn.execute(
-                     "SELECT tp.note, tp.added_by, tp.added_at, p.slug AS parent_slug "
+                     "SELECT tp.note, tp.added_by, tp.added_at, tp.rel, p.slug AS parent_slug "
                      "FROM topic_parent tp JOIN topic p ON p.id=tp.parent_id "
                      "WHERE tp.topic_id=?", (tid,))]
         children = [x["slug"] for x in _conn.execute(
@@ -1164,11 +1169,15 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
 
 
 def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
-                  remove: bool = False) -> dict:
+                  remove: bool = False, kind: str = "co_parent") -> dict:
     """Multi-parent: the same semantic topic reached from a SECOND conversational
     avenue. Adds an extra edge (never a duplicate subtree) and enriches the topic
     with what the later discovery added: a 'rediscovered' event + a body append.
-    remove=True detaches the extra edge (the primary parent is edit_topic's job)."""
+    remove=True detaches the extra edge (the primary parent is edit_topic's job).
+    kind = the avenue's relationship, a JUDGMENT (similarity can't tell a complement from
+    noise): 'co_parent' (default - a real second parent, drawn/positioned AS a parent) or
+    'see_also' (a weak cross-link). Re-attaching with a kind reclassifies an existing avenue."""
+    kind = kind if kind in ("co_parent", "see_also") else "co_parent"
     with _lock:
         row = _conn.execute(
             "SELECT id, parent_id, body FROM topic WHERE slug=?", (slug,)).fetchone()
@@ -1207,12 +1216,14 @@ def attach_parent(slug: str, parent_slug: str, actor: str, note: str = "",
                 return _fail("cycle: that parent is inside this topic's subtree")
         try:
             _conn.execute(
-                "INSERT INTO topic_parent (topic_id, parent_id, note, added_by) "
-                "VALUES (?,?,?,?)", (tid, pid, note, actor))
-        except sqlite3.IntegrityError:               # idempotent: this avenue already exists
-            _conn.rollback()
-            return {"ok": True, "already": True, "attached": parent_slug,
-                    "note": "already attached to that parent"}
+                "INSERT INTO topic_parent (topic_id, parent_id, note, added_by, rel) "
+                "VALUES (?,?,?,?,?)", (tid, pid, note, actor, kind))
+        except sqlite3.IntegrityError:               # avenue exists -> reclassify its kind in place
+            _conn.execute("UPDATE topic_parent SET rel=? WHERE topic_id=? AND parent_id=?",
+                          (kind, tid, pid))
+            _conn.commit()
+            return {"ok": True, "already": True, "attached": parent_slug, "kind": kind,
+                    "note": f"avenue already existed; kind set to {kind}"}
         # rediscovery enrichment: the later avenue leaves a visible trace on the topic
         stamp = time.strftime("%Y-%m-%d")
         addendum = f"\n\n[rediscovered {stamp} via {parent_slug}]" + (f" {note}" if note else "")
@@ -1664,7 +1675,8 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "attach":
                     return self._json(200, attach_parent(
                         slug, str(body.get("parent_slug") or ""), actor,
-                        str(body.get("note") or ""), bool(body.get("remove"))))
+                        str(body.get("note") or ""), bool(body.get("remove")),
+                        str(body.get("kind") or "co_parent")))
         self._json(404, {"error": "not found"})
 
 

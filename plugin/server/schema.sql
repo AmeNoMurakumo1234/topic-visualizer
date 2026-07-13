@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS topic_parent (
   note      TEXT NOT NULL DEFAULT '',                -- what this avenue added
   added_by  TEXT NOT NULL DEFAULT '',
   added_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  rel       TEXT NOT NULL DEFAULT 'co_parent',       -- co_parent (a real second parent - drawn and
+                                                     -- positioned AS a parent) | see_also (a weak
+                                                     -- cross-link). Judgment, not similarity: the
+                                                     -- embedder can't tell a complement from noise.
   UNIQUE (topic_id, parent_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tparent_topic  ON topic_parent(topic_id);

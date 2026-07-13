@@ -243,7 +243,7 @@ window.TopicsRenderers.lineage = (function () {
           Math.hypot(x2 - x1, y2 - y1) * 0.35));
         path.setAttribute("d",
           `M ${x1} ${y1} C ${x1 + reach} ${y1}, ${x2 - reach} ${y2}, ${x2} ${y2}`);
-        path.setAttribute("class", "wire xwire");
+        path.setAttribute("class", "wire xwire" + (x.kind === "co_parent" ? " coparent" : ""));
         path.setAttribute("marker-end", "url(#tvXArrowL)");
         wires.appendChild(path);
         const port = document.createElementNS(SVG_NS, "circle");

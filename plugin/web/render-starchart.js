@@ -187,12 +187,12 @@ window.TopicsRenderers.starchart = (function () {
       g.addEventListener("dblclick", ev => { ev.stopPropagation(); setFocus(n); });
       nodesG.appendChild(g);
     }
-    // cross-links (multi-parent DAG): extra avenues, drawn only when both ends
-    // are on the chart - dashed and quieter than the radial tree edges
+    // extra avenues, drawn only when both ends are on the chart. A co_parent is a REAL second
+    // parent (solid, like a radial tree edge); a see_also is a quiet dashed cross-link.
     for (const x of core.xlinks || []) {
       if (!inView.has(x.from.slug) || !inView.has(x.to.slug)) continue;
       const e = document.createElementNS(SVG_NS, "path");
-      e.setAttribute("class", "edge xlink");
+      e.setAttribute("class", "edge xlink" + (x.kind === "co_parent" ? " coparent" : ""));
       // parent -> child so the arrowhead lands on the CHILD (direction grammar)
       e.dataset.a = x.to.slug; e.dataset.b = x.from.slug;
       e.setAttribute("marker-end", "url(#tvXArrow)");

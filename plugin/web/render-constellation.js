@@ -174,11 +174,11 @@ window.TopicsRenderers.constellation = (function () {
       g.addEventListener("click", ev => { ev.stopPropagation(); core.select(n); });
       nodesG.appendChild(g);
     }
-    // cross-links (multi-parent DAG): the extra avenues into a topic - dashed,
-    // quieter than tree edges, drawn under the nodes
+    // extra avenues into a topic. A co_parent is a REAL second parent (solid, like a tree edge);
+    // a see_also is a quiet dashed cross-link. Both drawn under the nodes, arrow toward the child.
     for (const x of core.xlinks || []) {
       const e = document.createElementNS(SVG_NS, "path");
-      e.setAttribute("class", "edge xlink");
+      e.setAttribute("class", "edge xlink" + (x.kind === "co_parent" ? " coparent" : ""));
       // parent -> child so the arrowhead lands on the CHILD (direction grammar)
       e.dataset.a = x.to.slug; e.dataset.b = x.from.slug;
       e.setAttribute("marker-end", "url(#tvXArrow)");
@@ -219,10 +219,15 @@ window.TopicsRenderers.constellation = (function () {
         n.vx += dx / d * pull; n.vy += dy / d * pull;
         p.vx -= dx / d * pull * 0.5; p.vy -= dy / d * pull * 0.5;
       }
-      // extra avenues tug gently (a third of a tree edge) so linked families drift closer
+      // a co_parent tugs almost like a real tree edge, so the node settles BETWEEN its parents;
+      // a see_also tugs gently (a third of a tree edge) - just enough to drift linked families closer
       for (const x of core.xlinks || []) {
+        const co = x.kind === "co_parent";
         const n = x.from, p = x.to, dx = p.x - n.x, dy = p.y - n.y,
-              d = Math.sqrt(dx * dx + dy * dy) || 1, pull = (d - 190) * 0.007;
+              d = Math.sqrt(dx * dx + dy * dy) || 1,
+              // co_parent pulls at full PARITY with a primary tree edge (same 140/0.02 above) so the
+              // node settles BETWEEN its parents; see_also stays a gentle third-strength drift
+              pull = (d - (co ? 140 : 190)) * (co ? 0.02 : 0.007);
         n.vx += dx / d * pull; n.vy += dy / d * pull;
         p.vx -= dx / d * pull * 0.5; p.vy -= dy / d * pull * 0.5;
       }

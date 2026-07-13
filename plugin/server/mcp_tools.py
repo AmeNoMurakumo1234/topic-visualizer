@@ -276,13 +276,13 @@ class ServerBackend:
             return self._fallback().convert(
                 slug, [{"kind": kind, "ref": ref, "note": note}], ACTOR, note)
 
-    def attach(self, slug, parent_slug, note, remove=False):
+    def attach(self, slug, parent_slug, note, remove=False, kind="co_parent"):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/attach",
                          self._p({"parent_slug": parent_slug, "actor": ACTOR,
-                                  "note": note, "remove": remove}))
+                                  "note": note, "remove": remove, "kind": kind}))
         except Unreachable:
-            return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove)
+            return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove, kind)
 
     def reparent(self, slug, parent_slug):
         # move the PRIMARY parent (the tree spine), via edit_topic; "" -> detach to root.
@@ -292,6 +292,17 @@ class ServerBackend:
                          self._p({"parent_slug": parent_slug, "actor": ACTOR}))
         except Unreachable:
             return self._fallback().edit_topic(slug, ACTOR, parent_slug=parent_slug)
+
+    def edit(self, slug, title=None, body=None):
+        payload = {"actor": ACTOR}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        try:
+            return _http("POST", f"{self.base}/api/topics/{slug}/edit", self._p(payload))
+        except Unreachable:
+            return self._fallback().edit_topic(slug, ACTOR, title=title, body=body)
 
     def groom(self):
         try:
@@ -412,9 +423,10 @@ class BoardBackend:
             })
         return topics
 
-    def attach(self, slug, parent_slug, note, remove=False):
+    def attach(self, slug, parent_slug, note, remove=False, kind="co_parent"):
         """Rediscovery on the board: an "also-parent" reply in the topic's thread (post
-        bodies are immutable through the API; the thread IS the discovery log)."""
+        bodies are immutable through the API; the thread IS the discovery log). The board
+        does not persist an avenue kind; board avenues render as co-parents by default."""
         if remove:
             return {"error": "the board backend cannot detach an avenue "
                              "(replies are append-only; reply a correction instead)"}
@@ -452,6 +464,10 @@ class BoardBackend:
         return {"error": "the board backend cannot change a topic's PRIMARY parent - it is set in "
                          "the immutable post body. Use topic_attach to add an avenue, or run the "
                          "reshape on the sqlite backend."}
+
+    def edit(self, slug, title=None, body=None):
+        return {"error": "the board backend cannot edit a topic's title/body - board post bodies are "
+                         "immutable (reply a correction, or edit on the sqlite backend)."}
 
     def add(self, items, actor=None):
         if actor:
@@ -767,18 +783,25 @@ TOOLS = [
          "many roads in, never a duplicated subtree). Records what the later "
          "discovery added (note) on the topic itself. Use this instead of topic_add "
          "when near_duplicates flags an existing match. Cycle-guarded. remove=true "
-         "detaches an extra avenue (sqlite backend only). BATCH: pass "
-         "items:[{slug,parent_slug,note?,remove?}, ...]."),
+         "detaches an extra avenue (sqlite backend only). kind='co_parent' (default) is a REAL "
+         "second parent - drawn and positioned as a parent; 'see_also' is a weak cross-link (a "
+         "quiet dashed 'see also'). It is a JUDGMENT you make - default to co_parent (you attached "
+         "this because you saw a real relationship) and only pick see_also for a genuinely weak "
+         "reference; similarity can't tell a complement from noise, so don't outsource it. "
+         "Re-attaching with a kind reclassifies. BATCH: items:[{slug,parent_slug,note?,remove?,kind?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
          "slug": {"type": "string", "description": "the existing topic"},
          "parent_slug": {"type": "string", "description": "the additional parent"},
          "note": {"type": "string",
                   "description": "what this avenue added - the rediscovery enrichment"},
+         "kind": {"type": "string", "enum": ["co_parent", "see_also"],
+                  "description": "co_parent (default, a real second parent) | see_also (weak link)"},
          "remove": {"type": "boolean"},
          "items": {"type": "array", "description": "batch form (each an op like above)",
                    "items": {"type": "object", "properties": {
                        "slug": {"type": "string"}, "parent_slug": {"type": "string"},
-                       "note": {"type": "string"}, "remove": {"type": "boolean"}},
+                       "note": {"type": "string"}, "remove": {"type": "boolean"},
+                       "kind": {"type": "string", "enum": ["co_parent", "see_also"]}},
                        "required": ["slug", "parent_slug"]}}}}},
     {"name": "topic_reparent",
      "description": (
@@ -799,6 +822,21 @@ TOOLS = [
                    "items": {"type": "object", "properties": {
                        "slug": {"type": "string"}, "parent_slug": {"type": "string"}},
                        "required": ["slug", "parent_slug"]}}}}},
+    {"name": "topic_edit",
+     "description": (
+         "Edit an existing topic's TITLE and/or BODY in place - e.g. rename a junk-drawer hub to a "
+         "real question, or re-level a mis-phrased title during a groom. This is the CONTENT edit; "
+         "the other facets of a topic have their own tools - primary parent -> topic_reparent, "
+         "state/beacon -> topic_state, extra avenue -> topic_attach. sqlite backend only (board post "
+         "bodies are immutable). BATCH: items:[{slug,title?,body?}, ...]."),
+     "inputSchema": {"type": "object", "properties": {
+         "slug": {"type": "string"},
+         "title": {"type": "string", "description": "new title (the question/tension)"},
+         "body": {"type": "string", "description": "new body (self-contained context + THE QUESTION)"},
+         "items": {"type": "array", "description": "batch form (each a {slug,title?,body?})",
+                   "items": {"type": "object", "properties": {
+                       "slug": {"type": "string"}, "title": {"type": "string"},
+                       "body": {"type": "string"}}, "required": ["slug"]}}}}},
     {"name": "topic_checkpoint",
      "description": (
          "Drop a restore point - a full snapshot of the tree. ALWAYS call this as the FIRST step "
@@ -907,7 +945,8 @@ def _convert_one(b, a: dict) -> dict:
 
 def _attach_one(b, a: dict) -> dict:
     return b.attach(str(a.get("slug") or ""), str(a.get("parent_slug") or ""),
-                    str(a.get("note") or ""), bool(a.get("remove")))
+                    str(a.get("note") or ""), bool(a.get("remove")),
+                    str(a.get("kind") or "co_parent"))
 
 
 def _reparent_one(b, a: dict) -> dict:
@@ -917,6 +956,13 @@ def _reparent_one(b, a: dict) -> dict:
     if "parent_slug" not in a:
         return {"error": 'reparent needs parent_slug ("" to detach to root)', "slug": slug}
     return b.reparent(slug, str(a.get("parent_slug") or ""))
+
+
+def _edit_one(b, a: dict) -> dict:
+    slug, title, body = str(a.get("slug") or ""), a.get("title"), a.get("body")
+    if title is None and body is None:
+        return {"error": "topic_edit needs a title and/or a body", "slug": slug}
+    return b.edit(slug, title, body)
 
 
 def _single_or_batch(b, args, one):
@@ -949,6 +995,8 @@ def _call(name: str, args: dict) -> dict:
         return _single_or_batch(b, args, _attach_one)
     if name == "topic_reparent":
         return _single_or_batch(b, args, _reparent_one)
+    if name == "topic_edit":
+        return _single_or_batch(b, args, _edit_one)
     if name == "topic_checkpoint":
         return b.checkpoint(str(args.get("label") or ""))
     if name == "topic_checkpoints":

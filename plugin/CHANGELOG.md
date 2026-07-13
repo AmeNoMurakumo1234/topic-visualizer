@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.33.0 - 2026-07-13 - Co-parent avenues (drawn as real parents) + topic_edit closes the MCP surface
+
+- The audit's 4th point: a genuine second parent rendered as a throwaway dashed "see also" and was
+  ignored by layout. Now an avenue carries a KIND (new `rel` column, idempotent migration):
+  - **Judgment, not similarity.** Tested against the real embedder, cosine scores genuine complements
+    (0.12-0.35) like unrelated noise (0.13) - it captures paraphrase (0.88), not "two facets of one
+    subject." So similarity is the wrong tool. An avenue's kind is set by the mind that created it:
+    it defaults to `co_parent` (you attached it because you saw a real link); mark `see_also` for a
+    weak aside. `topic_attach` gained a `kind` arg; re-attaching reclassifies.
+  - **Rendered AS a parent.** All three views draw a `co_parent` as a solid, real parent edge (vs the
+    `see_also`'s quiet dash). In Constellation a co_parent tugs at full parity with a primary tree
+    edge, pulling the node toward both parents - subtle inside a tight shared-hub cluster (the parents
+    are both tethered to the hub), pronounced when the parents live in different families.
+- **`topic_edit` closes the "stashed in the API" gap.** `/edit` could change a topic's title/body but
+  no MCP tool reached it - only `topic_reparent` (parent) and `topic_state` (beacon) tapped `/edit`.
+  New `topic_edit {slug, title?, body?}` (batch) exposes the content edit. Full HTTP<->MCP audit done:
+  every consumer capability now has a tool (20); the HTTP-only routes (health, version, projects,
+  backgrounds) are deliberately folded into other tools or web-only, and cascade-prune auto-cascades.
+
 ## 0.32.0 - 2026-07-13 - Grooming shapes it WELL: depth-first, avenue-aware, coherence-checked
 
 - A consumer audit of a real 55->60-topic groom found the loop chasing a WIDTH number while

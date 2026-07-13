@@ -122,10 +122,11 @@ window.TopicsCore = (function () {
       const hue = Math.round(i * 137.5) % 360;
       (function tint(n) { n.hue = hue; n.children.forEach(tint); })(root);
     });
-    // cross-links for the renderers: one flat list of {from(child), to(parent), note}
+    // cross-links for the renderers: {from(child), to(parent), note, kind}. kind = co_parent
+    // (a real second parent - drawn/positioned as a parent) | see_also (a quiet dashed link).
     const xlinks = [];
     nodes.forEach(n => n.extraParents.forEach(x =>
-      xlinks.push({ from: n, to: bySlug[x.slug], note: x.note })));
+      xlinks.push({ from: n, to: bySlug[x.slug], note: x.note, kind: x.kind || "co_parent" })));
     return { nodes, bySlug, roots, xlinks };
   }
 

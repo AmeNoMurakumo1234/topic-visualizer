@@ -90,7 +90,8 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
      ("conversations we haven't had", "misc") hides a real sub-cluster - open it, reparent the
      members to true homes.
    - **mixed-altitude / mixed-voice siblings** (judgment - the report can't compute it): children at
-     different levels of abstraction, or in different phrasings, under one parent -> re-level them.
+     different levels of abstraction, or in different phrasings, under one parent -> re-level them
+     (`topic_edit` to rename/rephrase a title, `topic_reparent` to re-nest).
    - **one theme split across two siblings** (judgment): the same story under two hubs, or two
      clashing taxonomies at one level (your invented hubs beside pre-existing territory nodes) ->
      merge the hubs / conform to ONE axis.
@@ -100,6 +101,14 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    > `topic_reparent` (sqlite backend; the board's primary parent lives in an immutable post body).
    > `topic_add`'s `parent_slug` sets a real primary parent, so the flat-plant gap only bites
    > EXISTING topics during a groom.
+
+   > **When you DO keep an avenue, its `kind` is your JUDGMENT** - similarity can't tell a complement
+   > from noise (a genuine complement scores like an unrelated pair to the embedder). An avenue
+   > defaults to `co_parent` (you attached it because you saw a real link) and RENDERS as a real
+   > second parent - solid, and in Constellation the node is pulled BETWEEN its parents. Mark
+   > `topic_attach {..., kind:'see_also'}` only for a genuinely weak aside; that one stays a quiet
+   > dashed link. The three-way call: a true sub-question becomes a CHILD (`topic_reparent`); a true
+   > co-equal facet stays a `co_parent` avenue; only a weak aside is `see_also`.
 
    Semantic similarity PROPOSES; your JUDGMENT decides which clusters are real - an autonomous
    similarity-only regroup is worse than no grooming (it picks the wrong axis). Also: orphans whose

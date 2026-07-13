@@ -639,6 +639,35 @@ class SeamTests(unittest.TestCase):
         self.assertIn((B, A), pairs, "avenue between siblings B<->A surfaces as 'reparent B under A'")
 
 
+    def test_30_avenue_kind_default_and_reclassify(self):
+        """An avenue defaults to co_parent (a real second parent); re-attaching with a kind
+        reclassifies it - the judgment cosine can't make."""
+        proj = "avk"
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "avk: A"}, {"title": "avk: B"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        A, B = rows["avk: A"], rows["avk: B"]
+        call(f"/api/topics/{A}/attach?project={proj}", {"actor": "ai", "parent_slug": B})
+        kind = lambda: call(f"/api/topics/{A}?project={proj}")["topic"]["extra_parents"][0]["kind"]
+        self.assertEqual(kind(), "co_parent", "avenues default to co_parent")
+        call(f"/api/topics/{A}/attach?project={proj}",
+             {"actor": "ai", "parent_slug": B, "kind": "see_also"})
+        self.assertEqual(kind(), "see_also", "re-attaching with a kind reclassifies the avenue")
+
+
+    def test_31_edit_title_and_body(self):
+        """topic_edit's capability: /edit changes title/body in place (was reachable only via HTTP)."""
+        proj = "ed"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [{"title": "ed: old title"}]})
+        slug = call(f"/api/topics?project={proj}")["topics"][0]["slug"]
+        r = call(f"/api/topics/{slug}/edit?project={proj}",
+                 {"actor": "human", "title": "ed: renamed hub", "body": "a proper question now?"})
+        self.assertTrue(r.get("ok"), r)
+        t = call(f"/api/topics/{slug}?project={proj}")["topic"]
+        self.assertEqual(t["title"], "ed: renamed hub")
+        self.assertIn("proper question", t["body"])
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

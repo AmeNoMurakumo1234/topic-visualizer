@@ -299,6 +299,11 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
               stroke-width: 1.1; }
 .wire.xwire { stroke: #b48be0; stroke-dasharray: 6 7; stroke-opacity: 0.55;
               stroke-width: 1.4; }
+/* a co_parent is a REAL second parent - solid and stronger, not a throwaway dash (a see_also
+   keeps the quiet dashed look above). Judgment-set on the avenue; similarity can't tell them apart. */
+.edge.xlink.coparent { stroke-dasharray: none !important; stroke-opacity: 0.72 !important;
+                       stroke-width: 1.9 !important; }
+.wire.xwire.coparent { stroke-dasharray: none; stroke-opacity: 0.82; stroke-width: 2; }
 .xport { fill: #b48be0; stroke: #0a0f1f; stroke-width: 1.5; }
 .chip.xlink { color: #e2d1ff; border-color: #7a55c2; background: #241a3d;
               box-shadow: 0 0 9px #b48be04d; }
