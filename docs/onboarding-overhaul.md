@@ -68,7 +68,7 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
   green; resolved env (`TOPICS_EMBED_URL` / `TOPICS_ACTOR` / `TOPICS_PROJECT` / store path) printed.
 - **Depends on:** nothing.
 
-### Slice 2 - `/topics-setup` guided skill   [headline]
+### Slice 2 - `/topics-setup` guided skill   [DONE 0.12.0]
 - **Goal:** interactive - persistence? [y/n]; semantic [bundled / BYO url / skip]; project(s)
   [auto-detect + confirm] - executes each choice (delegating OS-specifics to the agent), ends on
   `doctor` green.
