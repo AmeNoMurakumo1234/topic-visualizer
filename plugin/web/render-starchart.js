@@ -145,13 +145,14 @@ window.TopicsRenderers.starchart = (function () {
       const isFocus = focus === n, rootlike = !n.parent && !focus;
       g.setAttribute("class", "node" + (isFocus ? " focus" : "") +
         (rootlike ? " rootlike" : "") + (core.selected === n ? " selected" : "") +
+        (n.critical ? " critical" : "") +
         (n.state === "discussed" ? " discussed" : "") +
         (n.state === "seedling" ? " seedling" : "") +
         (n.state === "pruned" || n.state === "expired" ? " archived" : "") +
         (core.searchDim(n) ? " searchdim" : ""));
       g.dataset.slug = n.slug;
       const depth = n.tgt.depth,
-            r = isFocus ? 46 : Math.max(10, 30 - depth * 6) + Math.min(10, n.children.length * 1.5);
+            r = isFocus ? 46 : (Math.max(10, 30 - depth * 6) + Math.min(10, n.children.length * 1.5)) * (n.critical ? 1.22 : 1);
       const leaf = !n.children.length && !isFocus;
       n.pri = (isFocus ? 10 : 0) + (rootlike || depth <= 1 ? 5 : 0) + (n.critical ? 4 : 0) +
               Math.min(4, Math.log2(core.subtree(n).length + 1)) +
@@ -278,8 +279,8 @@ window.TopicsRenderers.starchart = (function () {
            legend: `<span style="color:#f0b24a">&#9679;</span> sun/root &nbsp;
                     <span style="color:#7fa7ff">&#9679;</span> open &nbsp;
                     <span style="color:#d9f2ff">&#10022;</span> frontier leaf &nbsp;
-                    <span style="color:#ff9a4a">&#9678;</span> critical &nbsp;
-                    <span style="color:#5a5f75">&#9679;</span> discussed &nbsp;
+                    <span style="color:#ffb26a;text-shadow:0 0 6px #ff9a4a">&#9678;</span> <span style="color:#ffb26a">critical</span> &nbsp;
+                    <span style="color:#7fb0b6">&#9673;</span> discussed &nbsp;
                     <span style="color:#f0b24a">&#9676;</span> +N deeper`,
            hint: "click = detail, double-click / Focus = re-center, drag = pan, wheel = zoom" };
 })();
