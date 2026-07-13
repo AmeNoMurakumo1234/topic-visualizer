@@ -58,13 +58,33 @@ window.TopicsRenderers.lineage = (function () {
     render();
     ty += (lyBefore - n.ly) * scale; apply();
   }
-  // select a node AND offer expand/collapse in the detail panel, so you never have to hunt the tiny
-  // +/- caret. Re-selects after a toggle so the button label flips.
+  // panel actions on the tree, so you never have to hunt the tiny +/- caret:
+  //  - Expand/Collapse all children
+  //  - "Show critical/discussed/seedling (N)" - PARTIAL reveal of just that category's hidden children
+  //  - "Hide this branch" - un-reveal a single revealed child, leaving its siblings shown
+  const CATS = [
+    { label: "critical", test: c => c.critical },
+    { label: "discussed", test: c => c.state === "discussed" },
+    { label: "seedling", test: c => c.state === "seedling" },
+  ];
+  function hideBranch(n) { n.revealed = false; n.open = false; render(); }
   function selectNode(n) {
-    core.select(n, n.children.length ? [{
-      label: n.open ? "Collapse branch" : "Expand branch", className: "expandbtn",
-      onClick: () => { toggleOpen(n); selectNode(n); }
-    }] : undefined);
+    const btns = [];
+    if (n.children.length) {
+      btns.push({ label: n.open ? "Collapse all" : "Expand all", className: "expandbtn",
+                  onClick: () => { toggleOpen(n); selectNode(n); } });
+      for (const cat of CATS) {
+        const hidden = n.children.filter(c => cat.test(c) && !(n.open || c.revealed));
+        if (hidden.length) btns.push({
+          label: `Show ${cat.label} (${hidden.length})`, className: "revealbtn",
+          onClick: () => { hidden.forEach(c => { c.revealed = true; }); render(); selectNode(n); } });
+      }
+    }
+    const par = n.parent && core.bySlug[n.parent];
+    if (par && n.revealed && !par.open) btns.push({
+      label: "Hide this branch", className: "hidebtn",
+      onClick: () => { hideBranch(n); selectNode(par); } });
+    core.select(n, btns.length ? btns : undefined);
   }
 
   /* Two-pass layout: cards are VARIABLE height (wrapped titles, multi-line chips),
