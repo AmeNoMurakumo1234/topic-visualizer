@@ -57,8 +57,13 @@ window.TopicsRenderers.lineage = (function () {
       markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="#b48be0"/></marker></defs>`;
     const visible = [];
+    // Lineage is a DRILL-DOWN view ("work this branch"), NOT a whole-forest overview - that is what
+    // Constellation is for. Rendering every node expanded is what makes it unusable at scale, so on
+    // any tree past a handful of nodes we default to COLLAPSED beyond the top level and let the user
+    // open the branch they want. Small trees stay fully open (nothing to gain by hiding them).
+    const autoDepth = Object.keys(core.bySlug || {}).length <= 35 ? Infinity : 1;
     const collect = (n, depth) => {
-      if (n.open === undefined) n.open = true;
+      if (n.open === undefined) n.open = depth < autoDepth;   // user carets override this per-node
       n.lx = 40 + depth * (W + GX);
       visible.push(n);
       if (n.open) n.children.forEach(c => collect(c, depth + 1));
