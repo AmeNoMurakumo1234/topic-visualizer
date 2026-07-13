@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.39.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.39.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1581,10 +1581,11 @@ def groom_report() -> dict:
                    for r in parents_kids
                    if bucket_re.search(r["title"] or "") and "?" not in (r["title"] or "")]
         # REDUNDANT ANCESTOR PARENT: a card with two parents where one is an ANCESTOR of the other.
-        # The card reaches that ancestor twice - directly AND transitively via the nearer parent - so
-        # the direct edge is a duplicate longer path. Higher-confidence than a sibling avenue (it's a
-        # provable duplicate, not a judgment): keep the NEAREST parent, drop the ancestor edge, and the
-        # card becomes the ancestor's grandchild through the nearer parent.
+        # The card reaches that ancestor twice - directly AND transitively via the parent that is the
+        # ancestor's descendant - so the direct edge is a duplicate longer path. Higher-confidence than
+        # a sibling avenue (a provable duplicate, not a judgment): KEEP THE PARENT THAT IS THE
+        # DESCENDANT (child-side) of the other, drop the ancestor edge; the card then hangs off the
+        # descendant parent alone and is the ancestor's grandchild through it.
         parents_of: dict = {}
         LIVE = "('seedling','open','discussed')"
         for r in _conn.execute(
@@ -1613,11 +1614,17 @@ def groom_report() -> dict:
         for child, ps in parents_of.items():
             if len(ps) < 2:
                 continue
-            for anc in ps:               # anc is redundant if a NEARER parent already reaches it
-                nearer = [p for p in ps if p != anc and _reaches(p, anc)]
-                if nearer:
+            # a parent is REDUNDANT if another parent is its DESCENDANT (reaches it going up). Keep the
+            # parents that are NOT an ancestor of any other parent (the child-side end of the chain) -
+            # so a chain P1->P2->P3 all parenting one card keeps P3, dropping P1 AND P2, not an
+            # intermediate. keep_parent = a kept descendant that actually reaches this ancestor.
+            redundant = {anc for anc in ps if any(o != anc and _reaches(o, anc) for o in ps)}
+            keepers = ps - redundant
+            for anc in redundant:
+                keep = next((o for o in keepers if _reaches(o, anc)), None)
+                if keep:
                     redundant_parents.append(
-                        {"child": child, "redundant_parent": anc, "keep_parent": nearer[0]})
+                        {"child": child, "redundant_parent": anc, "keep_parent": keep})
         redundant_parents = redundant_parents[:20]
     return {"health": h,
             "fan_out": {"target": "3-7 children is a SOFT band, not the goal - real relational "

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.39.1 - 2026-07-13 - redundant-parent: precise wording + chain-robust selection
+
+- Sharpened 0.39.0 per the consumer: the rule is NOT "keep the nearer parent" (vague) - it is **keep
+  the parent that is the DESCENDANT (child-side) of the other, drop the ancestor.** The code already
+  selected the descendant; the skill and report wording now say so precisely, so an agent can't
+  misread "nearest."
+- Hardened the selection for a deeper chain: with P1->P2->P3 all parenting one card, it now keeps
+  P3 (the leaf-most descendant) and drops BOTH P1 and P2 - never an intermediate. (Verified.)
+
 ## 0.39.0 - 2026-07-13 - Groom detects a redundant ancestor parent (consumer)
 
 - A consumer found a subtle grooming residue: a card with two parents where one parent is an
