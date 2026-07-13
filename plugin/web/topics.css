@@ -34,6 +34,19 @@ header .hud { margin-left: auto; font-size: 12px; color: var(--dim); }
 header .hud b { color: var(--ink); }
 header .home { color: var(--dim); text-decoration: none; font-size: 13px; margin-left: 12px; }
 header .home:hover { color: var(--ink); }
+/* PLANNED rows: instead of smushing everything onto one line (ugly even on wide screens), the header
+   reads as intentional rows - (1) identity + status, (2) project + view tabs, (3) the search/add tools -
+   each nav/tools cluster taking its own full-width row via flex-basis. It still wraps FURTHER on narrow
+   screens, and an ultrawide monitor pulls the nav row back up beside the title. */
+header .hud { order: 1; }               /* stays right (margin-left:auto) on row 1 with the title */
+header .hrefresh { order: 2; }
+header .hscope { order: 3; flex-basis: 100%; }
+header .htools { order: 4; flex-basis: 100%; }
+@media (min-width: 2100px) {            /* only a GENUINE ultrawide collapses: nav rejoins the identity
+                                           row ON THE LEFT (beside the title), status right, tools own row.
+                                           Normal wide monitors (1920/2048) keep the full 3-row layout. */
+  header .hscope { order: 0; flex-basis: auto; }
+}
 /* project switcher: a compact select styled like the view tabs (shell shows it only
    when the adapter reports projects). */
 .projsel { background: #0a1024; color: var(--ink); border: 1px solid var(--line);
@@ -184,16 +197,20 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 /* avenues in: every road that leads to this topic (multi-parent DAG) */
 #panel .avhead { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
                  color: #6a77a3; margin: 4px 0 6px; }
-#panel .avenue { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
+/* Column layout: the chips hang on their OWN top line (with the detach x), so they never eat the
+   horizontal width - the title and the note each get the full row and wrap naturally. */
+#panel .avenue { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px;
                  border-radius: 8px; font-size: 12.5px; }
 #panel .avenue:hover { background: #ffffff08; }
-#panel .ava { color: #8fb7ff; }
+#panel .avtop { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#panel .avmain { display: flex; align-items: baseline; gap: 8px; }
+#panel .ava { color: #8fb7ff; flex-shrink: 0; }
 #panel .ava.x { color: #c7a6ff; }
-#panel .avt { color: #b9c8ef; cursor: pointer; }
+#panel .avt { color: #b9c8ef; cursor: pointer; flex: 1; min-width: 0; }
 #panel .avt:hover { color: #eaf2ff; text-decoration: underline; }
 #panel .avn { color: #6a77a3; font-size: 11.5px; font-style: italic; }
 #panel .avx { margin-left: auto; background: none; border: none; color: #59607a;
-              cursor: pointer; font-size: 14px; padding: 0 4px; }
+              cursor: pointer; font-size: 14px; padding: 0 4px; line-height: 1; }
 #panel .avx:hover { color: var(--danger); }
 #panel .avadd { margin: 8px 0 4px; }
 #panel .av-in { width: 100%; background: #0b101f; border: 1px dashed #2a3558;

@@ -576,13 +576,16 @@ window.TopicsCore = (function () {
         const p2 = core.bySlug[slug];
         const handled = p2 && (p2.state === "discussed" || p2.state === "pruned"
                                || p2.state === "expired");
+        const chips = farPills(p2);
+        const x = removable && adapter.attach && adapter.attachRemove && !core.demo
+          ? `<button class="avx" data-slug="${esc(slug)}" title="detach this avenue">&times;</button>` : "";
         return `<div class="avenue${handled ? " dimrow" : ""}" data-slug="${esc(slug)}">
-          <span class="ava${extra ? " x" : ""}">${arrow}</span>
-          <span class="avt" title="${esc(slug)}">${p2 ? esc(short(p2.title)) : esc(slug)}</span>
-          ${farPills(p2)}
-          ${note ? `<span class="avn">${esc(note)}</span>` : ""}
-          ${removable && adapter.attach && adapter.attachRemove && !core.demo
-            ? `<button class="avx" data-slug="${esc(slug)}" title="detach this avenue">&times;</button>` : ""}
+          ${chips || x ? `<div class="avtop">${chips}${x}</div>` : ""}
+          <div class="avmain">
+            <span class="ava${extra ? " x" : ""}">${arrow}</span>
+            <span class="avt" title="${esc(slug)}">${p2 ? esc(short(p2.title)) : esc(slug)}</span>
+          </div>
+          ${note ? `<div class="avn">${esc(note)}</div>` : ""}
         </div>`;
       };
       const expanded = !!core._avenuesExpandOnce;
