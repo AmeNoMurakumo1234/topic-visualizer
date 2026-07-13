@@ -46,14 +46,25 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    signal, and it means one of two things, often both:
    - **its children are the same topic** -> MERGE (step 1). A wide fan is very often just
      duplicates the tree never collapsed - the single biggest lever on shape.
-   - **sub-structure is missing** -> NEST: group the children that share a REAL theme under a
-     new intermediate node (`topic_attach`). Only when the facet is undeniable - never depth
-     for depth's sake; false precision is its own rot.
+   - **sub-structure is missing** -> NEST: `topic_add` a new intermediate hub (its `parent_slug`
+     sets a real primary parent at birth), then `topic_reparent` the children that share a REAL
+     theme under it. Only when the facet is undeniable - never depth for depth's sake; false
+     precision is its own rot.
 
-   Then **reparent the mis-placed**: a topic captured under whatever conversation birthed it
-   often sits far from its true home (chronology, not meaning) - move it to where it belongs.
-   This is safe to do at GROOM time precisely because you hold the whole tree in view; the
-   capture moment (correctly) does not, which is why it plants flat. **Depth follows the data**
+   Then **reparent the mis-placed** with `topic_reparent {slug, parent_slug}` (batch:
+   `items:[{slug,parent_slug}, ...]`): a topic captured under whatever conversation birthed it
+   often sits far from its true home (chronology, not meaning) - move its PRIMARY parent to where
+   it belongs. This is safe to do at GROOM time precisely because you hold the whole tree in view;
+   the capture moment (correctly) does not, which is why it plants flat.
+
+   > **Reshape with `topic_reparent`, NOT `topic_attach`.** `topic_attach` only overlays an extra
+   > AVENUE (a dashed cross-link in the multi-parent DAG) - the member stays a root, the primary
+   > spine and the fan-out metric don't move, and the visualizer shows a hub with dangling links
+   > and zero real children. Moving a topic's home is `topic_reparent` (sqlite backend; the board's
+   > primary parent lives in an immutable post body). `topic_add`'s `parent_slug` already sets a
+   > proper primary parent, so this gap only ever bites EXISTING topics during a groom.
+
+   **Depth follows the data**
    - surface however deep the real structure runs, never manufacture layers to look tree-ish.
    Semantic similarity PROPOSES merges and clusters; your JUDGMENT decides which are real (and
    an autonomous similarity-only regroup is worse than no grooming - it picks the wrong axis).

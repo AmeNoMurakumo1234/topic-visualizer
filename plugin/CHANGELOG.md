@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.30.0 - 2026-07-13 - topic_reparent: grooming can finally reshape the tree
+
+- The `topics-groom` skill's headline step - nest a wide fan, reparent the mis-placed - was
+  impossible via MCP. The only parent tool was `topic_attach`, which adds an AVENUE (an extra
+  cross-link in the multi-parent DAG), NOT the primary parent. So a faithful groom built hubs with
+  N dangling dashed links and zero real children; the spine and the fan-out metric never moved and
+  the tree read as broken. A consumer hit exactly this on a 55-topic tree.
+- NEW `topic_reparent {slug, parent_slug}` (batch: `items:[{slug,parent_slug}, ...]`) moves a
+  topic's PRIMARY parent through the existing, fully cycle-guarded edit endpoint; `parent_slug=""`
+  detaches to root, and a now-redundant avenue collapses into the new primary edge. A missing
+  `parent_slug` key is refused (so a batch can't silently detach to root). The board backend
+  refuses cleanly - its primary parent lives in an immutable post body.
+- The `topics-groom` skill now names `topic_reparent` for the reshape step and spells out
+  attach-vs-reparent, so it can no longer instruct an unsupported op. Also notes that `topic_add`'s
+  `parent_slug` sets a real primary parent at birth, so the gap only ever bit EXISTING topics.
+
 ## 0.29.0 - 2026-07-13 - Changelog backfilled + kept honest by a test
 
 - Backfilled every release from 0.9.1 through 0.28.0. The changelog had frozen at 0.9 while the

@@ -101,6 +101,15 @@ class SeamTests(unittest.TestCase):
         # re-parenting the PARENT under its own CHILD must be refused
         bad = call(f"/api/topics/{parent}/edit", {"actor": "human", "parent_slug": child})
         self.assertIn("cycle", str(bad.get("error", "")))
+        # POSITIVE reparent (the grooming reshape step): it must MOVE the primary spine, not overlay
+        # a dangling avenue. Detach to root, then re-home - and the target must show a REAL child.
+        self.assertTrue(call(f"/api/topics/{child}/edit",
+                             {"actor": "human", "parent_slug": ""}).get("ok"))
+        self.assertIsNone(call(f"/api/topics/{child}")["topic"]["parent_slug"])          # detached to root
+        self.assertTrue(call(f"/api/topics/{child}/edit",
+                             {"actor": "human", "parent_slug": parent}).get("ok"))
+        self.assertEqual(call(f"/api/topics/{child}")["topic"]["parent_slug"], parent)   # primary spine moved
+        self.assertIn(child, call(f"/api/topics/{parent}")["topic"]["children"])         # a real child, not a cross-link
 
     def test_05_search_ranks(self):
         r = call("/api/topics/search?q=auth%20session")

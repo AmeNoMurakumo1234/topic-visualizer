@@ -284,6 +284,15 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove)
 
+    def reparent(self, slug, parent_slug):
+        # move the PRIMARY parent (the tree spine), via edit_topic; "" -> detach to root.
+        # cycle-guarded server-side, collapses a now-redundant avenue into the new primary edge.
+        try:
+            return _http("POST", f"{self.base}/api/topics/{slug}/edit",
+                         self._p({"parent_slug": parent_slug, "actor": ACTOR}))
+        except Unreachable:
+            return self._fallback().edit_topic(slug, ACTOR, parent_slug=parent_slug)
+
     def groom(self):
         try:
             return _http("GET", self._q(f"{self.base}/api/topics/groom"))
@@ -418,6 +427,11 @@ class BoardBackend:
         if r.get("error"):
             return {"error": "reply failed", "detail": r}
         return {"ok": True, "attached": parent_slug}
+
+    def reparent(self, slug, parent_slug):
+        return {"error": "the board backend cannot change a topic's PRIMARY parent - it is set in "
+                         "the immutable post body. Use topic_attach to add an avenue, or run the "
+                         "reshape on the sqlite backend."}
 
     def add(self, items, actor=None):
         if actor:
@@ -733,6 +747,25 @@ TOOLS = [
                        "slug": {"type": "string"}, "parent_slug": {"type": "string"},
                        "note": {"type": "string"}, "remove": {"type": "boolean"}},
                        "required": ["slug", "parent_slug"]}}}}},
+    {"name": "topic_reparent",
+     "description": (
+         "Move a topic's PRIMARY parent - the tree spine and the fan-out shape. This is the "
+         "reshape tool for grooming, and it is DIFFERENT from topic_attach: attach only overlays "
+         "an extra AVENUE (a dashed cross-link) and leaves the spine + child counts unchanged, so "
+         "using it to 'nest' produces a hub with dangling links and zero real children. To nest a "
+         "wide fan into 3-7-child branches: topic_add the hub (its parent_slug sets a real primary "
+         "parent at birth), then topic_reparent each member under it. parent_slug=\"\" detaches to "
+         "root. Cycle-guarded server-side; a now-redundant avenue collapses into the new primary "
+         "edge. Primary-parent edits need the sqlite backend (the board's parent lives in an "
+         "immutable post body). BATCH: pass items:[{slug,parent_slug}, ...] to move many at once."),
+     "inputSchema": {"type": "object", "properties": {
+         "slug": {"type": "string", "description": "the topic to move"},
+         "parent_slug": {"type": "string",
+                         "description": "new PRIMARY parent slug; \"\" = detach to root"},
+         "items": {"type": "array", "description": "batch form (each a {slug,parent_slug})",
+                   "items": {"type": "object", "properties": {
+                       "slug": {"type": "string"}, "parent_slug": {"type": "string"}},
+                       "required": ["slug", "parent_slug"]}}}}},
     {"name": "topic_groom_report",
      "description": "Seam vital signs + capture calibration (expiry rates per actor "
                     "where available). Read during a grooming round; adjust your "
@@ -823,6 +856,15 @@ def _attach_one(b, a: dict) -> dict:
                     str(a.get("note") or ""), bool(a.get("remove")))
 
 
+def _reparent_one(b, a: dict) -> dict:
+    # require an explicit parent_slug key so a missing field can't silently detach to root;
+    # an explicit "" IS the detach signal.
+    slug = str(a.get("slug") or "")
+    if "parent_slug" not in a:
+        return {"error": 'reparent needs parent_slug ("" to detach to root)', "slug": slug}
+    return b.reparent(slug, str(a.get("parent_slug") or ""))
+
+
 def _single_or_batch(b, args, one):
     """Every mutation tool takes EITHER its single-op fields OR an `items:[...]` array
     (same pattern as topic_add). Batch applies each op independently -> {results:[...]}."""
@@ -851,6 +893,8 @@ def _call(name: str, args: dict) -> dict:
         return _single_or_batch(b, args, _convert_one)
     if name == "topic_attach":
         return _single_or_batch(b, args, _attach_one)
+    if name == "topic_reparent":
+        return _single_or_batch(b, args, _reparent_one)
     if name == "topic_groom_report":
         return b.groom()
     if name == "topic_doctor":
