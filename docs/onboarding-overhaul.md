@@ -56,7 +56,7 @@ service); Slice 1 and the live-refresh slice are audience-agnostic.
 
 Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
 
-### Slice 1 - `topics doctor` + loud degraded state   [FIRST]
+### Slice 1 - `topics doctor` + loud degraded state   [DONE 0.11.0]
 - **Goal:** one command/tool prints resolved paths, URLs, versions, and up/down status for every piece;
   the web UI shows a banner when the embedder is absent ("Semantic ranking OFF - no embedder at <url>;
   showing keyword results").

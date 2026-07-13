@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.9.0"                     # single source of truth (MCP serverInfo reads this)
+VERSION = "0.11.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -729,6 +729,24 @@ def _embed_status() -> str:
     return "up" if _embed_up is True else "down" if _embed_up is False else "unknown"
 
 
+def _embed_probe(timeout: float = 3.0) -> bool:
+    """ACTIVELY hit the embedder once, so the doctor reports a LIVE up/down instead of the passive
+    last-probe flag (which stays 'unknown' until some ranking happens to run). Does not mutate the
+    latch _embed_up - it is a read-only health check."""
+    if not EMBED_URL:
+        return False
+    try:
+        req = urllib.request.Request(
+            EMBED_URL + "/v1/embeddings",
+            data=json.dumps({"input": ["ping"]}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            json.loads(r.read())
+        return True
+    except Exception:
+        return False
+
+
 def _cosine(a, b):
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
@@ -1258,6 +1276,43 @@ def groom_report() -> dict:
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
 
 
+def doctor() -> dict:
+    """Resolved config + LIVE up/down for every piece, so a user (or their agent) can see at a
+    glance whether the plugin is running at full value or SILENTLY DEGRADED. The whole point of the
+    onboarding overhaul: never let semantic ranking be off without the product saying so. Actively
+    probes the embedder - 'off' is a live fact, not a stale guess."""
+    proj = _default_project
+    try:
+        db = project_db_path(proj)
+    except Exception:
+        db = DB_PATH
+    semantic_on = _embed_probe()
+    degraded = []
+    if not semantic_on:
+        degraded.append(
+            "Semantic ranking is OFF - search, dedup, and serve run in KEYWORD mode. "
+            f"No embedder answered at {EMBED_URL or '(TOPICS_EMBED_URL unset)'}. Start one "
+            "('topics serve-embedder', coming) or point TOPICS_EMBED_URL at your own "
+            "OpenAI-style /v1/embeddings endpoint.")
+    return {
+        "version": VERSION,
+        "verdict": "ok" if not degraded else "degraded",
+        "degraded": degraded,                        # a NON-EMPTY list is the loud signal
+        "store": {"project": proj, "db_path": db, "exists": os.path.exists(db)},
+        "embedder": {
+            "url": EMBED_URL or None,
+            "reachable": semantic_on,
+            "semantic_ranking": "on" if semantic_on else "off",
+        },
+        "config": {
+            "TOPICS_EMBED_URL": os.environ.get("TOPICS_EMBED_URL") or f"(default {EMBED_URL})",
+            "TOPICS_ACTOR": os.environ.get("TOPICS_ACTOR") or "(default: ai)",
+            "TOPICS_PROJECT": os.environ.get("TOPICS_PROJECT") or "(auto from cwd)",
+            "TOPICS_DB": os.environ.get("TOPICS_DB") or "(per-project store)",
+        },
+    }
+
+
 # ---------------------------------------------------------------- http ----
 class Handler(BaseHTTPRequestHandler):
     web_root: Path | None = None
@@ -1296,6 +1351,8 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 return self._json(200, list_projects(
                     qs.get("project", [None])[0] or _default_project))
+        if u.path == "/api/doctor":                  # resolved config + live up/down (loud when degraded)
+            return self._json(200, doctor())
         if u.path.startswith("/api/topics"):
             key = qs.get("project", [None])[0] or _default_project
             with _lock:                          # pin this project's connection for the request
@@ -1420,6 +1477,8 @@ def main() -> None:
     ap.add_argument("--project", default=None, help="default project key (else auto from cwd)")
     ap.add_argument("--port", type=int, default=8991)
     ap.add_argument("--web", default=str(HERE.parent / "web"))
+    ap.add_argument("--doctor", action="store_true",
+                    help="print resolved config + live up/down status (loud when degraded) and exit")
     args = ap.parse_args()
     DB_PATH = args.db
     # The default project: explicit --project / TOPICS_PROJECT, else auto from the loaded
@@ -1431,6 +1490,9 @@ def main() -> None:
         _default_project = args.project or "default"
     with _lock:
         _use_project(_default_project)
+    if args.doctor:                                     # report + exit; never starts the server
+        print(json.dumps(doctor(), indent=2))
+        return
     expired = expire_all()                              # the daily job, run at start too
     threading.Thread(target=_expiry_loop, daemon=True).start()
     Handler.web_root = Path(args.web)

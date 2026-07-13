@@ -250,10 +250,36 @@
     btn.addEventListener("click", () => { flash("…", true); refreshNow(); });
   }
 
+  // --- degraded-state banner --------------------------------------------------------------------
+  // The product must ANNOUNCE when it is running at half value (semantic ranking off, or the server
+  // not persisting) instead of silently degrading - the core onboarding fix. adapter.doctor() returns
+  // {degraded:[...]}; a non-empty list raises a visible red strip. Adapters without doctor() (or a
+  // healthy store) show nothing.
+  async function checkDoctor() {
+    const adapter = window.TopicsAdapter;
+    if (demo || typeof adapter.doctor !== "function") return;
+    let d;
+    try { d = await adapter.doctor(); } catch (e) { return; }
+    if (!d || !Array.isArray(d.degraded) || !d.degraded.length) return;
+    const bar = document.createElement("div");
+    bar.style.cssText = "padding:7px 14px;background:#7a1f1f;color:#ffecec;font-size:12px;" +
+      "line-height:1.45;display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid #a33";
+    const msg = document.createElement("div");
+    msg.style.flex = "1";
+    msg.innerHTML = "<b>⚠ Running degraded — not at full value.</b> " +
+      d.degraded.map(x => String(x)).join("<br>");
+    const x = document.createElement("button");
+    x.textContent = "×"; x.title = "dismiss (re-checks on reload)";
+    x.style.cssText = "background:none;border:none;color:inherit;font-size:16px;cursor:pointer;opacity:.8";
+    x.addEventListener("click", () => bar.remove());
+    bar.append(msg, x);
+    (document.querySelector("header") || document.body).insertAdjacentElement("afterend", bar);
+  }
+
   // validate the stored view (legacy shells stored a/b/c) - never boot into nothing
   const LEGACY = { a: "constellation", b: "lineage", c: "starchart" };
   let saved = localStorage.getItem("topics-view") || "starchart";
   saved = LEGACY[saved] || saved;
   if (!window.TopicsRenderers[saved]) saved = "starchart";
-  core.load().then(() => { show(saved); setupLiveRefresh(); });
+  core.load().then(() => { show(saved); setupLiveRefresh(); checkDoctor(); });
 })();

@@ -113,7 +113,7 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertEqual({t["name"] for t in tools},
                          {"topic_add", "topic_get", "topic_list", "topic_serve",
                           "topic_search", "topic_state", "topic_convert",
-                          "topic_attach", "topic_groom_report",
+                          "topic_attach", "topic_groom_report", "topic_doctor",
                           "topic_export", "topic_import", "topic_merge", "topic_duplicates"})
 
     def test_02_lifecycle(self):

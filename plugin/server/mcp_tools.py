@@ -101,6 +101,45 @@ class ServerBackend:
             self._direct = srv
         return self._direct
 
+    def doctor(self):
+        """Resolved config + LIVE up/down for BOTH silent failures: (1) is the visualizer server
+        running (it needs the HTTP process; the fallback captures but does not persist the web UI),
+        and (2) is semantic ranking on. Prefers the running server's /api/doctor; falls back to an
+        in-process probe so it always answers. A non-empty 'degraded' array is the loud signal."""
+        out = {"server": {"url": self.base, "running": None}, "project": self.project, "actor": ACTOR}
+        degraded, running, http_doctor = [], False, None
+        try:
+            d = _http("GET", self.base + "/api/doctor")
+            running = True                          # got an HTTP reply -> the server is up
+            if "error" not in d:
+                http_doctor = d
+        except Unreachable:
+            running = False
+        out["server"]["running"] = running
+        if running:
+            out["backend"] = "server (HTTP)"
+            out["persistence"] = "ok"
+        else:
+            out["backend"] = "direct-sqlite fallback"
+            out["persistence"] = "degraded"
+            degraded.append(
+                "The topics SERVER is not running: capture works via the sqlite fallback, but the "
+                "visualizer (web UI) needs the server up, and nothing persists it across restarts. "
+                "Start it - see 'topics-setup' (coming).")
+        data = http_doctor
+        if data is None:                            # server down, or too old for /api/doctor
+            try:
+                data = self._fallback().doctor()
+            except Exception as e:
+                data = {"embedder": {"semantic_ranking": "unknown", "note": str(e)}}
+        for k in ("version", "store", "embedder", "config"):
+            if k in data:
+                out[k] = data[k]
+        degraded += data.get("degraded", [])
+        out["degraded"] = degraded
+        out["verdict"] = "ok" if not degraded else "degraded"
+        return out
+
     def add(self, items, actor=None):
         act = actor or ACTOR
         try:
@@ -624,6 +663,13 @@ TOOLS = [
                     "where available). Read during a grooming round; adjust your "
                     "capture threshold from the evidence.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "topic_doctor",
+     "description": "Health check: resolved config + LIVE up/down for every piece, so you can see "
+                    "whether the plugin runs at full value or is SILENTLY degraded. Surfaces both "
+                    "quiet failures - the visualizer server not running (no persistence) and the "
+                    "embedder being absent (semantic ranking off, keyword-only). A non-empty "
+                    "'degraded' array means act. Run it during setup and whenever ranking looks off.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "topic_export",
      "description": "Write this project's live topic tree to a directory of per-topic JSON "
                     "files (git-committable; default <repo>/.topics). mode='mirror' (default) "
@@ -726,6 +772,8 @@ def _call(name: str, args: dict) -> dict:
         return _single_or_batch(b, args, _attach_one)
     if name == "topic_groom_report":
         return b.groom()
+    if name == "topic_doctor":
+        return b.doctor()
     if name == "topic_export":
         return b.export(args.get("dir"), str(args.get("mode") or "mirror"), args.get("scope"))
     if name == "topic_import":

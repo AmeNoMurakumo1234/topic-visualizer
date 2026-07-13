@@ -17,6 +17,11 @@ window.TopicsAdapter = (function () {
 
   return {
     name: "sqlite",
+    // resolved config + live up/down for the degraded-state banner (semantic off / store issues).
+    // A non-empty doctor().degraded raises the banner. Returns null on error -> no banner.
+    async doctor() {
+      try { return await (await fetch(q("/api/doctor"))).json(); } catch (e) { return null; }
+    },
     // cheap change-signal for live refresh: topic count + a fold of (slug|state), so adds, removes,
     // and state changes all move it. Small LOCAL call (a huge tree can add a server /rev endpoint
     // later). Returns null on error so the shell keeps the current view instead of blanking it.
