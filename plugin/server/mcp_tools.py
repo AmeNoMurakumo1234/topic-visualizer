@@ -58,6 +58,23 @@ def _http(method: str, url: str, body: dict | None = None,
         raise Unreachable(str(e)) from e
 
 
+def _autostart_installed() -> bool:
+    """Is a login autostart actually installed (not merely a hand-started server)? Checks the launcher
+    config + its artifact (the Startup .vbs), so persistence is not false-greened when someone ran the
+    server by hand - persistence is the ONE thing setup exists to guarantee."""
+    cfgp = Path.home() / ".topic-visualizer" / "tv-autostart.json"
+    if not cfgp.exists():
+        return False
+    try:
+        c = json.loads(cfgp.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    arts = c.get("artifacts", [])
+    if arts:
+        return any(Path(a).exists() for a in arts)
+    return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+
+
 # ------------------------------------------------------- server backend ----
 class ServerBackend:
     """HTTP passthrough to the plugin server when it is running; DIRECT in-process
@@ -116,16 +133,24 @@ class ServerBackend:
         except Unreachable:
             running = False
         out["server"]["running"] = running
-        if running:
+        autostart = _autostart_installed()
+        out["autostart_installed"] = autostart
+        if running and autostart:
             out["backend"] = "server (HTTP)"
             out["persistence"] = "ok"
+        elif running and not autostart:
+            out["backend"] = "server (HTTP)"
+            out["persistence"] = "degraded"
+            degraded.append(
+                "The server is running but NO login autostart is installed - it was started by hand and "
+                "will NOT survive a restart. Run /topics-setup (or install_service.py) to persist it.")
         else:
             out["backend"] = "direct-sqlite fallback"
             out["persistence"] = "degraded"
             degraded.append(
                 "The topics SERVER is not running: capture works via the sqlite fallback, but the "
                 "visualizer (web UI) needs the server up, and nothing persists it across restarts. "
-                "Start it - run the /topics-setup skill (it installs a login service for you).")
+                "Start it - run the /topics-setup skill (it installs a no-admin login autostart for you).")
         data = http_doctor
         if data is None:                            # server down, or too old for /api/doctor
             try:

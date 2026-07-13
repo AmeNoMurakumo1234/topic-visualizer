@@ -31,7 +31,9 @@ On **yes**, use the bundled installer (do not make the user hand-write a service
 
 - **Windows (primary target):** run `python "<PLUGIN>/server/install_service.py"` (resolve `<PLUGIN>`
   to this plugin's installed path; add `--embedder` if the user also set up the bundled embedder in
-  Step 2). It creates an idempotent, windowless logon Scheduled Task (uninstall with `--uninstall`).
+  Step 2). It writes a **no-admin**, windowless login autostart (a Startup-folder entry - no elevation
+  needed, unlike a scheduled task) and is idempotent (uninstall with `--uninstall`). On the next login
+  it auto-adopts the newest installed version, so plugin updates need no re-install.
 - **macOS / Linux:** the same script, run on that OS, PRINTS a ready launchd plist / systemd `--user`
   unit. Place it and enable it (`launchctl load -w …` / `systemctl --user enable --now …`). This is the
   best-effort path - if you cannot fully wire it, hand the user the exact remaining command; do not

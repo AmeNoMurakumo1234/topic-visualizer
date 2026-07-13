@@ -1,13 +1,13 @@
 ---
 name: topics-teardown
-description: Run BEFORE uninstalling topic-visualizer to release the machine gracefully - the mirror of topics-setup. Stops the server/embedder we started, removes the login autostart, and offers to remove the local topic store, so nothing is left behind - no Scheduled Task failing at every login, no ghost process holding a port or the DB lock. Trigger when the user says "uninstall topics", "remove the plugin", "how do I get rid of this", "clean up topic-visualizer", or is about to delete the plugin.
+description: Run BEFORE uninstalling topic-visualizer to release the machine gracefully - the mirror of topics-setup. Stops the server/embedder we started, removes the login autostart, and offers to remove the local topic store, so nothing is left behind - no autostart failing at every login, no ghost process holding a port or the DB lock. Trigger when the user says "uninstall topics", "remove the plugin", "how do I get rid of this", "clean up topic-visualizer", or is about to delete the plugin.
 ---
 
 # topics-teardown: leave the machine as clean as you found it
 
 Onboarding installs real persistence - a login autostart, a running server, an embedder - so the
 visualizer survives restarts. The cost: simply DELETING the plugin folder is NOT clean. It orphans a
-Scheduled Task that then fails silently at every login, and leaves a ghost process holding the port and
+login autostart that then fails silently at every login, and leaves a ghost process holding the port and
 the DB (WAL) lock. Run this FIRST, then uninstall.
 
 **Do this BEFORE deleting the plugin dir** - the teardown matches processes by our exact script paths,
@@ -20,8 +20,9 @@ Run the bundled teardown (add `--dry-run` first to preview; drop it to apply):
     python "<PLUGIN>/server/install_service.py" --uninstall --embedder
 
 It STOPS only python processes running OUR server / serve_embedder (a shared or bring-your-own embedder
-on the same port is deliberately left alone - never killed by port), then removes the `TopicVisualizer*`
-Scheduled Task(s). Read back to the user what it stopped and removed.
+on the same port is deliberately left alone - never killed by port), then removes the login autostart
+(the Startup-folder VBS + the launcher/config; and any legacy scheduled task). Read back to the user what
+it stopped and removed.
 
 ## Step 2 - The data store (ASK - it is theirs)
 
@@ -41,8 +42,9 @@ they can remove it themselves later. Never delete their topics without asking.
 
 ## Step 4 - Confirm clean, then uninstall
 
-Verify: no `TopicVisualizer*` Scheduled Task remains (`schtasks /Query /TN TopicVisualizerServer` should
-say not found), nothing answers on the server/embedder ports, and - if they chose remove - the data dir
+Verify: the autostart is gone (no `topic-visualizer.vbs` in the user's Startup folder, and
+`~/.topic-visualizer/tv-autostart.json` removed), nothing answers on the server/embedder ports, and - if
+they chose remove - the data dir
 is gone. Then tell the user it is safe to uninstall the plugin.
 
 ## The safety net (why this is belt-and-suspenders)

@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.17.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.18.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1276,16 +1276,25 @@ def groom_report() -> dict:
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
 
 
+def _store_path(key) -> str:
+    """The per-project store path from the STABLE root (TOPICS_DB / DEFAULT_DB), NOT the mutable
+    DB_PATH. The fallback repoints DB_PATH at a per-project file; recomputing project_db_path() off
+    that re-appends 'projects/' and doubles it (projects/projects/<key>.db). Rooting at the fixed
+    store avoids that. Mirrors the fallback's own db resolution."""
+    td = os.environ.get("TOPICS_DB")
+    if td:
+        return td
+    root = Path(DEFAULT_DB).expanduser().resolve()
+    return str(root) if key == "default" else str(root.parent / "projects" / f"{key}.db")
+
+
 def doctor() -> dict:
     """Resolved config + LIVE up/down for every piece, so a user (or their agent) can see at a
     glance whether the plugin is running at full value or SILENTLY DEGRADED. The whole point of the
     onboarding overhaul: never let semantic ranking be off without the product saying so. Actively
     probes the embedder - 'off' is a live fact, not a stale guess."""
     proj = _default_project
-    try:
-        db = project_db_path(proj)
-    except Exception:
-        db = DB_PATH
+    db = _store_path(proj)
     semantic_on = _embed_probe()
     degraded = []
     if not semantic_on:

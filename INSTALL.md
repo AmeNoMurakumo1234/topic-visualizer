@@ -108,7 +108,7 @@ Nothing gets left behind - two ways it stays clean:
   saved topics. Then `/plugin uninstall topic-visualizer`.
 - **Even if you just uninstall** (or forget the teardown): the login autostart is **self-healing** - the
   launcher lives outside the plugin (`~/.topic-visualizer`) and, on the next login after the plugin's
-  files are gone, deletes its own Scheduled Task and itself. So a bare uninstall leaves no orphaned task.
+  files are gone, deletes its own login autostart and itself. So a bare uninstall leaves nothing behind.
   (Claude Code runs no uninstall hook, so this is how the OS-level footprint cleans itself up.)
 
 Your topics live at `~/.topic-visualizer/` and are **never deleted automatically** - remove that folder

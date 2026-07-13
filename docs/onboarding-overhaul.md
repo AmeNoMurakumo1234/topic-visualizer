@@ -99,6 +99,22 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
   into `topics-capture`), so agents get the reflex out of the box, not just the tools.
 - **Depends on:** Slice 4 (host-up guarantee) for the "open" affordance; the reflex skill is independent.
 
+### Addendum 2 - consumer field report, round 2   [DONE 0.18.0]
+Migrating a heavy consumer's hand-rolled host onto the 0.17.0 installer surfaced five real gaps, all fixed:
+- **No-admin persistence (the out-of-box blocker):** `schtasks /Create` needs elevation, so the naive
+  consumer's `/topics-setup` died with "Access is denied." Switched Windows to a **user-space Startup-folder
+  `.vbs`** (`WScript.Shell.Run …, 0, False`) - windowless, no admin, works for everyone. schtasks dropped.
+- **Upgrade path (version pinning):** the launcher pinned the CURRENT version's absolute path, so an update
+  kept running the OLD server (skew) or, if the old dir was cleaned, self-heal mistook the UPGRADE for an
+  uninstall and deleted persistence. Now the launcher **resolves the newest version dir under the plugin
+  BASE at each login**; "gone" = no version dir at all (a true uninstall), cleanly separated from "upgrade."
+- **Installer honesty (C1):** it reported `{"installed": true}` even when the create returned denied. Now it
+  fails loudly and never claims installed on error.
+- **Doctor persistence false-green (C2):** `persistence: ok` whenever the server was merely live, even
+  hand-started. Now it checks the autostart ARTIFACT exists, else reports persistence degraded.
+- **Doubled store path (C3):** the fallback repointed `DB_PATH` at a per-project file, so the doctor
+  recomputed `projects/projects/<key>.db`. Rooted the store path at the stable `DEFAULT_DB` instead.
+
 ### Addendum - graceful teardown + self-healing autostart   [DONE 0.16.0 -> 0.17.0]
 Onboarding installs real persistence (autostart + server + embedder), so a naive plugin-delete orphans a
 failing login Scheduled Task and a ghost process holding the port + DB lock. Claude Code runs NO uninstall
