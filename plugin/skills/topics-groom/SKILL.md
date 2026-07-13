@@ -40,9 +40,26 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    items minted, links back)? An extracted-but-unrecorded conversion is a decision
    dying in a notebook - the exact disease this system exists to cure. Fix on sight.
 
-5. **Orphan and lineage health.** Topics whose parent was pruned but who survived
-   (deliberately) become roots - verify that was intended. Verify family hues still
-   map to real thematic families; re-parent the strays.
+5. **Shape the tree - toward 3-7 children per node.** A tree that is honest AND legible
+   carries most nodes at roughly 3-7 children (a little more or less is good - organic
+   variation reads better than a sterile uniform tree). A node much WIDER than that is a
+   signal, and it means one of two things, often both:
+   - **its children are the same topic** -> MERGE (step 1). A wide fan is very often just
+     duplicates the tree never collapsed - the single biggest lever on shape.
+   - **sub-structure is missing** -> NEST: group the children that share a REAL theme under a
+     new intermediate node (`topic_attach`). Only when the facet is undeniable - never depth
+     for depth's sake; false precision is its own rot.
+
+   Then **reparent the mis-placed**: a topic captured under whatever conversation birthed it
+   often sits far from its true home (chronology, not meaning) - move it to where it belongs.
+   This is safe to do at GROOM time precisely because you hold the whole tree in view; the
+   capture moment (correctly) does not, which is why it plants flat. **Depth follows the data**
+   - surface however deep the real structure runs, never manufacture layers to look tree-ish.
+   Semantic similarity PROPOSES merges and clusters; your JUDGMENT decides which are real (and
+   an autonomous similarity-only regroup is worse than no grooming - it picks the wrong axis).
+   `topic_groom_report` flags the widest fans and their sizes - start the shape pass there.
+   Also: orphans whose parent was pruned but who survived - verify that was intended; family
+   hues still map to real thematic families - fix the strays.
 
 6. **Calibration feedback (the loop teaching both minds).** topic_groom_report
    returns per-actor capture outcomes where the backend records them - the sqlite store does; the board backend reports only state counts ("of your last 20 captures: 14 became topics,

@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.19.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.20.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1271,7 +1271,20 @@ def groom_report() -> dict:
         stale = _conn.execute(
             "SELECT slug, title FROM topic WHERE state='open' AND "
             "julianday('now') - julianday(touched_at) > 30 LIMIT 3").fetchall()
+        # fan-out lens: the widest nodes are where SHAPE work concentrates. A node with many
+        # children means merge (they're dupes) and/or nest (missing sub-structure); target ~3-7.
+        wide = _conn.execute(
+            "SELECT p.slug AS slug, p.title AS title, COUNT(*) AS children "
+            "FROM topic t JOIN topic p ON p.id = t.parent_id "
+            "WHERE t.parent_id IS NOT NULL AND t.state IN ('seedling','open','discussed') "
+            "GROUP BY t.parent_id HAVING children > 7 ORDER BY children DESC LIMIT 8").fetchall()
+        root_count = _conn.execute(
+            "SELECT COUNT(*) c FROM topic WHERE parent_id IS NULL "
+            "AND state IN ('seedling','open','discussed')").fetchone()["c"]
     return {"health": h,
+            "fan_out": {"target": "3-7 children per node; wider -> merge and/or nest",
+                        "root_count": root_count,
+                        "widest": [dict(r) for r in wide]},
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
 
