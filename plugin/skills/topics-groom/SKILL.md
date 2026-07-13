@@ -74,8 +74,10 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    **Then the rest of shape, in order:**
    - **MERGE duplicates** (step 1) - a wide fan is very often just twins the tree never collapsed;
      the single biggest lever, and it deepens by removing false peers.
-   - **NEST only REAL facets**: `topic_add` a hub (its `parent_slug` sets a real primary parent at
-     birth), then `topic_reparent` the children that share an undeniable theme under it. **Depth
+   - **NEST only REAL facets**: `topic_add {..., role:'hub'}` a hub (its `parent_slug` sets a real
+     primary parent at birth; `role:'hub'` marks it as organizing scaffolding, NOT a captured
+     question - so an undo can sweep it clean if empty, and junk-drawer detection knows it's a
+     container), then `topic_reparent` the children that share an undeniable theme under it. **Depth
      follows the data** - surface however deep the real structure runs, never manufacture layers to
      look tree-ish; false precision is its own rot.
    - **REPARENT the mis-placed** (`topic_reparent {slug, parent_slug}`, batch `items:[...]`): a topic

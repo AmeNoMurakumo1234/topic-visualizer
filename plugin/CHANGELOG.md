@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.0 - 2026-07-13 - Undo sweeps empty groom hubs (scaffolding is not a capture)
+
+- Consumer follow-up on the undo: reparents reverted correctly and no real capture was lost, but a
+  groom-created organizing HUB lingered as an empty orphan - restore keeps every post-checkpoint
+  topic and couldn't tell a structural hub from a real capture, so a 5-hub groom left 5 childless
+  hubs to hand-prune. The one-click "clean revert" wasn't actually clean.
+- Fix (the consumer's Option 1 + 3): topics carry a `role` (`topic` default | `hub`; new column,
+  idempotent migration). Grooming mints organizing hubs with `topic_add {role:'hub'}`. On restore, a
+  sweep removes any `role='hub'` that is (a) created after the checkpoint AND (b) childless after the
+  revert - deterministic, no heuristics. The invariant holds: a real capture is never a hub (never
+  swept), and a hub still holding a mid-groom capture is NOT empty (kept). The result now reports it
+  - `removed_hubs` in the MCP return, "N empty hub(s) swept" in the Undo button dialog.
+- `role` also composes with junk-drawer detection (a flagged hub is a container, not a question) -
+  wired into the groom skill's NEST step.
+
 ## 0.33.0 - 2026-07-13 - Co-parent avenues (drawn as real parents) + topic_edit closes the MCP surface
 
 - The audit's 4th point: a genuine second parent rendered as a throwaway dashed "see also" and was

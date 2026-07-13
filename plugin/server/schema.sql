@@ -29,9 +29,12 @@ CREATE TABLE IF NOT EXISTS topic (
   state_changed_at TEXT,
   state_changed_by TEXT,
   state_note       TEXT,
-  merged_into      TEXT          -- survivor slug when this topic was folded away (a merge
+  merged_into      TEXT,         -- survivor slug when this topic was folded away (a merge
                                  -- tombstone: state='pruned' + merged_into set; prune sweep
                                  -- hard-removes it after 14 days)
+  role             TEXT NOT NULL DEFAULT 'topic'   -- 'topic' (a real question) | 'hub' (organizing
+                                 -- scaffolding a groom minted). A hub is NOT a capture: undo removes
+                                 -- an empty post-checkpoint hub; junk-drawer detection can flag it.
 );
 CREATE INDEX IF NOT EXISTS idx_topic_parent ON topic(parent_id);
 CREATE INDEX IF NOT EXISTS idx_topic_state  ON topic(state);

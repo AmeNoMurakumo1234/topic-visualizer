@@ -702,6 +702,11 @@ TOOLS = [
                           "description": "critical = beacon; RARE (<10% of live topics)"},
              "state": {"type": "string", "enum": ["open", "seedling"],
                        "description": "seedling = tentative capture, auto-expires untouched"},
+             "role": {"type": "string", "enum": ["topic", "hub"],
+                      "description": "'topic' (default, a real question) | 'hub' - an organizing "
+                      "container you mint during a GROOM to nest children under. A hub is scaffolding, "
+                      "not a capture: undo removes an empty post-checkpoint hub, so mark it so a "
+                      "rollback stays clean. Only for groom-minted containers, never a real capture."},
          }, "required": ["title"]}},
          "actor": {"type": "string", "description": "who is capturing - pass a STABLE label "
                    "(same string every session) so per-actor calibration can learn; "
@@ -853,9 +858,11 @@ TOOLS = [
          "Undo a groom: roll the tree back to a checkpoint (omit id = the most recent). RECONCILE, "
          "not wipe - pre-existing topics revert to the snapshot (reparents and merges fully reverse, "
          "merged-away topics return), but any topic CAPTURED AFTER the checkpoint is KEPT, never "
-         "discarded (a real capture is never lost; a groom-created hub may linger empty). Returns "
-         "{reverted, preserved_since, recovered}. Tell the human what reverts and what is kept before "
-         "you call it. sqlite backend only."),
+         "discarded. Empty groom SCAFFOLDING is swept: a role='hub' minted after the checkpoint that "
+         "is childless after the revert is removed, so undo is a clean revert - a hub still holding a "
+         "mid-groom capture stays, and a real capture is never a hub. Returns {reverted, "
+         "preserved_since, recovered, removed_hubs}. Tell the human what reverts and what is kept "
+         "before you call it. sqlite backend only."),
      "inputSchema": {"type": "object", "properties": {
          "id": {"type": "integer", "description": "checkpoint id; omit for the latest"}}}},
     {"name": "topic_groom_report",

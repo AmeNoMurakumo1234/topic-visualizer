@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.33.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.34.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -204,6 +204,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(topic)")}
     if "merged_into" not in cols:
         conn.execute("ALTER TABLE topic ADD COLUMN merged_into TEXT")
+    if "role" not in cols:                            # 'topic' | 'hub' (groom scaffolding)
+        conn.execute("ALTER TABLE topic ADD COLUMN role TEXT NOT NULL DEFAULT 'topic'")
     xcols = {r["name"] for r in conn.execute("PRAGMA table_info(topic_parent)")}
     if "rel" not in xcols:                            # co_parent | see_also (avenue relationship)
         conn.execute("ALTER TABLE topic_parent ADD COLUMN rel TEXT NOT NULL DEFAULT 'co_parent'")
@@ -807,20 +809,43 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
             if t:
                 _conn.execute("INSERT INTO topic_link (topic_id, kind, ref, note) VALUES (?,?,?,?)",
                               (t, l["kind"], l["ref"], l.get("note") or ""))
-        # pass 3: PRESERVE post-checkpoint captures; recover any the groom removed
-        preserved = recovered = 0
-        for r in _conn.execute("SELECT id, slug, state, merged_into FROM topic").fetchall():
+        # pass 3: recover any post-checkpoint capture the groom removed (never lose a real capture)
+        recovered = 0
+        for r in _conn.execute(
+                "SELECT id, slug, state, merged_into FROM topic WHERE state IN ('pruned','expired') "
+                "OR merged_into IS NOT NULL").fetchall():
             if r["slug"] in snap_topics:
                 continue
-            preserved += 1
-            if r["state"] in ("pruned", "expired") or r["merged_into"]:
-                _conn.execute("UPDATE topic SET state='open', merged_into=NULL WHERE id=?", (r["id"],))
-                _event(r["id"], "reopened", actor, f"restore #{row['id']}: kept a capture the groom removed")
-                recovered += 1
+            _conn.execute("UPDATE topic SET state='open', merged_into=NULL WHERE id=?", (r["id"],))
+            _event(r["id"], "reopened", actor, f"restore #{row['id']}: kept a capture the groom removed")
+            recovered += 1
+        # pass 4: sweep groom SCAFFOLDING. A role='hub' minted AFTER the checkpoint that is now
+        # CHILDLESS is empty scaffolding from the undone groom -> remove it, so undo is a clean
+        # revert (not a tree littered with empty hubs). A hub still holding a mid-groom capture is
+        # NOT empty and stays; a real capture is never role='hub', so the "never lose it" law holds.
+        removed_hubs = 0
+        for r in _conn.execute("SELECT id, slug FROM topic WHERE role='hub'").fetchall():
+            if r["slug"] in snap_topics:
+                continue                              # existed at the checkpoint - part of the tree
+            has_child = _conn.execute(
+                "SELECT 1 FROM topic WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
+            has_avenue_child = _conn.execute(
+                "SELECT 1 FROM topic_parent WHERE parent_id=? LIMIT 1", (r["id"],)).fetchone()
+            if has_child or has_avenue_child:
+                continue                              # still holds something real -> keep it
+            _conn.execute("DELETE FROM topic_event WHERE topic_id=?", (r["id"],))
+            _conn.execute("DELETE FROM topic_parent WHERE topic_id=? OR parent_id=?", (r["id"], r["id"]))
+            _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (r["id"],))
+            _conn.execute("DELETE FROM topic WHERE id=?", (r["id"],))
+            removed_hubs += 1
+        # preserved = post-checkpoint topics that REMAIN (after the scaffolding sweep)
+        preserved = sum(1 for r in _conn.execute("SELECT slug FROM topic")
+                        if r["slug"] not in snap_topics)
         _conn.execute("UPDATE groom_checkpoint SET restored_at=datetime('now') WHERE id=?", (row["id"],))
         _conn.commit()
     return {"ok": True, "restored_from": row["id"], "checkpoint_at": row["created_at"],
-            "reverted": reverted, "preserved_since": preserved, "recovered": recovered}
+            "reverted": reverted, "preserved_since": preserved, "recovered": recovered,
+            "removed_hubs": removed_hubs}
 
 
 # ------------------------------------------------------ embeddings ----
@@ -989,11 +1014,12 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                 try:
                     cur = _conn.execute(
                         """INSERT INTO topic (slug, title, body, parent_id, state, priority,
-                                              tags, created_by, provenance)
-                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                                              tags, created_by, provenance, role)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
                         (slug, title, str(it.get("body") or ""), parent_id, state,
                          "critical" if it.get("priority") == "critical" else "normal",
-                         str(it.get("tags") or ""), actor, str(it.get("provenance") or "")))
+                         str(it.get("tags") or ""), actor, str(it.get("provenance") or ""),
+                         "hub" if it.get("role") == "hub" else "topic"))
                     break
                 except sqlite3.IntegrityError:
                     if attempt == 3:

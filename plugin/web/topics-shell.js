@@ -322,6 +322,7 @@
           ? "<h3>Groom undone</h3><p>" + `${res.reverted} topic(s) restored to the checkpoint`
             + (res.preserved_since ? `; <b>${res.preserved_since} captured since were kept</b>` : "")
             + (res.recovered ? `; ${res.recovered} recovered` : "")
+            + (res.removed_hubs ? `; ${res.removed_hubs} empty hub(s) swept` : "")
             + ".</p><button class='no'>OK</button>"
           : "<h3>Undo failed</h3><p>" + esc((res && res.error) || "could not reach the store")
             + "</p><button class='no'>OK</button>";

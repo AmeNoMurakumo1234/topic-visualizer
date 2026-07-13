@@ -668,6 +668,33 @@ class SeamTests(unittest.TestCase):
         self.assertIn("proper question", t["body"])
 
 
+    def test_32_restore_sweeps_empty_groom_hubs(self):
+        """Undo removes groom-created EMPTY hubs (role='hub', post-checkpoint, childless), but keeps a
+        real capture AND a hub still holding a mid-groom capture. 'Never lose a capture' stays intact."""
+        proj = "hubsweep"
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "hs: A"}]})
+        A = call(f"/api/topics?project={proj}")["topics"][0]["slug"]
+        self.assertTrue(call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai"}).get("ok"))
+        # groom: mint an EMPTY hub, a hub that will HOLD a capture, and a real capture; nest under them
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "hs: EMPTY hub", "role": "hub"},
+            {"title": "hs: FILLED hub", "role": "hub"},
+            {"title": "hs: a real capture mid-groom"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        empt, fill, cap = r["hs: EMPTY hub"], r["hs: FILLED hub"], r["hs: a real capture mid-groom"]
+        call(f"/api/topics/{A}/edit?project={proj}", {"actor": "ai", "parent_slug": empt})   # reverts away
+        call(f"/api/topics/{cap}/edit?project={proj}", {"actor": "ai", "parent_slug": fill})  # stays
+        res = call(f"/api/topics/restore?project={proj}", {"actor": "human"})
+        self.assertTrue(res.get("ok"), res)
+        live = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]]
+        self.assertNotIn(empt, live, "empty groom hub is swept on undo")
+        self.assertIn(fill, live, "a hub still holding a mid-groom capture is kept (not empty)")
+        self.assertIn(cap, live, "the mid-groom capture is never lost")
+        self.assertIn(A, live, "A is restored")
+        self.assertEqual(res["removed_hubs"], 1, "exactly the one empty hub was swept")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,
