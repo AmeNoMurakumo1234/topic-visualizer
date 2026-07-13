@@ -136,6 +136,15 @@ class ServerBackend:
             if k in data:
                 out[k] = data[k]
         degraded += data.get("degraded", [])
+        # version coherence: the MCP face runs the INSTALLED code (VERSION); the HTTP server reports the
+        # code IT was started with. A mismatch means the running server is stale - the "different upgrade
+        # clocks" bug (restart Claude refreshes the MCP face but not a long-lived server process).
+        running_ver = (http_doctor or {}).get("version")
+        out["installed_version"] = VERSION
+        if running and running_ver and running_ver != VERSION:
+            degraded.append(
+                f"The RUNNING server is v{running_ver} but the installed code is v{VERSION} - the "
+                "server is on an old upgrade clock. Restart it to pick up the update.")
         out["degraded"] = degraded
         out["verdict"] = "ok" if not degraded else "degraded"
         return out

@@ -578,5 +578,27 @@ class SeamTests(unittest.TestCase):
                       "folded's conversion transfers to the survivor")
 
 
+class VersionCoherenceTests(unittest.TestCase):
+    """The version lives in THREE files that must move together (they have silently drifted before -
+    plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,
+    so a bump that misses a file cannot ship. If it fails: sync all three to the same value."""
+
+    def _versions(self):
+        import server as srv
+        root = HERE.parent.parent            # repo root (…/topic-visualizer)
+        pj = json.loads((root / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        mk = json.loads((root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        return {
+            "server.VERSION": srv.VERSION,
+            "plugin.json": pj["version"],
+            "marketplace.json": mk["plugins"][0]["version"],
+        }
+
+    def test_version_fields_are_in_lockstep(self):
+        v = self._versions()
+        self.assertEqual(len(set(v.values())), 1,
+                         f"version fields disagree - sync them: {v}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

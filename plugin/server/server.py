@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.13.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.14.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1351,6 +1351,8 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 return self._json(200, list_projects(
                     qs.get("project", [None])[0] or _default_project))
+        if u.path == "/api/version":                 # what version is ACTUALLY running (vs installed code)
+            return self._json(200, {"version": VERSION})
         if u.path == "/api/doctor":                  # resolved config + live up/down (loud when degraded)
             return self._json(200, doctor())
         if u.path.startswith("/api/topics"):

@@ -86,7 +86,7 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
   llama.cpp gguf). Generalize `start-embedding.ps1`.
 - **Depends on:** nothing hard; unblocks Slice 2's semantic path.
 
-### Slice 4 - service installer + version coherence   [P2]
+### Slice 4 - service installer + version coherence   [DONE 0.14.0]
 - **Goal:** `topics install-service` (agent writes launchd / `systemd --user` / Scheduled Task;
   idempotent, uninstallable) to keep host + embedder alive across restarts; a `/version` endpoint; the
   MCP face warns when it and the HTTP backend are on different upgrade clocks.

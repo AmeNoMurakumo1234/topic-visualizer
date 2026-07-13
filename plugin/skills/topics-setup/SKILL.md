@@ -27,20 +27,18 @@ If the doctor says the server is not running / not persistent, ask:
 > "Want the topic visualizer to stay running across restarts? I can set it to launch automatically at
 > login." [yes / no]
 
-On **yes**, YOU install the autostart for the user's OS (this is the "lean on the agent" step - do not
-make the user hand-write it):
+On **yes**, use the bundled installer (do not make the user hand-write a service):
 
-- **Windows (primary target):** create a Scheduled Task that runs the server windowless at logon.
-  The command is `pythonw "<PLUGIN>/server/server.py" --port 8991` (resolve `<PLUGIN>` to this plugin's
-  installed path). Use `schtasks /Create /SC ONLOGON /TN TopicVisualizer /TR "..." /RL LIMITED /F`, or a
-  small launcher script the task calls. Make it **idempotent** - if the port is already served, the
-  server exits cleanly, so re-running is safe.
-- **macOS:** a `launchd` user agent (`~/Library/LaunchAgents/…plist`, `RunAtLoad`).
-- **Linux:** a `systemd --user` unit (`~/.config/systemd/user/…`, `WantedBy=default.target`) + `enable`.
+- **Windows (primary target):** run `python "<PLUGIN>/server/install_service.py"` (resolve `<PLUGIN>`
+  to this plugin's installed path; add `--embedder` if the user also set up the bundled embedder in
+  Step 2). It creates an idempotent, windowless logon Scheduled Task (uninstall with `--uninstall`).
+- **macOS / Linux:** the same script, run on that OS, PRINTS a ready launchd plist / systemd `--user`
+  unit. Place it and enable it (`launchctl load -w …` / `systemctl --user enable --now …`). This is the
+  best-effort path - if you cannot fully wire it, hand the user the exact remaining command; do not
+  pretend it is done.
 
-Best-effort beyond Windows: if you cannot fully wire the non-Windows path, write what you can and hand
-the user the exact remaining command to run - do not pretend it is done. After installing, START it now
-(do not make them log out) and confirm the server answers on its port.
+After installing, **START the server now** (`python "<PLUGIN>/server/server.py" --port 8991`, plus the
+embedder if chosen) so the user does not have to log out, then confirm it answers via `topic_doctor`.
 
 ## Step 2 - Semantic ranking: the embedder
 
