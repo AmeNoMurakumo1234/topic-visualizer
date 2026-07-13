@@ -144,6 +144,7 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .chip { font-size: 10px; color: var(--dim); border: 1px solid var(--line);
         border-radius: 999px; padding: 1px 7px; }
 .chip.kids { color: var(--accent); }
+.chip.kids.partial { color: #ffcf6a; border-color: #7a5a2e; background: #2a1f0e88; }  /* partial expand */
 .chip.frontier { color: #7fd4ff; border-color: #2e5a75; }
 .chip.crit { color: #ff9a4a; border-color: #7a4a2e; }
 .chip.done { color: #9aa2bd; }

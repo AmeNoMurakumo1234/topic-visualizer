@@ -540,6 +540,14 @@ window.TopicsCore = (function () {
     core.closePanel = function () {
       dom.panel.className = ""; core.selected = null;
     };
+    // reveal a node + its ancestor chain so the Lineage tree surfaces JUST the path to it (a PARTIAL
+    // expand) - navigating to one child should show that child, never blast all its siblings. Only
+    // Lineage's layout reads `revealed`; setting it is harmless for the other views. core._centerOn
+    // asks the active renderer to bring the node into view.
+    core.revealPath = function (n) {
+      let cur = n, hops = 0;
+      while (cur && hops++ < 999) { cur.revealed = true; cur = core.bySlug[cur.parent]; }
+    };
     core.select = function (n, extraButtons) {
       n = core.bySlug[n.slug] || n;   // re-resolve: renderer closures may hold
                                       // node objects replaced by core.load()
@@ -657,7 +665,7 @@ window.TopicsCore = (function () {
       dom.panel.querySelectorAll(".avenue .avt").forEach(el => {
         el.onclick = () => {
           const p2 = core.bySlug[el.closest(".avenue").dataset.slug];
-          if (p2) core.select(p2);
+          if (p2) { core.revealPath(p2); core._centerOn = p2; core.select(p2); }
         };
       });
       // "+N more" expands the capped avenue lists in place; "show less" collapses

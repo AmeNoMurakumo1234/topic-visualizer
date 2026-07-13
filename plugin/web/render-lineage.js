@@ -51,7 +51,9 @@ window.TopicsRenderers.lineage = (function () {
   // clicked node jump or scroll out of view). Uses the node's own ly, which persists across render.
   function toggleOpen(n) {
     const lyBefore = n.ly;
-    n.open = !n.open; render();
+    n.open = !n.open;
+    if (!n.open) n.children.forEach(c => { c.revealed = false; });  // a full collapse clears partial reveals
+    render();
     ty += (lyBefore - n.ly) * scale; apply();
   }
   // select a node AND offer expand/collapse in the detail panel, so you never have to hunt the tiny
@@ -82,7 +84,10 @@ window.TopicsRenderers.lineage = (function () {
       if (n.open === undefined) n.open = depth < autoDepth;   // user carets override this per-node
       n.lx = 40 + depth * (W + GX);
       visible.push(n);
-      if (n.open) n.children.forEach(c => collect(c, depth + 1));
+      // PARTIAL expand: when a node is not fully open, still show any children individually revealed
+      // (by navigating to them) - a thin thread to the node you asked for, not its whole fan.
+      const kids = n.open ? n.children : n.children.filter(c => c.revealed);
+      kids.forEach(c => collect(c, depth + 1));
     };
     core.roots.forEach(r => collect(r, 0));
 
@@ -101,10 +106,15 @@ window.TopicsRenderers.lineage = (function () {
         d.style.borderLeft = `3px solid hsl(${(222 + (n.hue || 0)) % 360}, 70%, 62%)`;
       }
       const s = core.short(n.title), w = core.weight(n.title);
+      const shownKids = n.open ? n.children.length : n.children.filter(c => c.revealed).length;
+      const partial = !n.open && shownKids > 0 && shownKids < n.children.length;
       d.innerHTML = `<div class="sum">${core.esc(s.slice(0, 72))}${s.length > 72 ? "..." : ""}</div>
         <div class="chips">${w ? `<span class="chip">${core.esc(w)}</span>` : ""}
-          ${n.children.length ? `<span class="chip kids">${n.children.length} child(ren)</span>`
-                              : `<span class="chip frontier">frontier</span>`}
+          ${n.children.length
+            ? `<span class="chip kids${partial ? " partial" : ""}">${partial
+                ? `${shownKids} of ${n.children.length} shown`
+                : `${n.children.length} child(ren)`}</span>`
+            : `<span class="chip frontier">frontier</span>`}
           ${n.critical ? `<span class="chip crit">critical</span>` : ""}
           ${n.state === "discussed" ? `<span class="chip done">discussed</span>` : ""}
           ${n.state === "seedling" ? `<span class="chip seed">seedling</span>` : ""}
@@ -117,7 +127,9 @@ window.TopicsRenderers.lineage = (function () {
                  .filter(x => x.to === n).map(x => x.from.slug).join(", "))}">&#8618; ${
                  (core.xlinks || []).filter(x => x.to === n).length} out</span>` : ""}
         </div>
-        ${n.children.length ? `<div class="caret">${n.open ? "-" : "+"}</div>` : ""}`;
+        ${n.children.length ? `<div class="caret" title="${n.open ? "collapse" : partial
+            ? "partially expanded - click to show all" : "expand"}">${
+            n.open ? "−" : partial ? "⋯" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {
         if (ev.target.classList.contains("caret")) { toggleOpen(n); return; }
         selectNode(n);
@@ -202,6 +214,15 @@ window.TopicsRenderers.lineage = (function () {
     }
     wires.setAttribute("width", maxX); wires.setAttribute("height", maxY);
     wires.style.width = maxX + "px"; wires.style.height = maxY + "px";
+
+    // a just-navigated node (panel avenue click set core._centerOn) - bring it to the middle
+    if (core._centerOn && visible.indexOf(core._centerOn) >= 0) {
+      const t = core._centerOn, r = stage.getBoundingClientRect();
+      tx = r.width / 2 - (t.lx + W / 2) * scale;
+      ty = r.height / 2 - (t.ly + (t.lh || ROWH) / 2) * scale;
+      apply();
+    }
+    core._centerOn = null;
   }
 
   function unmount() { if (stage) stage.innerHTML = ""; stage = null; }
