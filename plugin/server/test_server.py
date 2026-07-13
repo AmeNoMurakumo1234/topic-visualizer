@@ -586,6 +586,40 @@ class SeamTests(unittest.TestCase):
         self.assertIn("d:mtx", [l["ref"] for l in g["topic"]["links"]],
                       "folded's conversion transfers to the survivor")
 
+    def test_28_groom_checkpoint_restore(self):
+        """The grooming undo: checkpoint -> reshape (reparent + merge) + a capture ARRIVES during
+        the groom -> restore. The reshape reverses, but the mid-groom capture MUST survive."""
+        proj = "ckpt"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "ckpt: root A"}, {"title": "ckpt: root B"},
+            {"title": "ckpt: mover"}, {"title": "ckpt: folded"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        A, B = rows["ckpt: root A"], rows["ckpt: root B"]
+        mover, folded = rows["ckpt: mover"], rows["ckpt: folded"]
+        call(f"/api/topics/{mover}/edit?project={proj}", {"actor": "ai", "parent_slug": A})
+        # --- checkpoint BEFORE the groom ---
+        cp = call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai", "label": "pre-groom"})
+        self.assertTrue(cp.get("ok")); self.assertEqual(cp["topics"], 4)
+        # --- groom: reparent mover A->B, merge folded into A, AND a real capture lands mid-groom ---
+        call(f"/api/topics/{mover}/edit?project={proj}", {"actor": "ai", "parent_slug": B})
+        call(f"/api/topics/merge?project={proj}", {"into": A, "from": folded})
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "ckpt: captured DURING the groom"}]})
+        newcap = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]
+                  if "DURING" in t["title"]][0]
+        self.assertEqual(call(f"/api/topics/{mover}?project={proj}")["topic"]["parent_slug"], B)
+        self.assertNotIn(folded, [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]],
+                         "merge tombstoned folded before restore")
+        # --- restore ---
+        r = call(f"/api/topics/restore?project={proj}", {"actor": "human"})
+        self.assertTrue(r.get("ok"), r)
+        live = [t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]]
+        self.assertEqual(call(f"/api/topics/{mover}?project={proj}")["topic"]["parent_slug"], A,
+                         "reparent reversed")
+        self.assertIn(folded, live, "merge reversed - the folded topic returns")
+        self.assertIn(newcap, live, "THE guarantee: a capture made during the groom survives the undo")
+        self.assertGreaterEqual(r["preserved_since"], 1)
+
 
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -

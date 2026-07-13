@@ -64,6 +64,22 @@ window.TopicsAdapter = (function () {
       });
       return await r.json();
     },
+    // grooming undo: list restore points + roll back. Presence of restore() is the capability
+    // signal the shell gates the "Undo last groom" button on (the board adapter omits it).
+    async checkpoints() {
+      try {
+        const r = await fetch(q("/api/topics/checkpoints"));
+        if (!r.ok) return null;
+        return await r.json();   // { checkpoints: [{id, created_at, label, restored_at, topics}] }
+      } catch (e) { return null; }
+    },
+    async restore(id, actor) {
+      const r = await fetch(q("/api/topics/restore"), {
+        method: "POST", headers: HDRS,
+        body: JSON.stringify({ id: id ?? null, actor: actor || "human" }),
+      });
+      return await r.json();     // { ok, reverted, preserved_since, recovered, checkpoint_at }
+    },
     attachRemove: true,   // this store can detach an extra avenue
     async attach(slug, parentSlug, note, actor, remove) {
       const r = await fetch(q(`/api/topics/${encodeURIComponent(slug)}/attach`), {

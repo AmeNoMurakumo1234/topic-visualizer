@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.31.0 - 2026-07-13 - Grooming undo: checkpoint + restore (never lose a capture)
+
+- Grooming is the one bulk, hard-to-eyeball edit, so it now opens with a safety net and can be
+  rolled back whole. NEW `topic_checkpoint` (snapshot the tree), `topic_checkpoints` (list restore
+  points), `topic_restore {id?}` (roll back; omit id = the latest). The `topics-groom` skill now
+  mandates a checkpoint as step 0 and documents the undo in its closing report. The board backend
+  returns "not supported" - its git history is its undo, and board grooming doesn't reshape the
+  primary tree.
+- Restore is a RECONCILE, not a wipe - the subtlety that makes it trustworthy. Topics that existed
+  at the checkpoint revert to the snapshot (reparents and merges fully reverse; merged-away topics
+  return), but any topic CAPTURED AFTER the checkpoint is KEPT, never discarded. Losing a real
+  capture made during a groom is the one unforgivable sin; a groom-created hub may linger empty
+  (cosmetic, the next groom clears it). History (`topic_event`) is never wiped.
+- Browser: an **"Undo last groom"** button (sqlite backend only, capability-gated on the adapter)
+  with a confirm dialog that names the checkpoint time and promises the keep, and a result line
+  ("4 restored; 1 captured since kept"). Deterministic, one click.
+- Schema: `groom_checkpoint` table (idempotent add), retaining the newest 15 restore points.
+
 ## 0.30.0 - 2026-07-13 - topic_reparent: grooming can finally reshape the tree
 
 - The `topics-groom` skill's headline step - nest a wide fan, reparent the mis-placed - was

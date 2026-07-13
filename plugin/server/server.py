@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.30.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.31.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -682,6 +682,140 @@ def _touch(topic_id: int, actor: str, note: str = "") -> None:
     # first touch graduates a seedling to a full topic (death-by-choice from here on)
     _conn.execute(
         "UPDATE topic SET state='open' WHERE id=? AND state='seedling'", (topic_id,))
+
+
+# ------------------------------------------------- groom checkpoints ----
+# The undo layer for grooming (the one bulk, hard-to-eyeball op). A checkpoint is a full
+# logical snapshot; restore is a RECONCILE, not a wipe: pre-existing topics revert to the
+# snapshot, but topics captured AFTER the checkpoint are always preserved (never lose a real
+# capture). See schema.sql groom_checkpoint.
+CHECKPOINT_KEEP = 15                                # retain the newest N restore points
+
+
+def _snapshot_payload() -> dict:
+    """Full snapshot of the topic tables, keyed by slug (slugs survive reparent/merge; ids do
+    too, but slugs are the stable public key). topic_event is intentionally excluded."""
+    topics = [dict(r) for r in _conn.execute(
+        "SELECT t.slug, t.title, t.body, t.state, t.priority, t.tags, t.merged_into, "
+        "p.slug AS parent_slug FROM topic t LEFT JOIN topic p ON p.id=t.parent_id")]
+    parents = [dict(r) for r in _conn.execute(
+        "SELECT c.slug AS topic_slug, p.slug AS parent_slug, tp.note, tp.added_by, tp.added_at "
+        "FROM topic_parent tp JOIN topic c ON c.id=tp.topic_id JOIN topic p ON p.id=tp.parent_id")]
+    links = [dict(r) for r in _conn.execute(
+        "SELECT t.slug AS topic_slug, l.kind, l.ref, l.note "
+        "FROM topic_link l JOIN topic t ON t.id=l.topic_id")]
+    return {"topics": topics, "parents": parents, "links": links}
+
+
+def create_checkpoint(actor: str, label: str = "") -> dict:
+    """Drop a restore point. Grooming calls this BEFORE it reshapes anything."""
+    with _lock:
+        payload = _snapshot_payload()
+        cur = _conn.execute(
+            "INSERT INTO groom_checkpoint (label, actor, snapshot) VALUES (?,?,?)",
+            (label or "", actor or "", json.dumps(payload)))
+        cid = cur.lastrowid
+        stale = [r["id"] for r in _conn.execute(          # keep only the newest N
+            "SELECT id FROM groom_checkpoint ORDER BY id DESC LIMIT -1 OFFSET ?",
+            (CHECKPOINT_KEEP,))]
+        for i in stale:
+            _conn.execute("DELETE FROM groom_checkpoint WHERE id=?", (i,))
+        row = _conn.execute("SELECT id, created_at, label FROM groom_checkpoint WHERE id=?",
+                            (cid,)).fetchone()
+        _conn.commit()
+    return {"ok": True, "id": row["id"], "created_at": row["created_at"],
+            "label": row["label"], "topics": len(payload["topics"])}
+
+
+def list_checkpoints() -> dict:
+    with _lock:
+        rows = _conn.execute(
+            "SELECT id, created_at, label, actor, restored_at, snapshot "
+            "FROM groom_checkpoint ORDER BY id DESC").fetchall()
+    out = []
+    for r in rows:
+        try:
+            n = len(json.loads(r["snapshot"]).get("topics", []))
+        except Exception:
+            n = None
+        out.append({"id": r["id"], "created_at": r["created_at"], "label": r["label"],
+                    "actor": r["actor"], "restored_at": r["restored_at"], "topics": n})
+    return {"checkpoints": out}
+
+
+def restore_checkpoint(actor: str, cid=None) -> dict:
+    """Roll the tree back to a checkpoint. RECONCILE, not replace:
+      - every snapshot topic is reset to its snapshot state (fields, primary parent, avenues,
+        conversions) and un-tombstoned if the groom merged/pruned it - fully reversing merges,
+        since every merge effect lands on pre-existing topics;
+      - topics captured AFTER the checkpoint are KEPT; if the groom removed one, it is
+        un-tombstoned so the capture is never lost;
+      - nothing is ever deleted (a groom-created hub simply lingers, empty - cosmetic)."""
+    with _lock:
+        if cid is None:
+            row = _conn.execute("SELECT id, snapshot, created_at FROM groom_checkpoint "
+                                "ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            row = _conn.execute("SELECT id, snapshot, created_at FROM groom_checkpoint "
+                                "WHERE id=?", (int(cid),)).fetchone()
+        if not row:
+            return _fail("no checkpoint to restore")
+        snap = json.loads(row["snapshot"])
+        snap_topics = {t["slug"]: t for t in snap["topics"]}
+
+        def _tid(slug):
+            r = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
+            return r["id"] if r else None
+
+        # pass 1: ensure every snapshot topic exists (re-insert any the groom hard-removed)
+        for slug, t in snap_topics.items():
+            if not _tid(slug):
+                _conn.execute(
+                    "INSERT INTO topic (slug, title, body, state, priority, tags, created_by) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (slug, t["title"], t["body"], t["state"], t["priority"],
+                     t.get("tags") or "", actor))
+        # pass 2: reset each snapshot topic to its snapshot fields + primary parent (+ un-tombstone)
+        reverted = 0
+        for slug, t in snap_topics.items():
+            pid = _tid(t["parent_slug"]) if t.get("parent_slug") else None
+            _conn.execute(
+                "UPDATE topic SET title=?, body=?, state=?, priority=?, tags=?, parent_id=?, "
+                "merged_into=? WHERE slug=?",
+                (t["title"], t["body"], t["state"], t["priority"], t.get("tags") or "",
+                 pid, t.get("merged_into"), slug))
+            reverted += 1
+        # rebuild avenues + conversions for snapshot topics (a merge transfers these)
+        for slug in snap_topics:
+            tid = _tid(slug)
+            _conn.execute("DELETE FROM topic_parent WHERE topic_id=?", (tid,))
+            _conn.execute("DELETE FROM topic_link WHERE topic_id=?", (tid,))
+        for e in snap["parents"]:
+            c, p = _tid(e["topic_slug"]), _tid(e["parent_slug"])
+            if c and p:
+                _conn.execute("INSERT OR IGNORE INTO topic_parent "
+                              "(topic_id, parent_id, note, added_by, added_at) VALUES (?,?,?,?,?)",
+                              (c, p, e.get("note") or "", e.get("added_by") or "",
+                               e.get("added_at") or time.strftime("%Y-%m-%d %H:%M:%S")))
+        for l in snap["links"]:
+            t = _tid(l["topic_slug"])
+            if t:
+                _conn.execute("INSERT INTO topic_link (topic_id, kind, ref, note) VALUES (?,?,?,?)",
+                              (t, l["kind"], l["ref"], l.get("note") or ""))
+        # pass 3: PRESERVE post-checkpoint captures; recover any the groom removed
+        preserved = recovered = 0
+        for r in _conn.execute("SELECT id, slug, state, merged_into FROM topic").fetchall():
+            if r["slug"] in snap_topics:
+                continue
+            preserved += 1
+            if r["state"] in ("pruned", "expired") or r["merged_into"]:
+                _conn.execute("UPDATE topic SET state='open', merged_into=NULL WHERE id=?", (r["id"],))
+                _event(r["id"], "reopened", actor, f"restore #{row['id']}: kept a capture the groom removed")
+                recovered += 1
+        _conn.execute("UPDATE groom_checkpoint SET restored_at=datetime('now') WHERE id=?", (row["id"],))
+        _conn.commit()
+    return {"ok": True, "restored_from": row["id"], "checkpoint_at": row["created_at"],
+            "reverted": reverted, "preserved_since": preserved, "recovered": recovered}
 
 
 # ------------------------------------------------------ embeddings ----
@@ -1398,6 +1532,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, find_duplicates(qs.get("band", ["kin"])[0]))
                 if u.path == "/api/topics/groom":
                     return self._json(200, groom_report())
+                if u.path == "/api/topics/checkpoints":   # BEFORE the slug regex below
+                    return self._json(200, list_checkpoints())
                 mget = re.match(r"^/api/topics/([a-z0-9][a-z0-9._-]*)$", u.path)
                 if mget:                             # GET /api/topics/<slug> -> full detail
                     return self._json(200, get_topic(mget.group(1)))
@@ -1473,6 +1609,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, merge_topics(
                     str(body.get("into") or ""), str(body.get("from") or ""), actor,
                     body.get("body")))
+            if u.path == "/api/topics/checkpoint":       # groom undo: drop a restore point
+                return self._json(200, create_checkpoint(actor, str(body.get("label") or "")))
+            if u.path == "/api/topics/restore":          # groom undo: roll back (id omitted = latest)
+                return self._json(200, restore_checkpoint(actor, body.get("id")))
             m = re.match(r"^/api/topics/([a-z0-9-]+)/(state|links|edit|attach)$", u.path)
             if m:
                 slug, op = m.group(1), m.group(2)

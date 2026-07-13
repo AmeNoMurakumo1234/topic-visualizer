@@ -75,6 +75,22 @@ CREATE TABLE IF NOT EXISTS topic_event (
 CREATE INDEX IF NOT EXISTS idx_event_topic ON topic_event(topic_id);
 CREATE INDEX IF NOT EXISTS idx_event_kind  ON topic_event(event);
 
+-- Grooming safety net. A groom is the one bulk, hard-to-eyeball operation, so before it
+-- reshapes the tree it drops a CHECKPOINT: a full logical snapshot of the topic tables.
+-- Restore reverts every pre-existing topic to the snapshot (and un-tombstones anything the
+-- groom merged/pruned), but NEVER deletes a topic captured AFTER the checkpoint - losing a
+-- real capture is the one unforgivable sin, so post-checkpoint arrivals are always kept.
+-- (topic_event is deliberately NOT snapshotted: history stays append-only and honest.)
+CREATE TABLE IF NOT EXISTS groom_checkpoint (
+  id          INTEGER PRIMARY KEY,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  label       TEXT NOT NULL DEFAULT '',
+  actor       TEXT NOT NULL DEFAULT '',
+  restored_at TEXT,                       -- set when this checkpoint was used to roll back
+  snapshot    TEXT NOT NULL               -- JSON {topics:[...], parents:[...], links:[...]}
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_created ON groom_checkpoint(created_at);
+
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

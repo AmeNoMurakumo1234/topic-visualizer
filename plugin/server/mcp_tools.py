@@ -299,6 +299,26 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().groom_report()
 
+    def checkpoint(self, label=""):
+        try:
+            return _http("POST", f"{self.base}/api/topics/checkpoint",
+                         self._p({"label": label, "actor": ACTOR}))
+        except Unreachable:
+            return self._fallback().create_checkpoint(ACTOR, label)
+
+    def checkpoints(self):
+        try:
+            return _http("GET", self._q(f"{self.base}/api/topics/checkpoints"))
+        except Unreachable:
+            return self._fallback().list_checkpoints()
+
+    def restore(self, cid=None):
+        try:
+            return _http("POST", f"{self.base}/api/topics/restore",
+                         self._p({"id": cid, "actor": ACTOR}))
+        except Unreachable:
+            return self._fallback().restore_checkpoint(ACTOR, cid)
+
     def export(self, dir=None, mode="mirror", scope=None):
         try:
             return _http("POST", f"{self.base}/api/topics/export",
@@ -551,6 +571,19 @@ class BoardBackend:
                 "beacons": beacons,
                 "beacon_ratio_warn": bool(live and beacons / live > 0.10)}
 
+    _CKPT_NA = {"error": "groom checkpoints are a sqlite-backend feature - the board keeps its "
+                         "own git-backed history, and board grooming does not reshape the "
+                         "primary tree. Nothing to checkpoint or restore here."}
+
+    def checkpoint(self, label=""):
+        return dict(self._CKPT_NA)
+
+    def checkpoints(self):
+        return {"checkpoints": [], "note": self._CKPT_NA["error"]}
+
+    def restore(self, cid=None):
+        return dict(self._CKPT_NA)
+
     def export(self, dir=None, mode="mirror", scope=None):
         from server import _content_hash
         dest = Path(dir).expanduser() if dir else Path.cwd() / ".topics"
@@ -766,6 +799,27 @@ TOOLS = [
                    "items": {"type": "object", "properties": {
                        "slug": {"type": "string"}, "parent_slug": {"type": "string"}},
                        "required": ["slug", "parent_slug"]}}}}},
+    {"name": "topic_checkpoint",
+     "description": (
+         "Drop a restore point - a full snapshot of the tree. ALWAYS call this as the FIRST step "
+         "of a groom, before any merge/reparent/prune, so the human can undo a reshape they dislike. "
+         "Cheap; the newest 15 are kept. Returns {id, created_at, topics}. sqlite backend only."),
+     "inputSchema": {"type": "object", "properties": {
+         "label": {"type": "string", "description": "e.g. 'pre-groom 2026-07-13'"}}}},
+    {"name": "topic_checkpoints",
+     "description": "List restore points (newest first): id, when, label, topic count, and "
+                    "whether each was already used to restore. Use before topic_restore to pick one.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "topic_restore",
+     "description": (
+         "Undo a groom: roll the tree back to a checkpoint (omit id = the most recent). RECONCILE, "
+         "not wipe - pre-existing topics revert to the snapshot (reparents and merges fully reverse, "
+         "merged-away topics return), but any topic CAPTURED AFTER the checkpoint is KEPT, never "
+         "discarded (a real capture is never lost; a groom-created hub may linger empty). Returns "
+         "{reverted, preserved_since, recovered}. Tell the human what reverts and what is kept before "
+         "you call it. sqlite backend only."),
+     "inputSchema": {"type": "object", "properties": {
+         "id": {"type": "integer", "description": "checkpoint id; omit for the latest"}}}},
     {"name": "topic_groom_report",
      "description": "Seam vital signs + capture calibration (expiry rates per actor "
                     "where available). Read during a grooming round; adjust your "
@@ -895,6 +949,12 @@ def _call(name: str, args: dict) -> dict:
         return _single_or_batch(b, args, _attach_one)
     if name == "topic_reparent":
         return _single_or_batch(b, args, _reparent_one)
+    if name == "topic_checkpoint":
+        return b.checkpoint(str(args.get("label") or ""))
+    if name == "topic_checkpoints":
+        return b.checkpoints()
+    if name == "topic_restore":
+        return b.restore(args.get("id"))
     if name == "topic_groom_report":
         return b.groom()
     if name == "topic_doctor":

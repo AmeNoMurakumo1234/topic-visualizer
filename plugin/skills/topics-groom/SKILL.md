@@ -16,6 +16,15 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
 > searches, and **`topic_get`** reads a topic's full body/question/avenues/conversions
 > before you decide merge/convert/prune/keep. Reach for them in steps 1 and 4.
 
+0. **Checkpoint FIRST - always, before you change anything.** A groom is the one bulk,
+   hard-to-eyeball edit, so it opens with a safety net: call **`topic_checkpoint`** (label it,
+   e.g. `pre-groom 2026-07-13`) before the first merge/reparent/prune. That snapshot is the
+   human's undo. If they dislike the result, **`topic_restore`** (or the visualizer's **Undo last
+   groom** button) rolls the tree back to exactly this point - reparents and merges fully reverse,
+   merged-away topics return, and anything captured DURING the groom is KEPT, never discarded. No
+   checkpoint, no reshape: this step is not optional. (Checkpoints are a sqlite-backend feature;
+   on the board backend the tool returns "not supported" and you simply groom without one.)
+
 1. **Duplicates and near-misses.** Topics phrased differently but asking the same
    question get merged (keep the better-formed one; note the merge). `topic_list` to see
    them all; `topic_get` to compare two bodies before merging. This is also where the
@@ -82,7 +91,9 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
 7. **Report in one breath.** The groom ends with a two-line summary to the human:
    what merged, what's waiting on expiry choices, beacon count, tree size trend.
    Tree GREW a lot? Check capture threshold discipline. Tree static and unserved?
-   Check the serving ritual - storing without serving is the trap (CHARTER).
+   Check the serving ritual - storing without serving is the trap (CHARTER). Close by
+   reminding them the reshape is reversible: `topic_restore` (or the **Undo last groom**
+   button) rolls back to the checkpoint you took in step 0, keeping anything captured since.
 
 ## The metric that matters
 

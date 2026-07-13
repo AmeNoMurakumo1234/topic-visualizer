@@ -276,10 +276,64 @@
     (document.querySelector("header") || document.body).insertAdjacentElement("afterend", bar);
   }
 
+  // --- "Undo last groom" --------------------------------------------------------------------
+  // One deterministic rollback to the checkpoint taken before the last groom. Capability-gated on
+  // adapter.restore() (sqlite backend only; the board adapter omits it, so no button appears).
+  // The rollback is a RECONCILE: reparents/merges reverse, but anything captured since is KEPT.
+  function setupGroomUndo() {
+    const adapter = window.TopicsAdapter;
+    if (demo || typeof adapter.restore !== "function") return;
+    const host = document.querySelector("header") || document.body;
+    const box = document.createElement("div");
+    box.className = "hgroup hundo";
+    box.style.cssText = "display:flex;align-items:center;margin-left:8px";
+    box.innerHTML = '<button id="undogroom" title="Roll the tree back to the checkpoint taken '
+      + 'before the last groom (anything captured since is kept)" style="cursor:pointer;'
+      + 'background:none;border:1px solid currentColor;border-radius:4px;color:inherit;font:inherit;'
+      + 'padding:2px 8px;opacity:.7">⟲ Undo last groom</button>';
+    host.appendChild(box);
+    const modal = document.getElementById("confirm"), cbox = document.getElementById("confirmBox");
+    const esc = core.esc || (s => String(s));
+    const close = () => { modal.className = ""; };
+    box.querySelector("#undogroom").addEventListener("click", async () => {
+      const data = await adapter.checkpoints();
+      const cps = (data && data.checkpoints) || [];
+      if (!cps.length) {
+        cbox.innerHTML = "<h3>Nothing to undo</h3><p>No groom checkpoint has been recorded for "
+          + "this project yet — one is created at the start of a groom.</p><button class='no'>OK</button>";
+        modal.className = "open"; cbox.querySelector(".no").onclick = close; return;
+      }
+      const latest = cps[0];
+      const when = (latest.created_at || "").replace("T", " ").slice(0, 16);
+      cbox.innerHTML = "<h3>Undo last groom?</h3>"
+        + `<p>Roll the tree back to the checkpoint from <b>${esc(when)}</b>`
+        + (latest.label ? ` (&ldquo;${esc(latest.label)}&rdquo;)` : "")
+        + ` — a snapshot of ${latest.topics} topic(s).</p>`
+        + "<p style='opacity:.8'>Reparents and merges since then are reversed. "
+        + "<b>Anything captured during the groom is kept</b> — nothing is deleted.</p>"
+        + "<button class='go'>Undo the groom</button><button class='no'>Cancel</button>";
+      modal.className = "open";
+      cbox.querySelector(".no").onclick = close;
+      cbox.querySelector(".go").onclick = async () => {
+        const res = await adapter.restore(null, "human");
+        close();
+        await core.load();
+        cbox.innerHTML = (res && res.ok)
+          ? "<h3>Groom undone</h3><p>" + `${res.reverted} topic(s) restored to the checkpoint`
+            + (res.preserved_since ? `; <b>${res.preserved_since} captured since were kept</b>` : "")
+            + (res.recovered ? `; ${res.recovered} recovered` : "")
+            + ".</p><button class='no'>OK</button>"
+          : "<h3>Undo failed</h3><p>" + esc((res && res.error) || "could not reach the store")
+            + "</p><button class='no'>OK</button>";
+        modal.className = "open"; cbox.querySelector(".no").onclick = close;
+      };
+    });
+  }
+
   // validate the stored view (legacy shells stored a/b/c) - never boot into nothing
   const LEGACY = { a: "constellation", b: "lineage", c: "starchart" };
   let saved = localStorage.getItem("topics-view") || "starchart";
   saved = LEGACY[saved] || saved;
   if (!window.TopicsRenderers[saved]) saved = "starchart";
-  core.load().then(() => { show(saved); setupLiveRefresh(); checkDoctor(); });
+  core.load().then(() => { show(saved); setupLiveRefresh(); setupGroomUndo(); checkDoctor(); });
 })();
