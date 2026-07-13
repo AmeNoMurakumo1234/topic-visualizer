@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.35.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.36.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -216,6 +216,9 @@ def open_db(path: str) -> sqlite3.Connection:
     p.parent.mkdir(parents=True, exist_ok=True)     # a real, user-owned home path
     conn = sqlite3.connect(str(p), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # if the MCP direct-sqlite fallback opens this file from a second process while the server is
+    # mid-write, wait for the lock instead of erroring out immediately with 'database is locked'
+    conn.execute("PRAGMA busy_timeout=4000")
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
     _ensure_columns(conn)
     conn.commit()
@@ -469,9 +472,29 @@ def _wire_imported(obj: dict, local_slug: str, remap: dict) -> None:
                             (remap.get(pslug, pslug),)).fetchone()
         return row["id"] if row else None
 
+    def _would_cycle(parent):
+        # would making `parent` a parent of tid create a cycle? Walk every ancestor path up from
+        # parent (primary + extra edges); reaching tid = a cycle. A hostile/hand-authored .topics dir
+        # could otherwise commit A<->B straight into topic.parent_id. The order-independence holds:
+        # the edge that CLOSES a cycle is wired after the other exists, so this catches it.
+        frontier, seen = [parent], set()
+        while frontier:
+            cur = frontier.pop()
+            if cur == tid:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            nxt = _conn.execute("SELECT parent_id FROM topic WHERE id=?", (cur,)).fetchone()
+            if nxt and nxt["parent_id"] is not None:
+                frontier.append(nxt["parent_id"])
+            frontier += [x["parent_id"] for x in _conn.execute(
+                "SELECT parent_id FROM topic_parent WHERE topic_id=?", (cur,))]
+        return False
+
     for i, pslug in enumerate(obj.get("parents") or []):
         pid = resolve(pslug)
-        if pid is None or pid == tid:
+        if pid is None or pid == tid or _would_cycle(pid):
             continue
         if i == 0:
             _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (pid, tid))
@@ -770,6 +793,11 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
             return _fail("no checkpoint to restore")
         snap = json.loads(row["snapshot"])
         snap_topics = {t["slug"]: t for t in snap["topics"]}
+
+        # SAFETY: snapshot the current (pre-restore) state FIRST, so an accidental restore is itself
+        # recoverable (restoring this auto-checkpoint redoes the groom). Labeled 'auto:' so the Undo
+        # button skips it when picking the last GROOM to revert. Bounded by the 15 retention.
+        create_checkpoint(actor, f"auto: before restore of #{row['id']}")
 
         def _tid(slug):
             r = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()

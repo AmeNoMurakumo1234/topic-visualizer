@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.36.0 - 2026-07-13 - Audit follow-ups: restore is undoable, safer locks, import cycle guard
+
+Acting on the three flagged audit items (owner-directed):
+
+- **Restore is now itself recoverable.** A restore auto-checkpoints the current (pre-restore) state
+  first (labeled `auto:`), so an accidental "Undo last groom" can be undone - restoring that
+  auto-checkpoint redoes the groom. The Undo button skips `auto:` checkpoints when picking the last
+  groom to revert. (The button's two-click confirm dialog already guards the click itself; this adds
+  a recoverable safety net behind it.)
+- **`busy_timeout=4000`** on every connection, so the MCP direct-sqlite fallback waits for a lock
+  instead of erroring `database is locked` when it opens a file the server is mid-writing. (The fuller
+  lock-held-during-embedder-I/O refactor stays deferred - too delicate to do without care.)
+- **Import cycle guard**: `_wire_imported` now walks the DAG before setting a parent, so a
+  hand-authored `.topics` dir can't commit a primary-parent cycle (order-independent - the edge that
+  closes a cycle is always caught).
+
+Owner declined (with auto-checkpoint making restore reversible, these are lower-stakes): preserving
+post-checkpoint conversions through a restore, and narrowing pass-3 recovery to merges only.
+
 ## 0.35.0 - 2026-07-13 - Audit fixes: 7 confirmed bugs fixed (each verified), 3 design items flagged
 
 A Fable-5 read-only audit surfaced ~10 issues; each was verified against the actual code and

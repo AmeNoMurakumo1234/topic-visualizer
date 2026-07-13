@@ -759,6 +759,26 @@ class SeamTests(unittest.TestCase):
                          "a see_also between siblings is NOT a reparent hint")
 
 
+    def test_37_restore_is_itself_recoverable(self):
+        """Auto-checkpoint before restore: an accidental undo is recoverable - restoring the 'auto:'
+        safety checkpoint redoes the groom."""
+        proj = "rr"
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "rr: A"}, {"title": "rr: B"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        A, B = r["rr: A"], r["rr: B"]
+        call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai", "label": "pre-groom"})
+        call(f"/api/topics/{A}/edit?project={proj}", {"actor": "ai", "parent_slug": B})   # groom
+        call(f"/api/topics/restore?project={proj}", {"actor": "human"})                    # undo
+        self.assertIsNone(call(f"/api/topics/{A}?project={proj}")["topic"]["parent_slug"])
+        auto = [c for c in call(f"/api/topics/checkpoints?project={proj}")["checkpoints"]
+                if str(c["label"]).startswith("auto:")]
+        self.assertTrue(auto, "restore created a safety auto-checkpoint")
+        call(f"/api/topics/restore?project={proj}", {"actor": "human", "id": auto[0]["id"]})  # redo
+        self.assertEqual(call(f"/api/topics/{A}?project={proj}")["topic"]["parent_slug"], B,
+                         "restoring the auto-checkpoint redoes the groom (accidental undo recovered)")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

@@ -297,7 +297,9 @@
     const close = () => { modal.className = ""; };
     box.querySelector("#undogroom").addEventListener("click", async () => {
       const data = await adapter.checkpoints();
-      const cps = (data && data.checkpoints) || [];
+      // skip 'auto:' safety checkpoints (taken before a restore) so "Undo last groom" targets the
+      // last real GROOM, not the pre-restore snapshot
+      const cps = ((data && data.checkpoints) || []).filter(c => !String(c.label || "").startsWith("auto:"));
       if (!cps.length) {
         cbox.innerHTML = "<h3>Nothing to undo</h3><p>No groom checkpoint has been recorded for "
           + "this project yet — one is created at the start of a groom.</p><button class='no'>OK</button>";
