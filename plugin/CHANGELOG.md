@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.32.0 - 2026-07-13 - Grooming shapes it WELL: depth-first, avenue-aware, coherence-checked
+
+- A consumer audit of a real 55->60-topic groom found the loop chasing a WIDTH number while
+  ignoring the depth signal already in the graph: an avenue (extra parent) between two siblings
+  usually means one topic is a sub-question or complement of the other. Four fixes so the groom
+  shapes the tree *well*, not just to-metric:
+  - **Depth over width** (skill): the shape step leads with the relationships in the graph, not the
+    3-7 fan. Real relational depth OUTRANKS the fan target - width-first was producing shallow, wide,
+    incoherent hubs that passed the metric and still read as "weird."
+  - **Avenue-between-siblings => reparent** (report + skill): `topic_groom_report` gains
+    `coherence.reparent_hints` - every avenue whose two ends share a primary parent, i.e. a child
+    hiding as a peer - to work FIRST with `topic_reparent`.
+  - **Coherence, not just width** (report + skill): `coherence.possible_buckets` flags junk-drawer
+    parents (a bucket title, not a question); the skill adds the judgment checks the report can't
+    compute - mixed-altitude/voice siblings, a theme split across siblings, two clashing taxonomies.
+  - **Propose-then-confirm** (skill): the taxonomy reshape now DRAFTS the hub/reparent plan and puts
+    the organizing axis to the human to ratify BEFORE applying - the metric can't encode "this looks
+    weird." The mechanical steps (dedup, conversions, expiry) don't need it; the subjective reshape does.
+- (Rendering a genuine second parent AS a parent, not a throwaway dashed avenue - the audit's 4th
+  point - is a separate renderer pass, next.)
+
 ## 0.31.0 - 2026-07-13 - Grooming undo: checkpoint + restore (never lose a capture)
 
 - Grooming is the one bulk, hard-to-eyeball edit, so it now opens with a safety net and can be

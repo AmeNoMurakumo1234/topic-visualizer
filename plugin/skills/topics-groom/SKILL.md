@@ -49,37 +49,61 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    items minted, links back)? An extracted-but-unrecorded conversion is a decision
    dying in a notebook - the exact disease this system exists to cure. Fix on sight.
 
-5. **Shape the tree - toward 3-7 children per node.** A tree that is honest AND legible
-   carries most nodes at roughly 3-7 children (a little more or less is good - organic
-   variation reads better than a sterile uniform tree). A node much WIDER than that is a
-   signal, and it means one of two things, often both:
-   - **its children are the same topic** -> MERGE (step 1). A wide fan is very often just
-     duplicates the tree never collapsed - the single biggest lever on shape.
-   - **sub-structure is missing** -> NEST: `topic_add` a new intermediate hub (its `parent_slug`
-     sets a real primary parent at birth), then `topic_reparent` the children that share a REAL
-     theme under it. Only when the facet is undeniable - never depth for depth's sake; false
-     precision is its own rot.
+5. **Shape the tree - DEPTH first, width second.** The trap is a width-first rule ("aim for 3-7
+   children"): an agent hits the number by inventing sibling hubs and flattening everything under
+   them, producing a shallow, wide, incoherent tree that PASSES the metric and still reads as
+   "weird." Lead instead with the relationships already in the graph.
 
-   Then **reparent the mis-placed** with `topic_reparent {slug, parent_slug}` (batch:
-   `items:[{slug,parent_slug}, ...]`): a topic captured under whatever conversation birthed it
-   often sits far from its true home (chronology, not meaning) - move its PRIMARY parent to where
-   it belongs. This is safe to do at GROOM time precisely because you hold the whole tree in view;
-   the capture moment (correctly) does not, which is why it plants flat.
+   > **Propose the axis, THEN apply - never impose your own taxonomy silently.** The reshape (new
+   > hubs, reparents, merges) applies a POINT OF VIEW about how the tree should be organized, and the
+   > human's "this looks weird" is precisely the judgment the metric can't encode. So DRAFT the plan
+   > first - "I'd nest X and Y under #110, merge A into B, add one 'floor' hub; here's the organizing
+   > axis" - put it to the human, let them ratify or adjust the AXIS, and THEN apply. Similarity
+   > proposes; a human ratifies the axis. The step-0 checkpoint makes trialing safe, but ratify the
+   > SHAPE before you spend the human's trust on it. (The mechanical steps - merging obvious
+   > duplicates, recording conversions, expiry choices - don't need this; the TAXONOMY reshape does.)
 
-   > **Reshape with `topic_reparent`, NOT `topic_attach`.** `topic_attach` only overlays an extra
-   > AVENUE (a dashed cross-link in the multi-parent DAG) - the member stays a root, the primary
-   > spine and the fan-out metric don't move, and the visualizer shows a hub with dangling links
-   > and zero real children. Moving a topic's home is `topic_reparent` (sqlite backend; the board's
-   > primary parent lives in an immutable post body). `topic_add`'s `parent_slug` already sets a
-   > proper primary parent, so this gap only ever bites EXISTING topics during a groom.
+   **The avenue IS the depth signal - use it first.** An extra parent (avenue) between two SIBLINGS
+   almost always means one topic is a sub-question or complement of the other - so it belongs UNDER
+   its sibling, not beside it. `topic_groom_report`'s `coherence.reparent_hints` lists exactly these
+   pairs (child + suggested_parent + the avenue's note). Work them FIRST:
+   `topic_reparent {slug: child, parent_slug: suggested_parent}`. **Real relational depth OUTRANKS
+   the 3-7 fan target** - a #110-centered branch with its sub-questions nested reads right; a flat
+   hub of ten "peers" that are actually related does not.
 
-   **Depth follows the data**
-   - surface however deep the real structure runs, never manufacture layers to look tree-ish.
-   Semantic similarity PROPOSES merges and clusters; your JUDGMENT decides which are real (and
-   an autonomous similarity-only regroup is worse than no grooming - it picks the wrong axis).
-   `topic_groom_report` flags the widest fans and their sizes - start the shape pass there.
-   Also: orphans whose parent was pruned but who survived - verify that was intended; family
-   hues still map to real thematic families - fix the strays.
+   **Then the rest of shape, in order:**
+   - **MERGE duplicates** (step 1) - a wide fan is very often just twins the tree never collapsed;
+     the single biggest lever, and it deepens by removing false peers.
+   - **NEST only REAL facets**: `topic_add` a hub (its `parent_slug` sets a real primary parent at
+     birth), then `topic_reparent` the children that share an undeniable theme under it. **Depth
+     follows the data** - surface however deep the real structure runs, never manufacture layers to
+     look tree-ish; false precision is its own rot.
+   - **REPARENT the mis-placed** (`topic_reparent {slug, parent_slug}`, batch `items:[...]`): a topic
+     captured under whatever conversation birthed it often sits far from its true home (chronology,
+     not meaning). Safe at groom time because you hold the whole tree in view; capture (correctly)
+     does not.
+
+   **Coherence, not just width** (`coherence` in the report + your own read - width is necessary,
+   never sufficient):
+   - **avenue-between-siblings** -> reparent (above); the report computes these.
+   - **junk-drawer nodes** (`possible_buckets`): a parent whose title is a BUCKET, not a question
+     ("conversations we haven't had", "misc") hides a real sub-cluster - open it, reparent the
+     members to true homes.
+   - **mixed-altitude / mixed-voice siblings** (judgment - the report can't compute it): children at
+     different levels of abstraction, or in different phrasings, under one parent -> re-level them.
+   - **one theme split across two siblings** (judgment): the same story under two hubs, or two
+     clashing taxonomies at one level (your invented hubs beside pre-existing territory nodes) ->
+     merge the hubs / conform to ONE axis.
+
+   > **Reshape with `topic_reparent`, NOT `topic_attach`.** attach only overlays an extra avenue (a
+   > cross-link) - the member stays put and the spine doesn't move. Moving a topic's home is
+   > `topic_reparent` (sqlite backend; the board's primary parent lives in an immutable post body).
+   > `topic_add`'s `parent_slug` sets a real primary parent, so the flat-plant gap only bites
+   > EXISTING topics during a groom.
+
+   Semantic similarity PROPOSES; your JUDGMENT decides which clusters are real - an autonomous
+   similarity-only regroup is worse than no grooming (it picks the wrong axis). Also: orphans whose
+   parent was pruned but survived - verify that was intended; family hues still map to real families.
 
 6. **Calibration feedback (the loop teaching both minds).** topic_groom_report
    returns per-actor capture outcomes where the backend records them - the sqlite store does; the board backend reports only state counts ("of your last 20 captures: 14 became topics,

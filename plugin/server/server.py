@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.31.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.32.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1415,10 +1415,44 @@ def groom_report() -> dict:
         root_count = _conn.execute(
             "SELECT COUNT(*) c FROM topic WHERE parent_id IS NULL "
             "AND state IN ('seedling','open','discussed')").fetchone()["c"]
+        # COHERENCE lens (width is necessary, not sufficient). The strongest depth signal is
+        # already in the graph: an AVENUE between two SIBLINGS. The extra edge usually means one
+        # topic is a sub-question/complement of the other - so it belongs UNDER its sibling, not
+        # beside it. This is the single highest-value reshape hint, and it drives DEPTH.
+        reparent_hints = _conn.execute(
+            "SELECT c.slug AS child, c.title AS child_title, "
+            "       p.slug AS suggested_parent, p.title AS parent_title, tp.note AS avenue_note "
+            "FROM topic_parent tp "
+            "JOIN topic c ON c.id = tp.topic_id "
+            "JOIN topic p ON p.id = tp.parent_id "
+            "WHERE c.parent_id IS NOT NULL AND c.parent_id = p.parent_id "  # same primary parent = siblings
+            "  AND c.state IN ('seedling','open','discussed') "
+            "  AND p.state IN ('seedling','open','discussed') LIMIT 20").fetchall()
+        # junk-drawer heuristic (ADVISORY, fuzzy on purpose): a parent whose title is a BUCKET,
+        # not a question - it hides real sub-clusters the flat groom never surfaced.
+        bucket_re = re.compile(
+            r"\b(misc|other|various|assorted|general|uncategorized|bucket|dumping|things|stuff|"
+            r"notes|todo|to.do|backlog|parking|catch.?all|haven'?t had|conversations we)\b", re.I)
+        parents_kids = _conn.execute(
+            "SELECT p.slug, p.title, COUNT(*) AS children FROM topic t "
+            "JOIN topic p ON p.id = t.parent_id WHERE t.state IN ('seedling','open','discussed') "
+            "GROUP BY t.parent_id HAVING children >= 2").fetchall()
+        buckets = [{"slug": r["slug"], "title": r["title"], "children": r["children"]}
+                   for r in parents_kids
+                   if bucket_re.search(r["title"] or "") and "?" not in (r["title"] or "")]
     return {"health": h,
-            "fan_out": {"target": "3-7 children per node; wider -> merge and/or nest",
+            "fan_out": {"target": "3-7 children is a SOFT band, not the goal - real relational "
+                                  "DEPTH outranks it (see coherence.reparent_hints). Wider MAY "
+                                  "mean merge and/or nest.",
                         "root_count": root_count,
                         "widest": [dict(r) for r in wide]},
+            "coherence": {
+                "note": "Width is necessary, never sufficient. Prefer real relational depth over "
+                        "hitting the fan target. Mixed-altitude / mixed-voice siblings and a theme "
+                        "split across siblings need JUDGMENT - the report can't compute them; the "
+                        "topics-groom skill lists what to look for.",
+                "reparent_hints": [dict(r) for r in reparent_hints],
+                "possible_buckets": buckets},
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
 

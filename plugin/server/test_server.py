@@ -621,6 +621,24 @@ class SeamTests(unittest.TestCase):
         self.assertGreaterEqual(r["preserved_since"], 1)
 
 
+    def test_29_groom_report_avenue_between_siblings(self):
+        """Coherence lens: an avenue between two SIBLINGS surfaces as a reparent hint - the depth
+        signal the width-first groom used to walk past."""
+        proj = "coh"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "coh: hub"}, {"title": "coh: sibling A"}, {"title": "coh: sibling B"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        hub, A, B = rows["coh: hub"], rows["coh: sibling A"], rows["coh: sibling B"]
+        call(f"/api/topics/{A}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})
+        call(f"/api/topics/{B}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})
+        # avenue: B is also reachable from A (its complement) -> B is probably a CHILD of A
+        call(f"/api/topics/{B}/attach?project={proj}",
+             {"actor": "ai", "parent_slug": A, "note": "the complement of A"})
+        rpt = call(f"/api/topics/groom?project={proj}")
+        pairs = [(h["child"], h["suggested_parent"]) for h in rpt["coherence"]["reparent_hints"]]
+        self.assertIn((B, A), pairs, "avenue between siblings B<->A surfaces as 'reparent B under A'")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,
