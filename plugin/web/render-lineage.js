@@ -8,11 +8,13 @@ window.TopicsRenderers.lineage = (function () {
   const W = 220, GX = 80, GY = 18, ROWH = 74;
   const SVG_NS = "http://www.w3.org/2000/svg";
   let core, stage, world, wires, cards;
-  let tx = 20, ty = 20, scale = 1;
+  let tx = 20, ty = 20, scale = 1, ac = null;
   let critsRevealed = false;               // reveal beacons once per mount (initial state)
 
   function mount(container, coreRef) {
     core = coreRef; stage = container;
+    if (ac) ac.abort();
+    ac = new AbortController();
     critsRevealed = false;
     stage.innerHTML = `<div class="tv-world"><svg class="tv-wires"></svg><div class="tv-cards"></div></div>`;
     world = stage.querySelector(".tv-world");
@@ -37,13 +39,13 @@ window.TopicsRenderers.lineage = (function () {
       stage.addEventListener("pointermove", mv);
       stage.addEventListener("pointerup", up);
       stage.addEventListener("pointercancel", up);
-    });
+    }, { signal: ac.signal });
     stage.addEventListener("wheel", ev => { ev.preventDefault();
       const rect = stage.getBoundingClientRect();
       const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
       const next = Math.max(0.3, Math.min(2.5, scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
       tx = mx - (mx - tx) * (next / scale); ty = my - (my - ty) * (next / scale);
-      scale = next; apply(); }, { passive: false });
+      scale = next; apply(); }, { passive: false, signal: ac.signal });
   }
 
   const apply = () => { if (world) world.style.transform =
@@ -163,7 +165,7 @@ window.TopicsRenderers.lineage = (function () {
                  .map(x => x.slug).join(", "))}">&#8618; ${n.extraParents.length
                  + (n.parent ? 1 : 0)} in</span>` : ""}
           ${(core.xlinks || []).some(x => x.to === n)
-            ? `<span class="chip xlink" title="extra avenue INTO ${core.esc((core.xlinks || [])
+            ? `<span class="chip xlink" title="extra avenue OUT to ${core.esc((core.xlinks || [])
                  .filter(x => x.to === n).map(x => x.from.slug).join(", "))}">&#8618; ${
                  (core.xlinks || []).filter(x => x.to === n).length} out</span>` : ""}
         </div>
@@ -265,7 +267,10 @@ window.TopicsRenderers.lineage = (function () {
     core._centerOn = null;
   }
 
-  function unmount() { if (stage) stage.innerHTML = ""; stage = null; }
+  function unmount() {
+    if (ac) { ac.abort(); ac = null; }   // drop the pan/zoom listeners on the shared container
+    if (stage) stage.innerHTML = ""; stage = null;
+  }
 
   return { mount, render, unmount,
            legend: `<span style="color:#f0b24a">&#9632;</span> root &nbsp;

@@ -779,6 +779,26 @@ class SeamTests(unittest.TestCase):
                          "restoring the auto-checkpoint redoes the groom (accidental undo recovered)")
 
 
+    def test_38_undo_does_not_ping_pong(self):
+        """AUDIT #1 (fix-injected last round): after an undo, "restore latest" must still target the
+        pre-groom GROOM checkpoint, not the auto: safety snapshot - else repeated undos ping-pong."""
+        proj = "pp"
+        call(f"/api/topics?project={proj}", {"actor": "ai",
+             "topics": [{"title": "pp: A"}, {"title": "pp: B"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        A, B = r["pp: A"], r["pp: B"]
+        call(f"/api/topics/checkpoint?project={proj}", {"actor": "ai", "label": "pre-groom"})
+        call(f"/api/topics/{A}/edit?project={proj}", {"actor": "ai", "parent_slug": B})   # groom
+        call(f"/api/topics/restore?project={proj}", {"actor": "human"})                    # undo 1
+        self.assertIsNone(call(f"/api/topics/{A}?project={proj}")["topic"]["parent_slug"])
+        call(f"/api/topics/restore?project={proj}", {"actor": "human"})                    # undo 2 (latest)
+        self.assertIsNone(call(f"/api/topics/{A}?project={proj}")["topic"]["parent_slug"],
+                          "restore latest stays on the pre-groom checkpoint, not the auto: snapshot")
+        cps = call(f"/api/topics/checkpoints?project={proj}")["checkpoints"]
+        self.assertTrue(any(c["auto"] for c in cps), "auto flag surfaced for safety checkpoints")
+        self.assertTrue(any(not c["auto"] for c in cps), "the real groom checkpoint is auto=False")
+
+
 class VersionCoherenceTests(unittest.TestCase):
     """The version lives in THREE files that must move together (they have silently drifted before -
     plugin.json 0.10.0 while marketplace.json was still 0.9.0). This test makes that drift a red test,

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.37.0 - 2026-07-13 - Second-audit fixes: 8 more (incl. one fix-injected bug), 2 flagged
+
+A second Fable-5 pass verified the first round's fixes (clean bills on the restore/reconcile core and
+the sweeps) and found fresh integration-seam issues. Each verified before changing code.
+
+- **[HIGH] "Undo last groom" restored the WRONG checkpoint after any prior restore** - a bug INJECTED
+  by 0.36's auto-checkpoint: the button filtered `auto:` snapshots for *display*, but the server's
+  restore-latest still picked the newest *including* `auto:`, so a second undo silently re-applied the
+  groom while reporting "Groom undone." Now the safety snapshot carries a structural `auto=1` flag
+  (new column); restore-latest skips `auto=1`, and the button passes the explicit checkpoint id it showed.
+- **[HIGH] A resurrected merged topic was hard-deleted 14 days later** - `expire_merged` swept on
+  `merged_into` alone; a topic resurrected from the archive still carries `merged_into` but is LIVE.
+  The sweep now requires `state='pruned'`, so only real tombstones age out.
+- **[MED-HIGH] Star Chart piled at the origin after a live-refresh while focused** - render kept the
+  stale focus object across `core.load()`; now it re-resolves to the current node.
+- **[MED] All three renderers leaked pan/zoom listeners** on the shared container (view-switching
+  stacked handlers -> double-zoom + dead-listener errors). Each mount now uses an AbortController,
+  aborted on unmount.
+- **[MED] A scoped export in mirror mode deleted every out-of-scope file** (a committed full mirror
+  gone in one call). A scoped export is now always additive.
+- **[MED-LOW] Restore's slug-reuse guard mishandled ISO-`T` timestamps** (could skip a genuine
+  pre-checkpoint topic) - normalized before comparison.
+- **[LOW] `BoardBackend.add` permanently rebound `self.author`** onto every later board op - now a
+  per-call local. Cosmetic: lineage's avenue-out chip tooltip said "INTO".
+
+Flagged, not applied (need a decision / careful isolated pass): export/import loses `rel`/`role`/`tags`
+and can promote an avenue to primary (needs a versioned export format, not a patch); and `restore_checkpoint`
+lacks the try/rollback `expire_merged` got - low-probability, but re-indenting ~95 lines of the
+cardinal-invariant path risks injecting a bug, so it's deferred to a careful refactor.
+
 ## 0.36.0 - 2026-07-13 - Audit follow-ups: restore is undoable, safer locks, import cycle guard
 
 Acting on the three flagged audit items (owner-directed):

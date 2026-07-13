@@ -34,10 +34,12 @@ window.TopicsRenderers.starchart = (function () {
 
   let core, stage, view, orbitsG, fogG, edgesG, nodesG, crumbsEl;
   let focus = null, visible = [];
-  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null;
+  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, ac = null;
 
   function mount(container, coreRef) {
     core = coreRef; stage = container;
+    if (ac) ac.abort();
+    ac = new AbortController();
     stage.innerHTML = `<div class="tv-crumbs"></div>
       <svg>${DEFS}<g class="tv-view"><g class="tv-orbits"></g><g class="tv-fog"></g>
       <g class="tv-edges"></g><g class="tv-nodes"></g></g></svg>`;
@@ -67,13 +69,13 @@ window.TopicsRenderers.starchart = (function () {
       stage.addEventListener("pointermove", mv);
       stage.addEventListener("pointerup", up);
       stage.addEventListener("pointercancel", up);
-    });
+    }, { signal: ac.signal });
     stage.addEventListener("wheel", ev => { ev.preventDefault();
       const rect = stage.getBoundingClientRect();
       const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
       const next = Math.max(0.3, Math.min(3, scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
       tx = mx - (mx - tx) * (next / scale); ty = my - (my - ty) * (next / scale);
-      scale = next; apply(); }, { passive: false });
+      scale = next; apply(); }, { passive: false, signal: ac.signal });
   }
 
   const apply = () => { if (view) { view.setAttribute("transform",
@@ -86,7 +88,9 @@ window.TopicsRenderers.starchart = (function () {
 
   function render() {
     if (!stage) return;
-    if (focus && !core.bySlug[focus.slug]) focus = null;   // focus pruned away
+    // re-resolve focus to the CURRENT node object: core.load() rebuilds every node, and the stale
+    // object has no .cur, so position() would skip every transform and pile the chart at (0,0).
+    if (focus) focus = core.bySlug[focus.slug] || null;    // gone (pruned) -> back to the core view
     visible = [];
     const place = (n, depth, a0, a1) => {
       const mid = (a0 + a1) / 2, r = RINGS[Math.min(depth, MAXDEPTH)];
@@ -271,6 +275,7 @@ window.TopicsRenderers.starchart = (function () {
   function unmount() {
     cancelAnimationFrame(animId);
     cancelAnimationFrame(labelRaf); labelRaf = null;
+    if (ac) { ac.abort(); ac = null; }   // drop the pan/zoom listeners on the shared container
     focus = null;
     if (stage) stage.innerHTML = ""; stage = null;
   }

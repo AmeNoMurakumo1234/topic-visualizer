@@ -297,9 +297,9 @@
     const close = () => { modal.className = ""; };
     box.querySelector("#undogroom").addEventListener("click", async () => {
       const data = await adapter.checkpoints();
-      // skip 'auto:' safety checkpoints (taken before a restore) so "Undo last groom" targets the
-      // last real GROOM, not the pre-restore snapshot
-      const cps = ((data && data.checkpoints) || []).filter(c => !String(c.label || "").startsWith("auto:"));
+      // skip safety checkpoints (auto=1, taken before a restore) so "Undo last groom" targets the
+      // last real GROOM, not the pre-restore snapshot (structural flag, not a stringly label match)
+      const cps = ((data && data.checkpoints) || []).filter(c => !c.auto);
       if (!cps.length) {
         cbox.innerHTML = "<h3>Nothing to undo</h3><p>No groom checkpoint has been recorded for "
           + "this project yet — one is created at the start of a groom.</p><button class='no'>OK</button>";
@@ -317,7 +317,7 @@
       modal.className = "open";
       cbox.querySelector(".no").onclick = close;
       cbox.querySelector(".go").onclick = async () => {
-        const res = await adapter.restore(null, "human");
+        const res = await adapter.restore(latest.id, "human");   // the checkpoint we SHOWED, not "newest"
         close();
         await core.load();
         cbox.innerHTML = (res && res.ok)

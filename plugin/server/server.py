@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.36.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.37.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -206,6 +206,12 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE topic ADD COLUMN merged_into TEXT")
     if "role" not in cols:                            # 'topic' | 'hub' (groom scaffolding)
         conn.execute("ALTER TABLE topic ADD COLUMN role TEXT NOT NULL DEFAULT 'topic'")
+    try:
+        ccols = {r["name"] for r in conn.execute("PRAGMA table_info(groom_checkpoint)")}
+        if ccols and "auto" not in ccols:             # safety-checkpoint marker (before-restore)
+            conn.execute("ALTER TABLE groom_checkpoint ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass                                          # table not created yet (schema.sql runs first)
     xcols = {r["name"] for r in conn.execute("PRAGMA table_info(topic_parent)")}
     if "rel" not in xcols:                            # co_parent | see_also (avenue relationship)
         conn.execute("ALTER TABLE topic_parent ADD COLUMN rel TEXT NOT NULL DEFAULT 'co_parent'")
@@ -417,12 +423,16 @@ def export_topics(dir=None, mode="mirror", scope=None, project=None) -> dict:
                 {"schema_version": 1, "source_project": project,
                  "count": len(exported), "topics": sorted(exported)})
     deleted = 0
-    if mode == "mirror":
+    # mirror deletes stale files - but ONLY for a FULL export. A SCOPED export is a subset, so
+    # mirroring it would wipe every out-of-scope file (a committed full mirror gone in one call);
+    # a scoped export is always additive.
+    if mode == "mirror" and scope is None:
         for f in dest.glob("*.json"):
             if f.name != "index.json" and f.stem not in exported:
                 f.unlink(); deleted += 1
     return {"dir": str(dest), "written": len(exported), "deleted": deleted,
-            "count": len(exported), "mode": mode}
+            "count": len(exported), "mode": "snapshot (scoped)" if scope else mode,
+            **({"note": "scoped export is additive; out-of-scope files kept"} if scope else {})}
 
 
 def _local_parent_slugs(tid: int) -> list:
@@ -738,13 +748,14 @@ def _snapshot_payload() -> dict:
     return {"topics": topics, "parents": parents, "links": links}
 
 
-def create_checkpoint(actor: str, label: str = "") -> dict:
-    """Drop a restore point. Grooming calls this BEFORE it reshapes anything."""
+def create_checkpoint(actor: str, label: str = "", auto: bool = False) -> dict:
+    """Drop a restore point. Grooming calls this BEFORE it reshapes anything. auto=True marks a
+    safety snapshot taken before a restore (so "restore latest" skips it)."""
     with _lock:
         payload = _snapshot_payload()
         cur = _conn.execute(
-            "INSERT INTO groom_checkpoint (label, actor, snapshot) VALUES (?,?,?)",
-            (label or "", actor or "", json.dumps(payload)))
+            "INSERT INTO groom_checkpoint (label, actor, snapshot, auto) VALUES (?,?,?,?)",
+            (label or "", actor or "", json.dumps(payload), 1 if auto else 0))
         cid = cur.lastrowid
         stale = [r["id"] for r in _conn.execute(          # keep only the newest N
             "SELECT id FROM groom_checkpoint ORDER BY id DESC LIMIT -1 OFFSET ?",
@@ -761,7 +772,7 @@ def create_checkpoint(actor: str, label: str = "") -> dict:
 def list_checkpoints() -> dict:
     with _lock:
         rows = _conn.execute(
-            "SELECT id, created_at, label, actor, restored_at, snapshot "
+            "SELECT id, created_at, label, actor, restored_at, auto, snapshot "
             "FROM groom_checkpoint ORDER BY id DESC").fetchall()
     out = []
     for r in rows:
@@ -770,7 +781,8 @@ def list_checkpoints() -> dict:
         except Exception:
             n = None
         out.append({"id": r["id"], "created_at": r["created_at"], "label": r["label"],
-                    "actor": r["actor"], "restored_at": r["restored_at"], "topics": n})
+                    "actor": r["actor"], "restored_at": r["restored_at"],
+                    "auto": bool(r["auto"]), "topics": n})
     return {"checkpoints": out}
 
 
@@ -784,8 +796,12 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
       - nothing is ever deleted (a groom-created hub simply lingers, empty - cosmetic)."""
     with _lock:
         if cid is None:
+            # "restore latest" = the last real GROOM, never a pre-restore safety snapshot (auto=1),
+            # else repeated undos ping-pong; fall back to newest overall only if none are groom points
             row = _conn.execute("SELECT id, snapshot, created_at FROM groom_checkpoint "
-                                "ORDER BY id DESC LIMIT 1").fetchone()
+                                "WHERE auto=0 ORDER BY id DESC LIMIT 1").fetchone() \
+                or _conn.execute("SELECT id, snapshot, created_at FROM groom_checkpoint "
+                                 "ORDER BY id DESC LIMIT 1").fetchone()
         else:
             row = _conn.execute("SELECT id, snapshot, created_at FROM groom_checkpoint "
                                 "WHERE id=?", (int(cid),)).fetchone()
@@ -794,10 +810,9 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
         snap = json.loads(row["snapshot"])
         snap_topics = {t["slug"]: t for t in snap["topics"]}
 
-        # SAFETY: snapshot the current (pre-restore) state FIRST, so an accidental restore is itself
-        # recoverable (restoring this auto-checkpoint redoes the groom). Labeled 'auto:' so the Undo
-        # button skips it when picking the last GROOM to revert. Bounded by the 15 retention.
-        create_checkpoint(actor, f"auto: before restore of #{row['id']}")
+        # SAFETY: snapshot the current (pre-restore) state FIRST (auto=1), so an accidental restore is
+        # itself recoverable (restoring this auto-checkpoint redoes the groom). Bounded by retention.
+        create_checkpoint(actor, f"auto: before restore of #{row['id']}", auto=True)
 
         def _tid(slug):
             r = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
@@ -826,7 +841,10 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
             cur = _conn.execute("SELECT created_at FROM topic WHERE slug=?", (slug,)).fetchone()
             if not cur:
                 continue
-            if slug not in reinserted and (cur["created_at"] or "") > ckpt_at:
+            # normalize ISO-'T' vs space format before comparing (an imported topic's 'T' timestamp
+            # sorts after any same-instant space-format checkpoint - 'T' > ' ' - and would wrongly
+            # skip a genuine pre-checkpoint topic)
+            if slug not in reinserted and (cur["created_at"] or "").replace("T", " ") > ckpt_at.replace("T", " "):
                 continue                              # slug reused by a post-checkpoint capture - keep it
             restorable.add(slug)
             pid = _tid(t["parent_slug"]) if t.get("parent_slug") else None
@@ -1439,7 +1457,9 @@ def expire_merged() -> int:
     then gone for good, with its history/edges cascaded."""
     with _lock:
         rows = _conn.execute(
-            "SELECT id FROM topic WHERE merged_into IS NOT NULL AND "
+            # state='pruned' too: a RESURRECTED merge tombstone (state flipped back to open via the
+            # archive) still carries merged_into but is a LIVE topic - never hard-remove it
+            "SELECT id FROM topic WHERE merged_into IS NOT NULL AND state='pruned' AND "
             "julianday('now') - julianday(state_changed_at) > ?",
             (MERGED_TOMBSTONE_DAYS,)).fetchall()
         try:

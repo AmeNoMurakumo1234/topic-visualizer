@@ -94,6 +94,9 @@ CREATE TABLE IF NOT EXISTS groom_checkpoint (
   label       TEXT NOT NULL DEFAULT '',
   actor       TEXT NOT NULL DEFAULT '',
   restored_at TEXT,                       -- set when this checkpoint was used to roll back
+  auto        INTEGER NOT NULL DEFAULT 0, -- 1 = a safety snapshot taken BEFORE a restore (so an undo
+                                          -- is itself recoverable); "restore latest" skips these so
+                                          -- it targets the last real GROOM, not a pre-restore state
   snapshot    TEXT NOT NULL               -- JSON {topics:[...], parents:[...], links:[...]}
 );
 CREATE INDEX IF NOT EXISTS idx_checkpoint_created ON groom_checkpoint(created_at);

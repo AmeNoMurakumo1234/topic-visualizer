@@ -5,7 +5,7 @@ window.TopicsRenderers = window.TopicsRenderers || {};
 window.TopicsRenderers.constellation = (function () {
   "use strict";
   let core, stage, svg, view, fogG, edgesG, nodesG;
-  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, userMoved = false;
+  let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, userMoved = false, ac = null;
   let hideDiscussed = false;              // legend toggle: declutter already-talked-about topics
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -34,6 +34,8 @@ window.TopicsRenderers.constellation = (function () {
 
   function mount(container, coreRef) {
     core = coreRef; stage = container;
+    if (ac) ac.abort();
+    ac = new AbortController();
     stage.innerHTML = `<svg>${DEFS}<g class="tv-view"><g class="tv-fog"></g><g class="tv-edges"></g><g class="tv-nodes"></g></g></svg>`;
     svg = stage.querySelector("svg");
     view = stage.querySelector(".tv-view");
@@ -60,7 +62,7 @@ window.TopicsRenderers.constellation = (function () {
       stage.addEventListener("pointermove", mv);
       stage.addEventListener("pointerup", up);
       stage.addEventListener("pointercancel", up);
-    });
+    }, { signal: ac.signal });
     // cursor-anchored zoom (behavioral contract: the point under the mouse stays fixed)
     stage.addEventListener("wheel", ev => { ev.preventDefault();
       userMoved = true;
@@ -68,7 +70,7 @@ window.TopicsRenderers.constellation = (function () {
       const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
       const next = Math.max(0.25, Math.min(3, scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
       tx = mx - (mx - tx) * (next / scale); ty = my - (my - ty) * (next / scale);
-      scale = next; apply(); }, { passive: false });
+      scale = next; apply(); }, { passive: false, signal: ac.signal });
 
     // legend toggle (injected by the shell just before mount): declutter discussed topics
     const cb = document.querySelector("#legend .hidediscussed");
@@ -281,6 +283,7 @@ window.TopicsRenderers.constellation = (function () {
   function unmount() {
     cancelAnimationFrame(animId);
     cancelAnimationFrame(labelRaf); labelRaf = null;
+    if (ac) { ac.abort(); ac = null; }   // drop the pan/zoom listeners on the shared container
     if (stage) stage.innerHTML = "";
     stage = null;
   }

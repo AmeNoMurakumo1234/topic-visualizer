@@ -470,8 +470,8 @@ class BoardBackend:
                          "immutable (reply a correction, or edit on the sqlite backend)."}
 
     def add(self, items, actor=None):
-        if actor:
-            self.author = actor          # a caller-supplied stable actor overrides the default
+        author = actor or self.author    # per-CALL actor; do NOT rebind self.author (it would leak
+                                         # this actor onto every later board op in the process)
         existing = self._load()
         results = []
         for it in items:
@@ -492,7 +492,7 @@ class BoardBackend:
             body = ("\n".join(lines) + "\n\n" if lines else "") + \
                    str(it.get("body") or "captured via the topics MCP tools")
             r = _http("POST", f"{self.base}/api/post",
-                      {"project": self.project, "author": self.author,
+                      {"project": self.project, "author": author,
                        "type": "topic",                     # 0524: first-class topic lane; no `to` -> no ball
                        "title": f"{self.PREFIX}: {title}"[:200], "body": body},
                       self.hdrs)
