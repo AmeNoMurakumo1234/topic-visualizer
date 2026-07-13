@@ -73,6 +73,12 @@ Re-run **`topic_doctor`**. If `degraded` is now empty, tell the user they are fu
 visualizer lives (the server URL). If anything remains, list EXACTLY what is left and the one command to
 finish it - never end on a silent partial. Offer to open the visualizer.
 
+## Removing it later
+
+If persistence was installed, mention once that it is cleanly reversible: running the **topics-teardown**
+skill BEFORE uninstalling stops the processes and removes the autostart, so nothing is orphaned. We
+onboard gracefully and we release gracefully.
+
 ## The bar
 
 A user who does not understand the internals should be able to run this once and either be fully working

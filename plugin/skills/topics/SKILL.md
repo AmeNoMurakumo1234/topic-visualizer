@@ -35,6 +35,9 @@ health signal lie.
 - **`topic_open`** - ensure the visualizer host is up and get its URL (so the web tree is one call away).
 - First run, or anything degraded -> the **topics-setup** skill wires persistence + a bundled embedder +
   project scope in one guided pass, and ends on a green doctor.
+- Leaving? Run **topics-teardown** BEFORE uninstalling - it stops our processes and removes the autostart
+  so nothing is orphaned (no failing login task, no ghost holding a port). We release as gracefully as we
+  onboard.
 
 ## The metric
 

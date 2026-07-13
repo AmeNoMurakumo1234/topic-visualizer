@@ -14,6 +14,7 @@ no-ops if its port is already served.
 """
 import argparse
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -43,6 +44,60 @@ def _run(cmd, dry):
 def _tr(argv) -> str:
     """One schtasks /TR command-line string with each token quoted."""
     return " ".join(f'"{a}"' for a in argv)
+
+
+def _our_script_paths():
+    """The exact scripts our autostart runs. Stopping is matched to THESE full paths, so a shared or
+    bring-your-own embedder on the same port is never killed - only what we started."""
+    return [str(HERE / "server.py"), str(HERE / "serve_embedder.py")]
+
+
+def _stop_processes(dry) -> list:
+    """Stop ONLY the python server/embedder WE started. SAFETY: we match a process ONLY when it is a
+    python process (name python*) whose command line runs one of OUR exact script paths - never on a
+    command line that merely MENTIONS the path (a shell, an editor, this teardown itself would match
+    that), and never by port alone (a shared/BYO embedder on 8082 must survive). Run teardown BEFORE
+    deleting the plugin dir so these paths still match the live command lines. Returns the pids acted on."""
+    paths = _our_script_paths()
+    if platform.system() == "Windows":
+        conds = "(" + " -or ".join("$_.CommandLine -like '*" + p + "*'" for p in paths) + ")"
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and "
+              "$_.ProcessId -ne " + str(os.getpid()) + " -and $_.CommandLine -and " + conds +
+              " } | Select-Object -ExpandProperty ProcessId")
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                 capture_output=True, text=True)
+            pids = [int(x) for x in out.stdout.split() if x.strip().isdigit()]
+        except Exception:
+            pids = []
+        for pid in pids:
+            if dry:
+                print(f"DRY-RUN: taskkill /PID {pid} /F  (python running our script)")
+            else:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return pids
+    # unix: pgrep candidates by path, then keep ONLY the python ones (exclude shells/this process)
+    acted = []
+    for p in paths:
+        try:
+            out = subprocess.run(["pgrep", "-f", p], capture_output=True, text=True)
+            cands = [int(x) for x in out.stdout.split() if x.strip().isdigit()]
+        except Exception:
+            cands = []
+        for pid in cands:
+            if pid == os.getpid():
+                continue
+            comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
+                                  capture_output=True, text=True).stdout.strip()
+            if "python" not in comm.lower():
+                continue                       # a shell/editor that merely names the path - skip
+            if dry:
+                print(f"DRY-RUN: kill {pid}  ({comm} running our script)")
+            else:
+                subprocess.run(["kill", str(pid)])
+            acted.append(pid)
+    return acted
 
 
 def windows(pieces, uninstall, dry) -> int:
@@ -80,22 +135,34 @@ def main():
     ap.add_argument("--port", type=int, default=8991, help="server port")
     ap.add_argument("--embedder", action="store_true", help="also autostart the bundled CPU embedder")
     ap.add_argument("--embed-port", type=int, default=8082, help="embedder port")
-    ap.add_argument("--uninstall", action="store_true", help="remove what this installed")
+    ap.add_argument("--uninstall", action="store_true",
+                    help="STOP our running processes AND remove the autostart (graceful teardown)")
+    ap.add_argument("--stop", action="store_true",
+                    help="stop the running server/embedder we started, without touching the autostart")
     ap.add_argument("--dry-run", action="store_true", help="print commands, change nothing")
     args = ap.parse_args()
+
+    if args.stop:                              # stop-only: no task change
+        pids = _stop_processes(args.dry_run)
+        print(json.dumps({"stopped": pids, "dry_run": args.dry_run}))
+        return
 
     pyw = _pythonw()
     pieces = [(TASK_SERVER, [pyw, str(HERE / "server.py"), "--port", str(args.port)])]
     if args.embedder:
         pieces.append((TASK_EMBED, [pyw, str(HERE / "serve_embedder.py"), "--port", str(args.embed_port)]))
 
+    # teardown stops our processes FIRST (so nothing holds the DB lock / port), then removes the autostart
+    stopped = _stop_processes(args.dry_run) if args.uninstall else []
+
     if platform.system() == "Windows":
         rc = windows(pieces, args.uninstall, args.dry_run)
-        print(json.dumps({"installed" if not args.uninstall else "removed":
-                          [n for n, _ in pieces], "dry_run": args.dry_run, "returncode": rc}))
+        print(json.dumps({("removed" if args.uninstall else "installed"): [n for n, _ in pieces],
+                          "stopped": stopped, "dry_run": args.dry_run, "returncode": rc}))
         sys.exit(rc)
     # macOS / Linux: best-effort - emit the unit(s) for the agent/user to place and enable
     if args.uninstall:
+        print(json.dumps({"stopped": stopped}))
         print("On macOS/Linux, remove the unit(s) you installed (launchctl unload / systemctl --user disable).")
     else:
         print("Windows Scheduled Task is the automated path. On this OS, install the unit(s) below:")
