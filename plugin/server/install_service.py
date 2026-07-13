@@ -1,38 +1,47 @@
 #!/usr/bin/env python3
-"""Install (or remove) a LOGIN autostart for the topic-visualizer server (+ optional bundled embedder),
-so the visualizer PERSISTS across restarts instead of dying with the terminal - the persistence gap the
-onboarding report named. Windows-first (a Scheduled Task); for macOS/Linux it prints a ready-to-use
-launchd/systemd unit that you (or your agent) drop in - the "best-effort, your AI finishes it" path.
+"""Install (or remove) a SELF-HEALING login autostart for the topic-visualizer server (+ optional
+bundled embedder), so the visualizer persists across restarts - AND cleans itself up if the plugin is
+later uninstalled, since Claude Code runs no uninstall hook.
 
-    python install_service.py                  # install: the server at logon (idempotent)
+How it self-heals: instead of pointing the login task straight at the plugin's server.py (which a plugin
+uninstall would orphan), we copy a tiny launcher (tv_autostart.py) into ~/.topic-visualizer/ - OUTSIDE
+the plugin, so it survives - and point ONE login task at it. Each login the launcher starts the server
+if the plugin is still there, or DELETES its own task + itself if the plugin is gone. So even a silent
+UI-uninstall leaves no orphaned task.
+
+    python install_service.py                  # install: self-healing login autostart (server only)
     python install_service.py --embedder        # also autostart the bundled CPU embedder
-    python install_service.py --uninstall       # remove the task(s)/unit(s) this installed
-    python install_service.py --dry-run         # print the exact commands; change NOTHING
+    python install_service.py --uninstall       # stop our processes + remove the task/launcher/config
+    python install_service.py --stop            # stop our running processes only (no task change)
+    python install_service.py --dry-run         # print everything; change NOTHING
 
-Idempotent + safe to re-run every login: re-installing replaces the task, and the server itself
-no-ops if its port is already served.
+Idempotent + safe to re-run. The user's DATA (~/.topic-visualizer topics) is never touched here - remove
+it only via the topics-teardown skill, on explicit ask.
 """
 import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TASK_SERVER = "TopicVisualizerServer"
-TASK_EMBED = "TopicVisualizerEmbedder"
+HOME = Path.home() / ".topic-visualizer"
+LAUNCHER = HOME / "tv-autostart.py"
+CFG = HOME / "tv-autostart.json"
+TASK = "TopicVisualizer"
 
 
 def _pythonw() -> str:
-    """Windowless python on Windows, so there is no console flash at every login; else this python."""
+    """Windowless python on Windows (no console flash at login); else this python."""
     exe = Path(sys.executable)
     pw = exe.with_name("pythonw.exe")
     return str(pw if pw.exists() else exe)
 
 
-def _run(cmd, dry):
+def _run(cmd, dry) -> int:
     printable = " ".join(f'"{c}"' if " " in c else c for c in cmd)
     if dry:
         print("DRY-RUN:", printable)
@@ -47,17 +56,16 @@ def _tr(argv) -> str:
 
 
 def _our_script_paths():
-    """The exact scripts our autostart runs. Stopping is matched to THESE full paths, so a shared or
-    bring-your-own embedder on the same port is never killed - only what we started."""
+    """The scripts our autostart runs. Stopping is matched to THESE full paths (see _stop_processes)."""
     return [str(HERE / "server.py"), str(HERE / "serve_embedder.py")]
 
 
 def _stop_processes(dry) -> list:
-    """Stop ONLY the python server/embedder WE started. SAFETY: we match a process ONLY when it is a
-    python process (name python*) whose command line runs one of OUR exact script paths - never on a
-    command line that merely MENTIONS the path (a shell, an editor, this teardown itself would match
-    that), and never by port alone (a shared/BYO embedder on 8082 must survive). Run teardown BEFORE
-    deleting the plugin dir so these paths still match the live command lines. Returns the pids acted on."""
+    """Stop ONLY the python server/embedder WE started. SAFETY: match a process ONLY when it is a python
+    process (name python*) whose command line runs one of OUR exact script paths - never a command line
+    that merely MENTIONS the path (a shell/editor/this teardown would match that), and never by port (a
+    shared/BYO embedder on 8082 must survive). Run teardown BEFORE deleting the plugin so paths still
+    match the live command lines. Returns the pids acted on."""
     paths = _our_script_paths()
     if platform.system() == "Windows":
         conds = "(" + " -or ".join("$_.CommandLine -like '*" + p + "*'" for p in paths) + ")"
@@ -77,7 +85,6 @@ def _stop_processes(dry) -> list:
                 subprocess.run(["taskkill", "/PID", str(pid), "/F"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return pids
-    # unix: pgrep candidates by path, then keep ONLY the python ones (exclude shells/this process)
     acted = []
     for p in paths:
         try:
@@ -91,7 +98,7 @@ def _stop_processes(dry) -> list:
             comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
                                   capture_output=True, text=True).stdout.strip()
             if "python" not in comm.lower():
-                continue                       # a shell/editor that merely names the path - skip
+                continue
             if dry:
                 print(f"DRY-RUN: kill {pid}  ({comm} running our script)")
             else:
@@ -100,73 +107,88 @@ def _stop_processes(dry) -> list:
     return acted
 
 
-def windows(pieces, uninstall, dry) -> int:
-    rc = 0
-    for name, argv in pieces:
-        if uninstall:
-            rc |= _run(["schtasks", "/Delete", "/TN", name, "/F"], dry)
-        else:
-            rc |= _run(["schtasks", "/Create", "/SC", "ONLOGON", "/TN", name,
-                        "/TR", _tr(argv), "/RL", "LIMITED", "/F"], dry)
-    return rc
+def _config(server_port, embedder, embed_port) -> dict:
+    return {"server": str(HERE / "server.py"), "server_port": server_port,
+            "embedder": str(HERE / "serve_embedder.py") if embedder else None,
+            "embed_port": embed_port, "tasks": [TASK]}
 
 
-def unix_units(pieces):
-    """Print a ready launchd (macOS) / systemd --user (Linux) unit per piece - best effort; the user's
-    agent drops it in the right place and enables it. We do not write system files from here."""
-    mac = platform.system() == "Darwin"
-    for name, argv in pieces:
-        prog = " ".join(argv)
-        if mac:
-            print(f"\n# ~/Library/LaunchAgents/com.topicvisualizer.{name}.plist  (then: launchctl load -w <plist>)")
-            args_xml = "".join(f"\n    <string>{a}</string>" for a in argv)
-            print('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
-                  f'\n  <key>Label</key><string>com.topicvisualizer.{name}</string>'
-                  f'\n  <key>ProgramArguments</key><array>{args_xml}\n  </array>'
-                  '\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n</dict></plist>')
-        else:
-            print(f"\n# ~/.config/systemd/user/{name}.service  (then: systemctl --user enable --now {name})")
-            print(f"[Unit]\nDescription=topic-visualizer {name}\n\n[Service]\nExecStart={prog}\n"
-                  f"Restart=on-failure\n\n[Install]\nWantedBy=default.target")
+def _unix_unit(argv):
+    """Print a ready launchd (macOS) / systemd --user (Linux) unit pointing at the launcher - best
+    effort; the user's agent drops it in and enables it. The launcher still self-heals on those OSes."""
+    prog = " ".join(argv)
+    if platform.system() == "Darwin":
+        args_xml = "".join(f"\n    <string>{a}</string>" for a in argv)
+        print(f"\n# ~/Library/LaunchAgents/com.topicvisualizer.plist  (then: launchctl load -w <plist>)")
+        print('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+              '\n  <key>Label</key><string>com.topicvisualizer</string>'
+              f'\n  <key>ProgramArguments</key><array>{args_xml}\n  </array>'
+              '\n  <key>RunAtLoad</key><true/>\n</dict></plist>')
+    else:
+        print(f"\n# ~/.config/systemd/user/topic-visualizer.service  (then: systemctl --user enable --now topic-visualizer)")
+        print(f"[Unit]\nDescription=topic-visualizer\n\n[Service]\nExecStart={prog}\n"
+              f"Restart=on-failure\n\n[Install]\nWantedBy=default.target")
+
+
+def install(cfg, dry) -> int:
+    if dry:
+        print(f"DRY-RUN: copy launcher -> {LAUNCHER}")
+        print(f"DRY-RUN: write config  -> {CFG}: {json.dumps(cfg)}")
+    else:
+        HOME.mkdir(parents=True, exist_ok=True)
+        shutil.copy(str(HERE / "tv_autostart.py"), str(LAUNCHER))
+        CFG.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    launch = [_pythonw(), str(LAUNCHER)]
+    if platform.system() == "Windows":
+        return _run(["schtasks", "/Create", "/SC", "ONLOGON", "/TN", TASK,
+                     "/TR", _tr(launch), "/RL", "LIMITED", "/F"], dry)
+    print("Windows Scheduled Task is the automated path. On this OS, install the unit below:")
+    _unix_unit(launch)
+    return 0
+
+
+def uninstall(dry) -> list:
+    stopped = _stop_processes(dry)              # stop first, so nothing holds the DB lock / port
+    if platform.system() == "Windows":
+        _run(["schtasks", "/Delete", "/TN", TASK, "/F"], dry)
+    else:
+        print("On macOS/Linux, disable the unit you installed (launchctl unload / systemctl --user disable).")
+    if dry:
+        print(f"DRY-RUN: remove {LAUNCHER}")
+        print(f"DRY-RUN: remove {CFG}")
+    else:
+        for p in (LAUNCHER, CFG):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    return stopped
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Autostart the topic-visualizer server (+ embedder)")
+    ap = argparse.ArgumentParser(description="Self-healing autostart for the topic-visualizer server")
     ap.add_argument("--port", type=int, default=8991, help="server port")
     ap.add_argument("--embedder", action="store_true", help="also autostart the bundled CPU embedder")
     ap.add_argument("--embed-port", type=int, default=8082, help="embedder port")
     ap.add_argument("--uninstall", action="store_true",
-                    help="STOP our running processes AND remove the autostart (graceful teardown)")
+                    help="STOP our processes AND remove the task + launcher + config (graceful teardown)")
     ap.add_argument("--stop", action="store_true",
                     help="stop the running server/embedder we started, without touching the autostart")
-    ap.add_argument("--dry-run", action="store_true", help="print commands, change nothing")
+    ap.add_argument("--dry-run", action="store_true", help="print everything, change nothing")
     args = ap.parse_args()
 
-    if args.stop:                              # stop-only: no task change
-        pids = _stop_processes(args.dry_run)
-        print(json.dumps({"stopped": pids, "dry_run": args.dry_run}))
+    if args.stop:
+        print(json.dumps({"stopped": _stop_processes(args.dry_run), "dry_run": args.dry_run}))
         return
-
-    pyw = _pythonw()
-    pieces = [(TASK_SERVER, [pyw, str(HERE / "server.py"), "--port", str(args.port)])]
-    if args.embedder:
-        pieces.append((TASK_EMBED, [pyw, str(HERE / "serve_embedder.py"), "--port", str(args.embed_port)]))
-
-    # teardown stops our processes FIRST (so nothing holds the DB lock / port), then removes the autostart
-    stopped = _stop_processes(args.dry_run) if args.uninstall else []
-
-    if platform.system() == "Windows":
-        rc = windows(pieces, args.uninstall, args.dry_run)
-        print(json.dumps({("removed" if args.uninstall else "installed"): [n for n, _ in pieces],
-                          "stopped": stopped, "dry_run": args.dry_run, "returncode": rc}))
-        sys.exit(rc)
-    # macOS / Linux: best-effort - emit the unit(s) for the agent/user to place and enable
     if args.uninstall:
-        print(json.dumps({"stopped": stopped}))
-        print("On macOS/Linux, remove the unit(s) you installed (launchctl unload / systemctl --user disable).")
-    else:
-        print("Windows Scheduled Task is the automated path. On this OS, install the unit(s) below:")
-        unix_units(pieces)
+        stopped = uninstall(args.dry_run)
+        print(json.dumps({"removed": TASK, "launcher": str(LAUNCHER), "stopped": stopped,
+                          "dry_run": args.dry_run}))
+        return
+    rc = install(_config(args.port, args.embedder, args.embed_port), args.dry_run)
+    print(json.dumps({"installed": TASK, "launcher": str(LAUNCHER), "self_healing": True,
+                      "dry_run": args.dry_run, "returncode": rc}))
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

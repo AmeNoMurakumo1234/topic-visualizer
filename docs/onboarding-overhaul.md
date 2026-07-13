@@ -99,13 +99,18 @@ Each slice is its own spec -> build -> owner-ship cycle. Dependencies noted.
   into `topics-capture`), so agents get the reflex out of the box, not just the tools.
 - **Depends on:** Slice 4 (host-up guarantee) for the "open" affordance; the reflex skill is independent.
 
-### Addendum - graceful teardown   [DONE 0.16.0]
+### Addendum - graceful teardown + self-healing autostart   [DONE 0.16.0 -> 0.17.0]
 Onboarding installs real persistence (autostart + server + embedder), so a naive plugin-delete orphans a
-failing login Scheduled Task and a ghost process holding the port + DB lock. The mirror of setup:
-`install_service.py --uninstall/--stop` STOPS only OUR python processes (matched by script path AND
-process name - never by port, so a shared/BYO embedder survives; the naive command-line-substring match
-was caught over-killing shells and fixed) and removes the autostart; a `topics-teardown` skill
-orchestrates stop -> remove autostart -> ASK about the data store -> confirm clean, run BEFORE uninstall.
+failing login Scheduled Task and a ghost process holding the port + DB lock. Claude Code runs NO uninstall
+hook (confirmed), so cleanup can't ride the uninstall. Two-layer fix:
+- **Agent/explicit path** - `install_service.py --uninstall/--stop` STOPS only OUR python processes
+  (matched by script path AND process name - never by port, so a shared/BYO embedder survives; the naive
+  command-line-substring match was caught over-killing shells and fixed) and removes the autostart; a
+  `topics-teardown` skill orchestrates stop -> remove autostart -> ASK about the data store -> confirm.
+- **Self-healing autostart (0.17.0)** - the login task points at a launcher (`tv_autostart.py`) COPIED
+  into `~/.topic-visualizer/` (outside the plugin, survives deletion). Each login it starts the server if
+  the plugin is present, or DELETES its own task + itself if the plugin's script is gone. So even a silent
+  UI-uninstall self-cleans on the next login - no permanent orphan.
 We onboard gracefully; we release gracefully.
 
 ## Sequencing rationale

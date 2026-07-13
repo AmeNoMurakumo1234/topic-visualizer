@@ -101,9 +101,22 @@ work out of the box.
 
 ## Uninstall / disable
 
-`/plugin uninstall topic-visualizer` - or disable it and keep using your own
-integration ([INTEGRATING.md](INTEGRATING.md) shows how to embed the views in
-another app).
+Nothing gets left behind - two ways it stays clean:
+
+- **If you set up persistence, run the `topics-teardown` skill BEFORE uninstalling.** It stops the
+  server + bundled embedder we started, removes the login autostart, and ASKS whether to delete your
+  saved topics. Then `/plugin uninstall topic-visualizer`.
+- **Even if you just uninstall** (or forget the teardown): the login autostart is **self-healing** - the
+  launcher lives outside the plugin (`~/.topic-visualizer`) and, on the next login after the plugin's
+  files are gone, deletes its own Scheduled Task and itself. So a bare uninstall leaves no orphaned task.
+  (Claude Code runs no uninstall hook, so this is how the OS-level footprint cleans itself up.)
+
+Your topics live at `~/.topic-visualizer/` and are **never deleted automatically** - remove that folder
+yourself (or let `topics-teardown` do it on ask) if you want the data gone. The ~80MB embedding-model
+cache (`~/.cache/huggingface`) is shared with other tools; leave it unless you want the space back.
+
+Prefer to keep the tree but stop using the plugin? Disable it and embed the views in your own app
+([INTEGRATING.md](INTEGRATING.md)).
 
 ## Contributing / building from source
 

@@ -45,6 +45,14 @@ Verify: no `TopicVisualizer*` Scheduled Task remains (`schtasks /Query /TN Topic
 say not found), nothing answers on the server/embedder ports, and - if they chose remove - the data dir
 is gone. Then tell the user it is safe to uninstall the plugin.
 
+## The safety net (why this is belt-and-suspenders)
+
+Even if the user skips this skill and just uninstalls, the autostart is **self-healing**: the login
+launcher lives outside the plugin (`~/.topic-visualizer/tv-autostart.py`) and, on the next login after
+the plugin's files are gone, deletes its own task and itself. So the worst case is a short-lived ghost,
+not a permanent orphan. This skill is still the clean, immediate path - it stops the running process NOW
+and lets the user decide about their data - but nobody is left with a failing login task forever.
+
 ## The principle
 
 We onboard gracefully; we release gracefully. A user who leaves should find their machine exactly as
