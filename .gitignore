@@ -181,3 +181,13 @@ cython_debug/
 .cursorindexingignore
 # SDD execution scratch (progress ledger, briefs)
 .superpowers/
+
+# Topic-visualizer runtime stores - NEVER commit topic data to this public repo.
+# Per-project sqlite stores normally live in ~/.topic-visualizer, but a relative DB_PATH
+# or an export can drop them in the cwd; keep the public repo free of any topic data.
+projects/
+.topics/
+topics.db
+*.db
+*.db-wal
+*.db-shm
