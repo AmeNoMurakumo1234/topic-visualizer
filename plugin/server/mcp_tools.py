@@ -170,6 +170,21 @@ class ServerBackend:
             degraded.append(
                 f"The RUNNING server is v{running_ver} but the installed code is v{VERSION} - the "
                 "server is on an old upgrade clock. Restart it to pick up the update.")
+        # ROUTING HINT (not a failure): if a message board is running and this session isn't pointed
+        # at it, the user may have MEANT the board backend - the team's topics live on the board, not a
+        # local cwd-keyed sqlite store. Surfacing it here saves the "why did it plant locally?" round-trip.
+        board_url = os.environ.get("TOPICS_BOARD_URL",
+                                   os.environ.get("MESSAGEBOARD_URL", "http://127.0.0.1:9772")).rstrip("/")
+        try:
+            _http("GET", board_url + "/api/whoami")
+            out["board_detected"] = board_url
+            out["routing_hint"] = (
+                f"A message board is running at {board_url}, but this backend is the LOCAL sqlite store "
+                f"(project '{self.project}', keyed from your cwd). If your topics belong on the shared "
+                "board, set TOPICS_BACKEND=board (+ TOPICS_BOARD_PROJECT for your lane, "
+                "TOPICS_BOARD_AUTHOR for your name) so capture routes there instead.")
+        except Unreachable:
+            pass
         out["degraded"] = degraded
         out["verdict"] = "ok" if not degraded else "degraded"
         return out
@@ -671,6 +686,46 @@ class BoardBackend:
                 pairs.append({"a": key[0], "b": key[1], "score": dpl["score"],
                               "mode": dpl["mode"], "band": dpl["band"]})
         return {"pairs": pairs, "count": len(pairs)}
+
+    def doctor(self):
+        """Board-backend health: is the message board reachable and serving your topic lane? The
+        sqlite visualizer server (:8991) is NOT used here - your topics live on the board and render
+        via the board's own vendored visualizer - so its being down is IRRELEVANT, not degraded."""
+        from server import EMBED_URL, _embed_probe
+        out = {"backend": "board", "board_url": self.base, "project": self.project,
+               "actor": self.author, "installed_version": VERSION, "degraded": []}
+        try:
+            resp = _http("GET", f"{self.base}/api/posts?project={self.project}&type=topic")
+            out["reachable"] = True
+            out["topics_in_lane"] = resp.get("total", len(resp.get("items") or [])) \
+                if isinstance(resp, dict) else len(resp or [])
+            out["visualizer"] = f"{self.base}/topics.html (board-vendored; open with topic_open)"
+        except Unreachable:
+            out["reachable"] = False
+            out["degraded"].append(
+                f"The message board is not reachable at {self.base}. Start it, or set TOPICS_BOARD_URL "
+                "to the right host - in this backend your topics LIVE on the board.")
+        # semantic search/dedup still uses the embedder (via near_duplicates_in); a board user can run
+        # degraded on ranking just like a sqlite user, so surface it honestly.
+        if EMBED_URL and not _embed_probe():
+            out["degraded"].append(
+                "Semantic ranking is OFF (the embedder is unreachable) - search/dedup fall back to "
+                "keyword. Start the embedder or set TOPICS_EMBED_URL.")
+        out["verdict"] = "ok" if not out["degraded"] else "degraded"
+        return out
+
+    def open_visualizer(self):
+        """The board already serves the visualizer - just hand back its URL (no sqlite server to
+        start). Switch the board's Topics project-picker to this backend's project."""
+        url = f"{self.base}/topics.html?project={self.project}"
+        try:
+            _http("GET", f"{self.base}/api/whoami")
+            return {"url": url, "running": True, "backend": "board",
+                    "hint": f"The board serves the topics visualizer directly; set its project picker "
+                            f"to '{self.project}'."}
+        except Unreachable:
+            return {"url": url, "running": False, "backend": "board",
+                    "hint": f"The message board is not reachable at {self.base} - start it first."}
 
 
 _BACKEND = None

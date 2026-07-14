@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.40.0 - 2026-07-13 - Board-backend integration: doctor/open work + the sqlite doctor hints the board
+
+From a teammate's integration report:
+
+- **`topic_doctor` and `topic_open` CRASHED on the board backend** - `BoardBackend` had neither
+  `doctor()` nor `open_visualizer()`, so both AttributeError'd. Added board-appropriate versions:
+  `doctor()` checks the board is reachable + serving the topic lane (reports the topic count + embedder
+  status) and does NOT flag the unused sqlite `:8991` server as degraded - that false "degraded" was the
+  confusing signal a board user hit; `open_visualizer()` hands back the board's own vendored visualizer
+  URL (no sqlite server to start).
+- **The sqlite doctor now HINTS the board.** On the default (sqlite) backend, if a message board is
+  running, `topic_doctor` surfaces `board_detected` + a `routing_hint` ("a board is running; if your
+  topics belong there, set `TOPICS_BACKEND=board`") - so an agent discovers the board routing instead
+  of silently capturing to a local cwd-keyed store and having to ask.
+- Regression guard: a new test asserts `BoardBackend` and `ServerBackend` have matching method surfaces,
+  so a tool method added to one but forgotten on the other (the exact bug here) fails the suite.
+
+Unchanged: the default backend stays sqlite (correct for external consumers). A team routes to the board
+via `TOPICS_BACKEND=board` + `TOPICS_BOARD_PROJECT` (lane) / `TOPICS_BOARD_AUTHOR` (name).
+
 ## 0.39.1 - 2026-07-13 - redundant-parent: precise wording + chain-robust selection
 
 - Sharpened 0.39.0 per the consumer: the rule is NOT "keep the nearer parent" (vague) - it is **keep

@@ -850,6 +850,15 @@ class VersionCoherenceTests(unittest.TestCase):
             "marketplace.json": mk["plugins"][0]["version"],
         }
 
+    def test_backend_surface_parity(self):
+        """Both backends must implement the same public method surface, or the dispatch AttributeErrors
+        for one - e.g. BoardBackend once lacked doctor()/open_visualizer(), so topic_doctor/topic_open
+        crashed for board users. This catches a tool method added to one backend but forgotten on the other."""
+        import mcp_tools
+        pub = lambda C: {n for n in dir(C) if not n.startswith("_") and callable(getattr(C, n))}
+        missing = pub(mcp_tools.ServerBackend) - pub(mcp_tools.BoardBackend)
+        self.assertEqual(missing, set(), f"BoardBackend is missing backend methods: {missing}")
+
     def test_version_fields_are_in_lockstep(self):
         v = self._versions()
         self.assertEqual(len(set(v.values())), 1,
