@@ -5,6 +5,34 @@
   const params = new URLSearchParams(location.search);
   const demo = parseInt(params.get("demo") || "0", 10) || 0;
 
+  // Cross-app back-link (the "Link" integration mode - INTEGRATING.md mode B). When a host
+  // app opens us with ?return=<url>&return_label=<name>, render a "back to <name>" link so the
+  // user can get home. App-agnostic + STATELESS: the host is described entirely by the query
+  // params and we hold zero config about it, so any number of apps can link the same visualizer
+  // without collision. Only http/https hrefs are honored (never javascript:/data:), and it is a
+  // click-through the user chooses, never an auto-redirect - so it is not an open-redirect vector.
+  (function mountReturnLink() {
+    const raw = params.get("return");
+    if (!raw) return;
+    let href;
+    try {
+      const u = new URL(raw, location.href);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return;
+      href = u.href;
+    } catch (e) { return; }
+    let label = (params.get("return_label") || "").trim();
+    if (!label) { try { label = new URL(href).host; } catch (e) { label = "back"; } }
+    const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                              .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const a = document.createElement("a");
+    a.className = "returnlink";
+    a.href = href;
+    a.rel = "noopener";
+    a.title = "back to " + label;
+    a.innerHTML = '<span aria-hidden="true">&#8592;</span> ' + esc(label);
+    (document.querySelector("header") || document.body).insertAdjacentElement("afterbegin", a);
+  })();
+
   const stage = document.getElementById("stage");
   const rendererHost = document.getElementById("renderer");
   const core = TopicsCore.create(window.TopicsAdapter, {

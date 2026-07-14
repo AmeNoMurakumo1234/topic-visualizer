@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.40.1 - 2026-07-13 - Mode B: the standalone "link" integration (configurable callback URLs)
+
+A second, first-class way to integrate - two standalone apps joined by a hyperlink, no vendoring and
+no shared storage - alongside the existing embed model. Purely additive; nothing existing changes.
+
+- **The visualizer now honors a return callback.** Opened with `?return=<url>&return_label=<name>`,
+  the standalone shell renders a `<- <name>` back-link in its header, so a host app can send the user
+  in and the user can get home. App-agnostic + stateless (the host is described entirely by the query
+  params; the visualizer holds zero config about it), sanitized, `http`/`https` only, and a
+  click-through the user chooses - never an auto-redirect. Injected by `topics-shell.js`, so it works
+  on any host page (Mode B, or a Mode-A embed that wants a back-link).
+- **INTEGRATING.md now frames two modes.** Mode A - Embed (vendor the six views + write an adapter,
+  the existing model) and Mode B - Link (point your app at a running visualizer via the callback
+  seam). The board-as-store worked example and the `TOPICS_BACKEND` server backend are unchanged and
+  still fully supported - one option among several, and tested (backend-surface parity holds).
+- No behavior change on any existing path; the default backend stays sqlite.
+
 ## 0.40.0 - 2026-07-13 - Board-backend integration: doctor/open work + the sqlite doctor hints the board
 
 From a teammate's integration report:

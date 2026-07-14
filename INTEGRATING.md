@@ -9,6 +9,22 @@ skeleton, a real worked example, and the acceptance checklist.
 The proof it works: the plugin's own birthplace runs these exact files vendored into a
 message-board web app whose storage is *posts*, not SQLite - the views never noticed.
 
+## Two ways to integrate
+
+Pick by how deep you want it:
+
+- **Mode A - Embed (vendor + adapter).** The three views run *inside your app*, over *your*
+  storage. You vendor six static files and write one adapter. Full control, topics live in your
+  own data model, no second process. This is the rest of this document.
+- **Mode B - Link (two standalone apps).** The visualizer runs as its *own* app (its own server,
+  its own SQLite store) and your app just *links* to it, passing a callback URL so the user can get
+  back. No vendoring, no adapter, no shared storage - two independent apps joined by one hyperlink
+  each way. Usually the simplest integration, and the right choice when the visualizer should own
+  its own topics and grow its own features independently of your app. See
+  [Mode B - the link interface](#mode-b---two-standalone-apps-the-link-interface) at the end.
+
+Both modes are app-agnostic and can be combined. The rest of this document covers Mode A.
+
 ## The one law
 
 **The views are storage-blind.** All storage knowledge lives in ONE file - your
@@ -163,3 +179,52 @@ The adapter contract above is the v0.5 surface (v0.5 added the optional `project
 capability). New optional capabilities may be added (they degrade gracefully when
 absent); REQUIRED-method changes will be called out loudly in
 [plugin/CHANGELOG.md](plugin/CHANGELOG.md).
+
+## Mode B - two standalone apps (the link interface)
+
+Mode B treats the visualizer and your app as two independent programs joined by a hyperlink - no
+shared code, no shared storage, no adapter. Your app never learns anything about topics; the
+visualizer never learns anything about your app. They meet at one configurable seam: a pair of
+callback URLs, one each way.
+
+### The contract
+
+**Your app -> the visualizer (open):** link to the running visualizer with up to three query params:
+
+```
+<VISUALIZER_BASE>/?project=<key>&return=<your_url>&return_label=<your_name>
+```
+
+| param | meaning | required |
+|---|---|---|
+| `project` | which topic store to open; a user-defined project key the visualizer scopes to | optional (defaults to the last / default store) |
+| `return` | the URL to send the user back to - your app | optional |
+| `return_label` | the human text for the back-link, e.g. `the message board` | optional (falls back to the return URL's host) |
+
+**The visualizer -> your app (return):** if `return` is a valid `http`/`https` URL, the visualizer
+renders a `<- <return_label>` link in its header. It is a plain click-through the user chooses
+(never an auto-redirect), sanitized (scheme-validated, escaped), and **stateless** - the visualizer
+stores nothing about your app, so any number of apps can link the same visualizer without collision.
+
+### What each side configures
+
+- **Your app** configures exactly ONE thing: the visualizer's base URL (where it runs). Everything
+  else rides in the link, per click.
+- **The visualizer** configures NOTHING about your app - the `return` / `return_label` params
+  describe you completely.
+
+That asymmetry is deliberate: the seam is a convention, not a coupling. One visualizer serves many
+apps; one app can point at any visualizer. Two generic apps, one hyperlink each way.
+
+### Running the visualizer standalone
+
+The plugin ships a persistent server (`plugin/server/server.py`) and a no-admin autostart installer
+(`plugin/server/install_service.py`) so the visualizer stays up at a stable URL. See the
+`topics-setup` skill for the one-command setup, then point your app's link at that URL.
+
+### When to pick Mode B over Mode A
+
+- The visualizer should **own its topics** (one home, its own SQLite store) and gain features
+  independently of your app -> **Mode B**.
+- You want the three views **inside** your app, over your existing data model, as one process ->
+  **Mode A**.

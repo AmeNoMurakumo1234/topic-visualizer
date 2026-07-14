@@ -34,6 +34,9 @@ header .hud { margin-left: auto; font-size: 12px; color: var(--dim); }
 header .hud b { color: var(--ink); }
 header .home { color: var(--dim); text-decoration: none; font-size: 13px; margin-left: 12px; }
 header .home:hover { color: var(--ink); }
+header .returnlink { color: var(--dim); text-decoration: none; font-size: 13px; white-space: nowrap;
+  flex-shrink: 0; padding: 2px 9px; border: 1px solid var(--line); border-radius: 6px; background: #0b101f; }
+header .returnlink:hover { color: var(--ink); border-color: var(--accent); }
 /* PLANNED rows: instead of smushing everything onto one line (ugly even on wide screens), the header
    reads as intentional rows - (1) identity + status, (2) project + view tabs, (3) the search/add tools -
    each nav/tools cluster taking its own full-width row via flex-basis. It still wraps FURTHER on narrow
