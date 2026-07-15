@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.41.0 - 2026-07-15 - Field-postmortem hardening: honest persistence, visible failures, clean-machine embedder
+
+From a real user's fresh-machine install report (0.40.1): the install ended "fully working" only
+after the user caught a defect the tooling reported as green. Eight fixes so the next stranger does
+not have to be the QA.
+
+- **The installer now self-starts the visualizer, detached.** It launches through the same login
+  launcher (never `server.py` directly, which spawned a server that died with the agent session), and
+  its JSON output carries `"started"`. The setup skill Step 1 no longer tells anyone to run the server
+  by hand. (issue 1)
+- **`topic_doctor` no longer false-greens persistence.** The launcher stamps the process it starts
+  (`TOPICS_LAUNCHED_BY=autostart`); the server reports it; the doctor only calls persistence "ok" when
+  the RUNNING server is the detached one - a hand-started, session-bound server now reads "degraded,
+  restart via the launcher." (issue 2)
+- **Autostarted processes now log.** stdout/stderr go to `~/.topic-visualizer/logs/{server,embedder}.log`
+  (truncate-on-start) instead of DEVNULL, and the doctor tails them when a component is unreachable -
+  every login-time failure is now self-diagnosing. (issues 3, 4)
+- **The bundled embedder is actually bundled.** `--embedder` install now creates a dedicated venv,
+  installs sentence-transformers there, and pre-downloads the model while the user is watching (visible
+  errors) instead of pip-ing into the global interpreter windowless at first login. Best-effort: a
+  failed provision never fails the install (keyword mode + a loud doctor). (issue 3)
+- **The session-end sweep hook reads as a routine checkpoint, not a blocking error**, and can be
+  silenced with `TOPICS_SWEEP_HOOK=off`. (issue 5)
+- **A once-a-day SessionStart nudge** points captured-but-not-set-up users at `/topics-setup` instead
+  of leaving the visualizer silently half-working. (issue 6)
+- **Skills now disambiguate topics from Asana / task trackers** - topics are local topic-tree seeds via
+  the `topic_*` MCP tools, never a project-management task; the convert-to-work exit is specified.
+  (issue 7)
+- **The launcher health-checks the port before skipping startup** (a foreign squatter no longer
+  silently suppresses the real server, and is logged). (issue 8)
+
 ## 0.40.1 - 2026-07-13 - Mode B: the standalone "link" integration (configurable callback URLs)
 
 A second, first-class way to integrate - two standalone apps joined by a hyperlink, no vendoring and
