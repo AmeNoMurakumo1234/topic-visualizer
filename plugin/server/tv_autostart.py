@@ -150,7 +150,9 @@ def main():
         if newest_launcher and Path(newest_launcher).resolve() != me:
             new_src = Path(newest_launcher).read_text(encoding="utf-8")
             if new_src != me.read_text(encoding="utf-8"):
-                me.write_text(new_src, encoding="utf-8")
+                tmp = me.with_suffix(".py.new")
+                tmp.write_text(new_src, encoding="utf-8")
+                os.replace(str(tmp), str(me))   # atomic on same filesystem - never a torn launcher
     except Exception:
         pass
 

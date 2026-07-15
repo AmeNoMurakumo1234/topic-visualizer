@@ -162,7 +162,7 @@ class ServerBackend:
                 "The server is RUNNING but as a hand-started/session-bound process (launched_by="
                 f"{launched_by!r}) - it will NOT survive the shell that started it, even though a login "
                 "autostart is installed. Stop it and let the DETACHED login server take over: run "
-                f'"python {installer} --stop", then re-run the /topics-setup skill (or install_service.py) '
+                f'\'python "{installer}" --stop\', then re-run the /topics-setup skill (or install_service.py) '
                 "to start the persistent one.")
         elif running and autostart and not stamp_capable:
             out["backend"] = "server (HTTP)"

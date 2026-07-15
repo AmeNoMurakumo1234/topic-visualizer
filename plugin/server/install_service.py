@@ -275,7 +275,8 @@ def main():
     if rc == 0:
         started = False
         if not args.dry_run and not args.no_start:
-            started = _start_via_launcher()
+            _stop_processes(False)      # replace any old/unstamped running server so the refreshed,
+            started = _start_via_launcher()   # stamped launcher's server takes over in one step
         print(json.dumps({"installed": True, "autostart": autostart, "launcher": str(LAUNCHER),
                           "started": started, "no_admin": True, "self_healing": True,
                           "upgrade_aware": True, "dry_run": args.dry_run}))
