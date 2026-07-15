@@ -40,7 +40,41 @@ class DoctorLaunchedByTests(unittest.TestCase):
             os.environ.pop("TOPICS_LAUNCHED_BY", None)
             importlib.reload(server)
             d = server.doctor()
-        self.assertIn(d.get("launched_by"), (None, "manual"))
+        self.assertEqual(d.get("launched_by"), "manual")
+
+
+import mcp_tools  # noqa: E402
+
+
+class McpPersistenceVerdict(unittest.TestCase):
+    """Drives mcp_tools.ServerBackend.doctor()'s three-way persistence verdict with the
+    HTTP + autostart layers stubbed - no live server needed. Pins the branch this release
+    exists for: persistence == 'ok' ONLY for a running, autostart-installed server whose
+    OWN launched_by says 'autostart'; anything else running+autostart is 'degraded' with a
+    session-bound message."""
+
+    @staticmethod
+    def _fake_http(launched_by):
+        def _http(method, url, body=None, headers=None):
+            if "/api/doctor" in url:
+                return {"launched_by": launched_by, "version": mcp_tools.VERSION}
+            # any other probe (e.g. the board /api/whoami routing hint) - no board present
+            raise mcp_tools.Unreachable("no board here")
+        return _http
+
+    def test_autostart_launched_by_is_ok(self):
+        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_http", side_effect=self._fake_http("autostart")):
+            d = mcp_tools.ServerBackend().doctor()
+        self.assertEqual(d["persistence"], "ok")
+        self.assertFalse(any("session-bound" in msg for msg in d["degraded"]))
+
+    def test_manual_launched_by_is_degraded_session_bound(self):
+        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_http", side_effect=self._fake_http("manual")):
+            d = mcp_tools.ServerBackend().doctor()
+        self.assertEqual(d["persistence"], "degraded")
+        self.assertTrue(any("session-bound" in msg for msg in d["degraded"]), d["degraded"])
 
 
 if __name__ == "__main__":
