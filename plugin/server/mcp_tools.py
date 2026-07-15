@@ -78,6 +78,17 @@ def _autostart_installed() -> bool:
     return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
 
 
+def _launcher_stamps() -> bool:
+    """True if the DEPLOYED login launcher (~/.topic-visualizer/tv-autostart.py) is new enough to stamp
+    the server it starts (its source contains the TOPICS_LAUNCHED_BY marker). A frozen pre-0.41.0
+    launcher returns False - the doctor must NOT demand a stamp such a launcher cannot produce."""
+    p = Path.home() / ".topic-visualizer" / "tv-autostart.py"
+    try:
+        return "TOPICS_LAUNCHED_BY" in p.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------- server backend ----
 class ServerBackend:
     """HTTP passthrough to the plugin server when it is running; DIRECT in-process
@@ -139,17 +150,27 @@ class ServerBackend:
         autostart = _autostart_installed()
         out["autostart_installed"] = autostart
         launched_by = (http_doctor or {}).get("launched_by")
+        stamp_capable = _launcher_stamps()
+        installer = str(Path(__file__).resolve().parent / "install_service.py")
         if running and autostart and launched_by == "autostart":
             out["backend"] = "server (HTTP)"
             out["persistence"] = "ok"
-        elif running and autostart and launched_by != "autostart":
+        elif running and autostart and stamp_capable and launched_by != "autostart":
             out["backend"] = "server (HTTP)"
             out["persistence"] = "degraded"
             degraded.append(
                 "The server is RUNNING but as a hand-started/session-bound process (launched_by="
                 f"{launched_by!r}) - it will NOT survive the shell that started it, even though a login "
-                "autostart is installed. Restart it via the launcher so the DETACHED one takes over: "
-                "pythonw ~/.topic-visualizer/tv-autostart.py (Windows: or wscript the Startup VBS).")
+                "autostart is installed. Stop it and let the DETACHED login server take over: run "
+                f'"python {installer} --stop", then re-run the /topics-setup skill (or install_service.py) '
+                "to start the persistent one.")
+        elif running and autostart and not stamp_capable:
+            out["backend"] = "server (HTTP)"
+            out["persistence"] = "ok"
+            out["persistence_note"] = (
+                "Your login launcher predates 0.41.0 and cannot stamp the server, so persistence is "
+                "assumed ok (that launcher still starts the server detached). Re-run /topics-setup to "
+                "refresh the launcher, after which persistence reporting becomes exact.")
         elif running and not autostart:
             out["backend"] = "server (HTTP)"
             out["persistence"] = "degraded"
@@ -241,7 +262,7 @@ class ServerBackend:
 
         if _up():
             return {"url": url, "running": True}
-        script = str(Path(__file__).resolve().parent / "server.py")
+        launcher = Path.home() / ".topic-visualizer" / "tv-autostart.py"
         exe = Path(sys.executable)
         pyw = exe.with_name("pythonw.exe")
         py = str(pyw if pyw.exists() else exe)
@@ -251,8 +272,15 @@ class ServerBackend:
                 kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
             else:
                 kwargs["start_new_session"] = True
-            subprocess.Popen([py, script, "--port", port], **kwargs)
+            if launcher.exists():
+                # start THROUGH the persistent launcher so the server is stamped (launched_by=autostart)
+                # and the doctor sees the detached login server, never a bare unstamped server.py spawn
+                subprocess.Popen([py, str(launcher)], **kwargs)
+            else:
+                script = str(Path(__file__).resolve().parent / "server.py")
+                subprocess.Popen([py, script, "--port", port], **kwargs)
         except Exception as e:
+            script = str(Path(__file__).resolve().parent / "server.py")
             return {"url": url, "running": False, "started": False,
                     "hint": f'could not auto-start ({e}). Start it: python "{script}" --port {port}'}
         for _ in range(15):                    # up to ~3s for it to bind

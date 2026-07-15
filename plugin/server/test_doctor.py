@@ -15,6 +15,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
@@ -63,18 +64,72 @@ class McpPersistenceVerdict(unittest.TestCase):
         return _http
 
     def test_autostart_launched_by_is_ok(self):
-        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
-             patch.object(mcp_tools, "_http", side_effect=self._fake_http("autostart")):
-            d = mcp_tools.ServerBackend().doctor()
-        self.assertEqual(d["persistence"], "ok")
-        self.assertFalse(any("session-bound" in msg for msg in d["degraded"]))
+        # launched_by="autostart" is ok regardless of whether the deployed launcher is stamp-capable -
+        # make this robust to either state of the machine running the suite.
+        for stamp_capable in (True, False):
+            with self.subTest(stamp_capable=stamp_capable), \
+                 patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+                 patch.object(mcp_tools, "_launcher_stamps", return_value=stamp_capable), \
+                 patch.object(mcp_tools, "_http", side_effect=self._fake_http("autostart")):
+                d = mcp_tools.ServerBackend().doctor()
+            self.assertEqual(d["persistence"], "ok")
+            self.assertFalse(any("session-bound" in msg for msg in d["degraded"]))
 
     def test_manual_launched_by_is_degraded_session_bound(self):
+        # a STAMP-CAPABLE (0.41.0+) launcher with a manual/session-bound server must still degrade -
+        # this is the false-GREEN fix; must not be weakened by the frozen-launcher honesty fix.
         with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_launcher_stamps", return_value=True), \
              patch.object(mcp_tools, "_http", side_effect=self._fake_http("manual")):
             d = mcp_tools.ServerBackend().doctor()
         self.assertEqual(d["persistence"], "degraded")
         self.assertTrue(any("session-bound" in msg for msg in d["degraded"]), d["degraded"])
+
+    def test_manual_launched_by_with_incapable_launcher_is_ok_with_note(self):
+        # a FROZEN pre-0.41.0 launcher cannot stamp what it starts, so launched_by="manual" here does
+        # NOT mean session-bound - it means the old launcher started it (still detached). The doctor
+        # must not false-RED this: persistence stays "ok", with an honest note instead of a
+        # "session-bound" scare that has no actionable recovery for an old launcher.
+        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_launcher_stamps", return_value=False), \
+             patch.object(mcp_tools, "_http", side_effect=self._fake_http("manual")):
+            d = mcp_tools.ServerBackend().doctor()
+        self.assertEqual(d["persistence"], "ok")
+        self.assertIn("persistence_note", d)
+        self.assertFalse(any("session-bound" in msg for msg in d["degraded"]), d["degraded"])
+
+
+class LauncherStampsTests(unittest.TestCase):
+    """_launcher_stamps() reads the DEPLOYED login launcher (~/.topic-visualizer/tv-autostart.py) and
+    reports whether ITS source is new enough to carry the TOPICS_LAUNCHED_BY stamp - the doctor uses
+    this to know whether a missing stamp means "frozen old launcher" (honest ok) vs "hand-started"
+    (real degradation)."""
+
+    def test_true_when_deployed_launcher_contains_stamp_marker(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.py").write_text(
+                "TOPICS_LAUNCHED_BY = 'autostart'\n", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertTrue(mcp_tools._launcher_stamps())
+
+    def test_false_when_deployed_launcher_lacks_stamp_marker(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.py").write_text(
+                "# an old pre-0.41.0 launcher with no stamp concept\n", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertFalse(mcp_tools._launcher_stamps())
+
+    def test_false_when_deployed_launcher_missing(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)     # no ~/.topic-visualizer/tv-autostart.py at all
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertFalse(mcp_tools._launcher_stamps())
 
 
 if __name__ == "__main__":

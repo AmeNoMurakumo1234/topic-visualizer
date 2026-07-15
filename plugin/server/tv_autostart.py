@@ -22,6 +22,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -139,18 +140,36 @@ def main():
     if not server:                                   # no version dir under base + no pinned path -> gone
         _self_clean(cfg)
         return
+
+    # Adopt the newest launcher CODE too (not just the newest server) - without this the launcher
+    # stays frozen on its install-time code and starts new servers unstamped. Best-effort; affects the
+    # NEXT login (this process already loaded its own code).
+    try:
+        newest_launcher = _resolve(base, "server/tv_autostart.py", None)
+        me = Path(__file__).resolve()
+        if newest_launcher and Path(newest_launcher).resolve() != me:
+            new_src = Path(newest_launcher).read_text(encoding="utf-8")
+            if new_src != me.read_text(encoding="utf-8"):
+                me.write_text(new_src, encoding="utf-8")
+    except Exception:
+        pass
+
     pyw = _pythonw()
     sport = cfg.get("server_port", 8991)
-    if not _ours(sport):
+    server_up = _ours(sport)
+    if not server_up:
+        time.sleep(0.3)                 # our own server can miss the 1s probe on a loaded machine at login
+        server_up = _ours(sport)
+    if not server_up:
         if _port_open(sport):
-            # Someone is listening but didn't answer our /api/version signature -> a
-            # foreign process squats the port. Do NOT start our server (the port is
-            # taken); leave a note the doctor's log-tail (Task 3) will surface.
+            # something is listening but did not answer our /api/version health check within the timeout;
+            # do NOT start a second server on an occupied port. Note it for the doctor's log-tail.
             try:
                 LOGDIR.mkdir(parents=True, exist_ok=True)
                 _logfile("server").write_text(
-                    f"port {sport} is occupied by a NON-topic-visualizer process; not starting our "
-                    "server (free the port, then re-run the launcher)\n", encoding="utf-8")
+                    f"port {sport} is in use but did not answer the topic-visualizer health check "
+                    "(a foreign process may be squatting it, or our server was slow to respond); not "
+                    "starting a second server\n", encoding="utf-8")
             except Exception:
                 pass
         else:
