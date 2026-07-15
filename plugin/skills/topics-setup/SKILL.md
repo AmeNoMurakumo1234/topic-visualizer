@@ -39,8 +39,12 @@ On **yes**, use the bundled installer (do not make the user hand-write a service
   best-effort path - if you cannot fully wire it, hand the user the exact remaining command; do not
   pretend it is done.
 
-After installing, **START the server now** (`python "<PLUGIN>/server/server.py" --port 8991`, plus the
-embedder if chosen) so the user does not have to log out, then confirm it answers via `topic_doctor`.
+The installer now STARTS the visualizer for you, detached, the same way login does - its JSON
+output includes `"started": true`. Do NOT run `server.py` directly: a hand-started server is a
+child of your session and dies when the terminal closes (it will look fine to `topic_doctor` for
+this session, then vanish). If for any reason you must start it yourself, use the launcher, never
+the server: `pythonw ~/.topic-visualizer/tv-autostart.py` (Windows: or `wscript` the Startup VBS).
+Then confirm persistence with `topic_doctor` - it now tells detached from session-bound (Step 1a).
 
 ## Step 2 - Semantic ranking: the embedder
 

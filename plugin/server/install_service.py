@@ -136,6 +136,22 @@ def _unix_unit(argv):
               f"Restart=on-failure\n\n[Install]\nWantedBy=default.target")
 
 
+def _start_via_launcher() -> bool:
+    """Start the visualizer the SAME detached way login does - via the launcher, never server.py
+    directly (a directly-spawned server is a child of THIS process and dies with it). Idempotent:
+    the launcher skips a port already serving. Best-effort; returns whether we launched it."""
+    if not LAUNCHER.exists():
+        return False
+    flags = ({"creationflags": 0x00000008 | 0x00000200} if os.name == "nt"
+             else {"start_new_session": True})
+    try:
+        subprocess.Popen([_pythonw(), str(LAUNCHER)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **flags)
+        return True
+    except Exception:
+        return False
+
+
 def install(server_port, embedder, embed_port, dry):
     win = platform.system() == "Windows"
     vbs = _startup_vbs() if win else None
@@ -207,6 +223,8 @@ def main():
                     help="STOP our processes AND remove the autostart + launcher + config")
     ap.add_argument("--stop", action="store_true", help="stop our running processes only")
     ap.add_argument("--dry-run", action="store_true", help="print everything, change nothing")
+    ap.add_argument("--no-start", action="store_true",
+                    help="install autostart but do not launch the server now")
     args = ap.parse_args()
 
     if args.stop:
@@ -217,11 +235,14 @@ def main():
         return
     rc, autostart = install(args.port, args.embedder, args.embed_port, args.dry_run)
     if rc == 0:
+        started = False
+        if not args.dry_run and not args.no_start:
+            started = _start_via_launcher()
         print(json.dumps({"installed": True, "autostart": autostart, "launcher": str(LAUNCHER),
-                          "no_admin": True, "self_healing": True, "upgrade_aware": True,
-                          "dry_run": args.dry_run}))
+                          "started": started, "no_admin": True, "self_healing": True,
+                          "upgrade_aware": True, "dry_run": args.dry_run}))
     else:
-        print(json.dumps({"installed": False, "dry_run": args.dry_run}))
+        print(json.dumps({"installed": False, "started": False, "dry_run": args.dry_run}))
         sys.exit(rc)
 
 
