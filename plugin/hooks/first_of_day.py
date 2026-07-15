@@ -86,8 +86,8 @@ try:
         # it never doubles up with a served card), and never when autostart is installed
         # or nothing has been captured yet.
         if not _autostart_installed() and _store_exists():
-            if not (NUDGE_STAMP.exists() and NUDGE_STAMP.read_text().strip() == today):
-                NUDGE_STAMP.write_text(today)
+            if not (NUDGE_STAMP.exists() and NUDGE_STAMP.read_text(encoding="utf-8").strip() == today):
+                NUDGE_STAMP.write_text(today, encoding="utf-8")
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext":

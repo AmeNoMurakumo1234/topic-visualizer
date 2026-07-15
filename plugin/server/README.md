@@ -77,3 +77,7 @@ is already a shared store).
 
 `python test_server.py` (HTTP e2e over a throwaway db) and `python test_mcp.py`
 (real stdio JSON-RPC; the board leg auto-skips without a live board).
+
+Also stdlib `unittest`, same `python <file>.py` way, no pytest: `python test_install.py`,
+`python test_doctor.py`, `python test_autostart.py`, and the hook tests
+`python ../hooks/test_sweep_reminder.py` and `python ../hooks/test_first_of_day.py`.

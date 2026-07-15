@@ -49,7 +49,9 @@ def _venv_python() -> Path:
 def _provision_embedder(dry) -> str | None:
     """Create a dedicated venv, install sentence-transformers, pre-download the model NOW (visible
     errors), and return the venv python. Returns None on failure (caller keeps the plugin working in
-    keyword mode and reports it - never a silent half-install)."""
+    keyword mode and reports it - never a silent half-install).
+    Note: a FAILED provision may still leave a partial venv on disk at VENV; the next --embedder
+    run reuses/overwrites it rather than requiring a manual cleanup."""
     if dry:
         print(f"DRY-RUN: create venv {VENV}; pip install sentence-transformers; pre-download all-MiniLM-L6-v2")
         return str(_venv_python())
@@ -63,6 +65,8 @@ def _provision_embedder(dry) -> str | None:
                         "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"], check=True)
         return py
     except Exception as e:
+        # human/log diagnostic only - no code reads "embedder_provisioned" back; only
+        # embed_python (None here) is consulted downstream by the launcher.
         print(json.dumps({"embedder_provisioned": False, "error": str(e)}))
         return None
 

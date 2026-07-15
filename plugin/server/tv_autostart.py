@@ -80,7 +80,8 @@ def _ours(port) -> bool:
     simply "not ours"."""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/api/version", timeout=1) as r:
-            return "version" in json.loads(r.read())
+            body = json.loads(r.read())
+            return isinstance(body, dict) and "version" in body
     except Exception:
         return False
 

@@ -21,7 +21,7 @@ except Exception:
     payload = {}
 
 # opt-out: fully silent, no stdout, for users who do not want the checkpoint at all
-if os.environ.get("TOPICS_SWEEP_HOOK", "").lower() in ("off", "0", "false"):
+if os.environ.get("TOPICS_SWEEP_HOOK", "").strip().lower() in ("off", "0", "false"):
     sys.exit(0)
 
 # never loop: if this stop was already caused by a hook block, let it through
