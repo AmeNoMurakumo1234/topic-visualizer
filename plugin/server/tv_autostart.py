@@ -157,10 +157,14 @@ def main():
     if cfg.get("embedder"):
         emb = _resolve(base, cfg.get("embed_leaf", "server/serve_embedder.py"), cfg.get("pinned_embedder"))
         eport = cfg.get("embed_port", 8082)
+        # Task 8: run the embedder from its OWN dedicated venv (sentence-transformers + torch
+        # pre-installed, model pre-downloaded at install time) when install_service provisioned one;
+        # else fall back to the same interpreter that runs this launcher (keyword mode only).
+        embpy = cfg.get("embed_python") or pyw
         # The embedder is an OpenAI-style server with no plugin /api/version signature,
         # so it stays on the plain _port_open check (no way to tell "ours" from foreign).
         if emb and not _port_open(eport):
-            subprocess.Popen([pyw, emb, "--port", str(eport)], **_detached("embedder"))
+            subprocess.Popen([embpy, emb, "--port", str(eport)], **_detached("embedder"))
 
 
 if __name__ == "__main__":

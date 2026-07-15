@@ -18,6 +18,8 @@ user-scope launchd/systemd unit (already admin-free).
 
 The user's DATA (~/.topic-visualizer topics) is never touched here - removed only via topics-teardown.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -31,12 +33,38 @@ HERE = Path(__file__).resolve().parent
 HOME = Path.home() / ".topic-visualizer"
 LAUNCHER = HOME / "tv-autostart.py"
 CFG = HOME / "tv-autostart.json"
+VENV = HOME / "venv"
 
 
 def _pythonw() -> str:
     exe = Path(sys.executable)
     pw = exe.with_name("pythonw.exe")
     return str(pw if pw.exists() else exe)
+
+
+def _venv_python() -> Path:
+    return VENV / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+
+
+def _provision_embedder(dry) -> str | None:
+    """Create a dedicated venv, install sentence-transformers, pre-download the model NOW (visible
+    errors), and return the venv python. Returns None on failure (caller keeps the plugin working in
+    keyword mode and reports it - never a silent half-install)."""
+    if dry:
+        print(f"DRY-RUN: create venv {VENV}; pip install sentence-transformers; pre-download all-MiniLM-L6-v2")
+        return str(_venv_python())
+    try:
+        import venv as _v
+        _v.EnvBuilder(with_pip=True).create(str(VENV))
+        py = str(_venv_python())
+        subprocess.run([py, "-m", "pip", "install", "-q", "sentence-transformers"], check=True)
+        subprocess.run([py, "-c",
+                        "from sentence_transformers import SentenceTransformer; "
+                        "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"], check=True)
+        return py
+    except Exception as e:
+        print(json.dumps({"embedder_provisioned": False, "error": str(e)}))
+        return None
 
 
 def _startup_vbs() -> Path:
@@ -103,10 +131,11 @@ def _stop_processes(dry) -> list:
     return acted
 
 
-def _config(server_port, embedder, embed_port, artifacts) -> dict:
+def _config(server_port, embedder, embed_port, artifacts, embed_python=None) -> dict:
     """Store the plugin BASE dir (not a version-pinned leaf), so the launcher resolves NEWEST at run
     time. pinned_* is a fallback for a non-versioned (source) layout. artifacts = files we own and must
-    remove on teardown (the Startup .vbs)."""
+    remove on teardown (the Startup .vbs). embed_python = the dedicated embedder venv interpreter
+    (Task 8), or None when provisioning wasn't run/failed - the launcher then falls back to pyw."""
     return {
         "base": str(HERE.parent.parent),
         "server_leaf": HERE.name + "/server.py",
@@ -116,6 +145,7 @@ def _config(server_port, embedder, embed_port, artifacts) -> dict:
         "server_port": server_port,
         "embedder": bool(embedder),
         "embed_port": embed_port,
+        "embed_python": embed_python,
         "artifacts": artifacts,
         "tasks": [],                      # empty now (VBS default); legacy 0.17.0 installs used a task
     }
@@ -155,7 +185,11 @@ def _start_via_launcher() -> bool:
 def install(server_port, embedder, embed_port, dry):
     win = platform.system() == "Windows"
     vbs = _startup_vbs() if win else None
-    cfg = _config(server_port, embedder, embed_port, [str(vbs)] if vbs else [])
+    # Best-effort: a provisioning failure (no network, pip error, disk full, ...) must NEVER fail the
+    # install. _provision_embedder catches everything internally and returns None on failure; the
+    # plugin then simply runs in keyword mode (embed_python absent, launcher falls back to pyw).
+    embed_python = _provision_embedder(dry) if embedder else None
+    cfg = _config(server_port, embedder, embed_port, [str(vbs)] if vbs else [], embed_python=embed_python)
     if dry:
         print(f"DRY-RUN: copy launcher -> {LAUNCHER}")
         print(f"DRY-RUN: write config  -> {CFG}: {json.dumps(cfg)}")

@@ -58,11 +58,17 @@ If the doctor says semantic ranking is OFF, ask:
 > embedder - I start a small local one; (b) bring-your-own - point at an OpenAI-style /v1/embeddings
 > endpoint you already run; (c) skip - stay in keyword mode." [a / b / c]
 
-- **(a) bundled (recommended):** run the plugin's bundled embedder,
-  `python "<PLUGIN>/server/serve_embedder.py"` (CPU, all-MiniLM-L6-v2, auto-downloads ~80MB once). If
-  the user chose persistence in Step 1, add it to the SAME autostart so both come up at login. It needs
-  `sentence-transformers` (`pip install sentence-transformers`); if that is missing it prints exactly
-  that and exits - install it and retry, or fall back to (b)/(c).
+- **(a) bundled (recommended):** run the installer with `--embedder`:
+  `python "<PLUGIN>/server/install_service.py" --embedder` (add it to the same Step 1 command if the
+  user also wants persistence - one autostart brings up both). At install time (NOW, while the user is
+  watching, not silently at first login) it self-provisions a **dedicated venv** at
+  `~/.topic-visualizer/venv`, `pip install`s `sentence-transformers` into it, and pre-downloads the
+  all-MiniLM-L6-v2 model (~80MB) into it - all with visible output, so a failure (no network, pip
+  error, disk full) is something you and the user SEE and can fix, not a silent first-login stall. The
+  launcher then runs the embedder from that dedicated interpreter, not the machine's global Python -
+  so this never depends on what happens to be `pip install`ed globally. Provisioning is best-effort: if
+  it fails, the install still succeeds (server + persistence still work) and the plugin stays in
+  keyword mode until you retry `--embedder` or fall back to (b)/(c).
 - **(b) BYO:** set `TOPICS_EMBED_URL` to their endpoint (persist it in their environment, not just this
   shell) and verify the doctor now reports the embedder reachable.
 - **(c) skip:** fine - but state plainly that search/dedup/serve will run keyword-only, and that the
