@@ -18,6 +18,7 @@
 - Commits: single-line subject, authored under the owner's git identity, NO `Co-Authored-By` trailer (topic-visualizer delegation convention).
 - The doctor's degraded messages are the diagnostic spine - keep their shape: symptom, consequence, exact fix command.
 - Never touch the user's data (`~/.topic-visualizer` topic stores). Only teardown removes data.
+- TEST CONVENTION (overrides the per-task snippets' FORM): this plugin has NO pytest and no pytest config. Its tests are self-contained `unittest.TestCase` scripts under `plugin/server/` (e.g. `test_server.py`, `test_mcp.py`), each runnable via plain `python test_x.py` with an `if __name__ == "__main__": unittest.main(verbosity=2)` footer. Do NOT add pytest or a `tests/` dir. The test CODE BLOCKS shown inside each task specify the ASSERTIONS to make and the RED/GREEN behaviour to prove - translate them into `unittest.TestCase` methods in a new `plugin/server/test_<area>.py` (or add to an existing server/test file), using `self.assertEqual`/`self.assertIn`/`self.assertFalse` etc. and `unittest`-style setUp/env handling instead of pytest fixtures/`monkeypatch`. The assertion logic is what matters, not the framework. Run tests with `cd plugin/server && python test_<area>.py`.
 
 ---
 
