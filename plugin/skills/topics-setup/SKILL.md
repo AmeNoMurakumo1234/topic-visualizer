@@ -20,6 +20,10 @@ Call the **`topic_doctor`** MCP tool. It returns resolved config + live up/down 
 Read it back to the user in plain language: what already works, and what is degraded. Everything below
 is aimed at emptying that `degraded` list. Re-run it after each fix to show progress.
 
+If the doctor call fails or the `topic_*` tools appear missing, verify you are calling
+`mcp__plugin_topic-visualizer_topics__*` - not a similarly-named tool from another server (e.g. an
+Asana connector under a UUID namespace) - before diagnosing anything.
+
 ## Step 1 - Persistence: keep the visualizer running
 
 If the doctor says the server is not running / not persistent, ask:

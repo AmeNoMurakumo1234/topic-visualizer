@@ -1,6 +1,6 @@
 ---
 name: topics-capture
-description: Use during any conversation when a substantive topic surfaces that cannot be pursued now - an idea the human waves past, a sibling of the thing being discussed, a question you (the AI) believe deserves real future attention. Captures it into the topics tree so it survives the session instead of dying in scrollback. Also governs when NOT to capture.
+description: Use during any conversation when a substantive topic surfaces that cannot be pursued now - an idea the human waves past, a sibling of the thing being discussed, a question you (the AI) believe deserves real future attention. Captures it into the topics tree so it survives the session instead of dying in scrollback. Also governs when NOT to capture. Topics are conversation seeds in the LOCAL topic tree (the topic_* MCP tools from the topic-visualizer server) - NOT project-management tasks; never route topic capture/list/serve to Asana, Jira, or any task tracker.
 ---
 
 # topics-capture: plant what would otherwise die
@@ -54,6 +54,10 @@ single rule is what keeps the tree bounded by real attention and prevents the
 graveyard failure (see the repo CHARTER).
 
 ## How to capture (the record)
+
+To plant a topic, use the `topic_add` / `topic_list` / `topic_serve` tools from the
+topic-visualizer MCP server (namespace `mcp__plugin_topic-visualizer_topics__*`), not a
+similarly-worded tool from another server.
 
 Each topic is self-contained - written for a future session with zero context:
 

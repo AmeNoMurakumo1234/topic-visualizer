@@ -1,6 +1,6 @@
 ---
 name: topics-serve
-description: Use when the human sits down and asks what to talk about, when they ask "what am I missing?", when a conversation naturally closes and there's room for one more, or when work touches territory where captured topics live. Deals ONE topic card at the right moment - never the list - and runs the topic's exit doors (discussed / reopened / converted to work+decision).
+description: Use when the human sits down and asks what to talk about, when they ask "what am I missing?", when a conversation naturally closes and there's room for one more, or when work touches territory where captured topics live. Deals ONE topic card at the right moment - never the list - and runs the topic's exit doors (discussed / reopened / converted to work+decision). Topics are conversation seeds in the LOCAL topic tree (the topic_* MCP tools from the topic-visualizer server) - NOT project-management tasks; never route topic capture/list/serve to Asana, Jira, or any task tracker.
 ---
 
 # topics-serve: deal one card, never the list
@@ -12,6 +12,10 @@ present the topic list.** The list is the overwhelm that killed the ideas origin
 Serve exactly ONE topic - the top-ranked open card - formed as an artifact with one
 question: its context (self-contained), its `THE QUESTION:` line, and its time-weight,
 so they can accept, defer, or say "next" for the second card.
+
+Use the `topic_add` / `topic_list` / `topic_serve` tools from the topic-visualizer MCP
+server (namespace `mcp__plugin_topic-visualizer_topics__*`), not a similarly-worded tool
+from another server.
 
 ## When to serve
 
@@ -42,6 +46,10 @@ resurfacing. Time-weight is not a ranking input - read it off the card when matc
    mint the work item(s) in the work tracker, link them back to the topic, THEN mark it
    discussed. A maybe never silently becomes a commitment - conversion is the only
    bridge, and it is always explicit.
+
+   "Converted to work" means the HUMAN takes it into their own work tracker. The skill records the
+   conversion with `topic_convert` (a local state change) - it does NOT create an external task in
+   Asana/Jira/Linear/etc. unless the human explicitly asks, and if they do, confirm WHICH tracker first.
 3. **Pruned** - the human decides the branch isn't worth exploring. Confirm with the
    descendant count ("pruning this removes N topics beneath it - whole branch, or
    lower?"), remind them it is reversible, then prune. Celebrate this outcome equally:

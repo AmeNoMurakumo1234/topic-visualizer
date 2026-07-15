@@ -1,6 +1,6 @@
 ---
 name: topics
-description: The always-on discipline for the topic tree - the "might-do" space that keeps the conversations you haven't had yet from dying in scrollback. Load this to orient to the WHOLE lifecycle and know which tool to reach for; it points to the task skills rather than repeating them. Trigger whenever unpursued ideas surface in a session, when the human mentions topics / the tree / the visualizer, when you need the capture reflex, how a topic becomes work, or how to check the system's health.
+description: The always-on discipline for the topic tree - the "might-do" space that keeps the conversations you haven't had yet from dying in scrollback. Load this to orient to the WHOLE lifecycle and know which tool to reach for; it points to the task skills rather than repeating them. Trigger whenever unpursued ideas surface in a session, when the human mentions topics / the tree / the visualizer, when you need the capture reflex, how a topic becomes work, or how to check the system's health. Topics are conversation seeds in the LOCAL topic tree (the topic_* MCP tools from the topic-visualizer server) - NOT project-management tasks; never route topic capture/list/serve to Asana, Jira, or any task tracker.
 ---
 
 # topics: the discipline of the might-do tree
