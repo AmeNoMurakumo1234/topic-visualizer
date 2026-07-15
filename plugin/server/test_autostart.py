@@ -8,10 +8,13 @@ download failure) was invisible and the doctor could only say "not reachable", n
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -94,6 +97,75 @@ class DetachedLogRedirectTests(unittest.TestCase):
             finally:
                 if hasattr(fh, "close"):
                     fh.close()
+
+
+class _StubHandler(BaseHTTPRequestHandler):
+    """Minimal stub HTTP server for _ours() tests. Subclasses set `response_body`
+    (bytes) and `status` (int) as class attributes to control what /api/version
+    (or any path, since the stub answers every path) returns."""
+    response_body = b'{"version": "1.2.3"}'
+    status = 200
+
+    def do_GET(self):
+        self.send_response(self.status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(self.response_body)
+
+    def log_message(self, fmt, *args):  # silence stderr noise during tests
+        pass
+
+
+class _StubServer:
+    """Context manager: binds a _StubHandler subclass to an ephemeral port on a
+    background thread, yields the port, and tears the server down cleanly."""
+
+    def __init__(self, handler_cls):
+        self.handler_cls = handler_cls
+        self.httpd = None
+        self.thread = None
+
+    def __enter__(self):
+        self.httpd = HTTPServer(("127.0.0.1", 0), self.handler_cls)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        return self.httpd.server_address[1]
+
+    def __exit__(self, *exc):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+
+
+class HealthSignatureTests(unittest.TestCase):
+    """_ours(port): a health-signature check (GET /api/version, JSON with a
+    'version' key) so a foreign process squatting on the port is never mistaken
+    for our server. Must never raise; a dead or non-conforming port is "not ours"."""
+
+    def test_ours_false_on_dead_port(self):
+        # Nothing listens on 59999 -> not ours (and no exception escapes).
+        self.assertIs(tv_autostart._ours(59999), False)
+
+    def test_ours_true_when_signature_matches(self):
+        class Handler(_StubHandler):
+            response_body = json.dumps({"version": "0.40.1"}).encode("utf-8")
+
+        with _StubServer(Handler) as port:
+            self.assertIs(tv_autostart._ours(port), True)
+
+    def test_ours_false_on_non_json_body(self):
+        class Handler(_StubHandler):
+            response_body = b"not json at all"
+
+        with _StubServer(Handler) as port:
+            self.assertIs(tv_autostart._ours(port), False)
+
+    def test_ours_false_when_version_key_missing(self):
+        class Handler(_StubHandler):
+            response_body = json.dumps({"ok": True}).encode("utf-8")
+
+        with _StubServer(Handler) as port:
+            self.assertIs(tv_autostart._ours(port), False)
 
 
 import mcp_tools  # noqa: E402

@@ -22,6 +22,7 @@ import re
 import socket
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 CFG = Path.home() / ".topic-visualizer" / "tv-autostart.json"
@@ -68,6 +69,18 @@ def _port_open(port):
         with socket.socket() as s:
             s.settimeout(0.5)
             return s.connect_ex(("127.0.0.1", int(port))) == 0
+    except Exception:
+        return False
+
+
+def _ours(port) -> bool:
+    """True only if the listener on `port` answers our health signature (JSON with a
+    'version' key at /api/version). A foreign squatter fails this, so we never mistake
+    it for our server. No exception ever escapes: a dead or non-conforming port is
+    simply "not ours"."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/api/version", timeout=1) as r:
+            return "version" in json.loads(r.read())
     except Exception:
         return False
 
@@ -127,11 +140,25 @@ def main():
         return
     pyw = _pythonw()
     sport = cfg.get("server_port", 8991)
-    if not _port_open(sport):
-        subprocess.Popen([pyw, server, "--port", str(sport)], **_detached("server"))
+    if not _ours(sport):
+        if _port_open(sport):
+            # Someone is listening but didn't answer our /api/version signature -> a
+            # foreign process squats the port. Do NOT start our server (the port is
+            # taken); leave a note the doctor's log-tail (Task 3) will surface.
+            try:
+                LOGDIR.mkdir(parents=True, exist_ok=True)
+                _logfile("server").write_text(
+                    f"port {sport} is occupied by a NON-topic-visualizer process; not starting our "
+                    "server (free the port, then re-run the launcher)\n", encoding="utf-8")
+            except Exception:
+                pass
+        else:
+            subprocess.Popen([pyw, server, "--port", str(sport)], **_detached("server"))
     if cfg.get("embedder"):
         emb = _resolve(base, cfg.get("embed_leaf", "server/serve_embedder.py"), cfg.get("pinned_embedder"))
         eport = cfg.get("embed_port", 8082)
+        # The embedder is an OpenAI-style server with no plugin /api/version signature,
+        # so it stays on the plain _port_open check (no way to tell "ours" from foreign).
         if emb and not _port_open(eport):
             subprocess.Popen([pyw, emb, "--port", str(eport)], **_detached("embedder"))
 
