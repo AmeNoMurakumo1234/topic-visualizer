@@ -25,7 +25,12 @@ import sys
 from pathlib import Path
 
 CFG = Path.home() / ".topic-visualizer" / "tv-autostart.json"
+LOGDIR = Path.home() / ".topic-visualizer" / "logs"
 _VER = re.compile(r"^\d+(?:\.\d+)*")
+
+
+def _logfile(name):
+    return LOGDIR / f"{name}.log"
 
 
 def _ver_key(name):
@@ -67,13 +72,27 @@ def _port_open(port):
         return False
 
 
-def _detached():
+def _detached(logname=None):
+    """Kwargs for a detached Popen: DETACHED_PROCESS on Windows / new session on unix, the
+    Task-2 TOPICS_LAUNCHED_BY stamp, and - when `logname` is given - stdout/stderr redirected
+    to a truncate-on-start log under LOGDIR so a login-time crash is diagnosable instead of
+    silently swallowed by DEVNULL. Opening the log is best-effort: an unwritable log dir falls
+    back to DEVNULL rather than crashing the launcher."""
     env = {**os.environ, "TOPICS_LAUNCHED_BY": "autostart"}
+    out = err = subprocess.DEVNULL
+    if logname:
+        try:
+            LOGDIR.mkdir(parents=True, exist_ok=True)
+            fh = open(_logfile(logname), "w", encoding="utf-8")  # truncate-on-start
+            out = err = fh
+        except Exception:
+            out = err = subprocess.DEVNULL
+    base = {"stdout": out, "stderr": err, "env": env}
     if os.name == "nt":
-        return {"creationflags": 0x00000008 | 0x00000200,
-                "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "env": env}
-    return {"start_new_session": True,
-            "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "env": env}
+        base["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        base["start_new_session"] = True
+    return base
 
 
 def _self_clean(cfg):
@@ -109,12 +128,12 @@ def main():
     pyw = _pythonw()
     sport = cfg.get("server_port", 8991)
     if not _port_open(sport):
-        subprocess.Popen([pyw, server, "--port", str(sport)], **_detached())
+        subprocess.Popen([pyw, server, "--port", str(sport)], **_detached("server"))
     if cfg.get("embedder"):
         emb = _resolve(base, cfg.get("embed_leaf", "server/serve_embedder.py"), cfg.get("pinned_embedder"))
         eport = cfg.get("embed_port", 8082)
         if emb and not _port_open(eport):
-            subprocess.Popen([pyw, emb, "--port", str(eport)], **_detached())
+            subprocess.Popen([pyw, emb, "--port", str(eport)], **_detached("embedder"))
 
 
 if __name__ == "__main__":

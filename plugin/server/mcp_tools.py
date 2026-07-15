@@ -29,6 +29,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# where tv_autostart.py (the login launcher) writes its detached processes' logs - a module
+# constant (not inlined in doctor()) so tests can patch it without touching Path.home().
+LOGDIR = Path.home() / ".topic-visualizer" / "logs"
 # ranking brains only; server.py opens no DB and starts nothing at import time
 from server import (near_duplicates_in, search_in, rank_candidates,  # noqa: E402
                     project_key_from_cwd, VERSION)
@@ -194,6 +197,27 @@ class ServerBackend:
                 "TOPICS_BOARD_AUTHOR for your name) so capture routes there instead.")
         except Unreachable:
             pass
+        # log-tail: when a component is down, surface the last lines of its autostart log so
+        # a login-time crash (missing package, port conflict, model download failure) is
+        # diagnosable instead of just "not reachable" - see docs/2026-07-postmortem issue 4.
+        def _tail(name, n=8):
+            p = LOGDIR / name
+            try:
+                return [l for l in p.read_text(encoding="utf-8", errors="replace").splitlines()
+                        if l.strip()][-n:]
+            except Exception:
+                return []
+        logs = {}
+        if not running:
+            t = _tail("server.log")
+            if t:
+                logs["server"] = t
+        if "Semantic ranking is OFF" in " ".join(degraded):
+            t = _tail("embedder.log")
+            if t:
+                logs["embedder"] = t
+        if logs:
+            out["logs"] = logs
         out["degraded"] = degraded
         out["verdict"] = "ok" if not degraded else "degraded"
         return out
