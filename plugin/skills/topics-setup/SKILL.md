@@ -90,3 +90,5 @@ onboard gracefully and we release gracefully.
 A user who does not understand the internals should be able to run this once and either be fully working
 or told precisely what remains. Silent half-value is the failure this skill exists to prevent - so the
 last thing you do is prove the state with the doctor, not assert it.
+
+The session-end sweep is a routine checkpoint; set `TOPICS_SWEEP_HOOK=off` to silence it entirely.

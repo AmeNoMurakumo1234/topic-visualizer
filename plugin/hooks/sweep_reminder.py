@@ -10,6 +10,7 @@ needed, then finish.
 (The PreCompact mortality sweep has NO model-visible hook channel at all; that
 duty lives in the topics-capture skill's MORTALITY-AWARE THRESHOLD rule.)"""
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,10 @@ try:
     payload = json.loads(sys.stdin.read() or "{}")
 except Exception:
     payload = {}
+
+# opt-out: fully silent, no stdout, for users who do not want the checkpoint at all
+if os.environ.get("TOPICS_SWEEP_HOOK", "").lower() in ("off", "0", "false"):
+    sys.exit(0)
 
 # never loop: if this stop was already caused by a hook block, let it through
 if payload.get("stop_hook_active"):
@@ -45,8 +50,8 @@ if tpath:
 
 print(json.dumps({
     "decision": "block",
-    "reason": ("SESSION-END TOPIC SWEEP (once per session): if any topic-worthy "
-               "threads surfaced this session and were not planted, plant them now "
-               "via topic_add (batch; they enter as seedlings) and mention it in one "
-               "soft line. If there is nothing to plant, simply finish."),
+    "reason": ("Topic sweep checkpoint (routine, once per session - not an error): if any "
+               "topic-worthy thread surfaced this session and was not captured, plant it now with "
+               "topic_add (batch; enters as a seedling) and note it in one soft line. If nothing "
+               "surfaced, just finish - a one-line 'nothing to plant' is the expected, correct ending."),
 }))
