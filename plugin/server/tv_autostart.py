@@ -68,10 +68,12 @@ def _port_open(port):
 
 
 def _detached():
+    env = {**os.environ, "TOPICS_LAUNCHED_BY": "autostart"}
     if os.name == "nt":
         return {"creationflags": 0x00000008 | 0x00000200,
-                "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    return {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+                "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "env": env}
+    return {"start_new_session": True,
+            "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "env": env}
 
 
 def _self_clean(cfg):

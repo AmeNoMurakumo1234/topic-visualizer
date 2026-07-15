@@ -135,9 +135,18 @@ class ServerBackend:
         out["server"]["running"] = running
         autostart = _autostart_installed()
         out["autostart_installed"] = autostart
-        if running and autostart:
+        launched_by = (http_doctor or {}).get("launched_by")
+        if running and autostart and launched_by == "autostart":
             out["backend"] = "server (HTTP)"
             out["persistence"] = "ok"
+        elif running and autostart and launched_by != "autostart":
+            out["backend"] = "server (HTTP)"
+            out["persistence"] = "degraded"
+            degraded.append(
+                "The server is RUNNING but as a hand-started/session-bound process (launched_by="
+                f"{launched_by!r}) - it will NOT survive the shell that started it, even though a login "
+                "autostart is installed. Restart it via the launcher so the DETACHED one takes over: "
+                "pythonw ~/.topic-visualizer/tv-autostart.py (Windows: or wscript the Startup VBS).")
         elif running and not autostart:
             out["backend"] = "server (HTTP)"
             out["persistence"] = "degraded"

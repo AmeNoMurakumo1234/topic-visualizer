@@ -27,6 +27,7 @@ from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
 VERSION = "0.40.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
@@ -1674,6 +1675,7 @@ def doctor() -> dict:
             "skill), or point TOPICS_EMBED_URL at your own OpenAI-style /v1/embeddings endpoint.")
     return {
         "version": VERSION,
+        "launched_by": LAUNCHED_BY,   # "autostart" = detached login service; "manual" = a hand start
         "verdict": "ok" if not degraded else "degraded",
         "degraded": degraded,                        # a NON-EMPTY list is the loud signal
         "store": {"project": proj, "db_path": db, "exists": os.path.exists(db)},
