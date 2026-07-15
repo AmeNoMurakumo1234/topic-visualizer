@@ -9,6 +9,7 @@ import json, os, sys, time, urllib.request
 from pathlib import Path
 
 STAMP = Path.home() / ".topic-visualizer-last-served"
+NUDGE_STAMP = Path.home() / ".topic-visualizer-last-nudged"
 
 
 def _serve():
@@ -36,6 +37,37 @@ def _serve():
         return None
 
 
+def _autostart_installed() -> bool:
+    """Is a login autostart actually installed? Mirrors mcp_tools._autostart_installed (read
+    ~/.topic-visualizer/tv-autostart.json, check its artifacts, else the launcher file) - kept
+    stdlib-only and self-contained here since this hook does not import mcp_tools."""
+    cfgp = Path.home() / ".topic-visualizer" / "tv-autostart.json"
+    if not cfgp.exists():
+        return False
+    try:
+        c = json.loads(cfgp.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    arts = c.get("artifacts", [])
+    if arts:
+        return any(Path(a).exists() for a in arts)
+    return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+
+
+def _store_exists() -> bool:
+    """Does the per-project topic store exist? Mirrors _serve()'s fallback db resolution
+    (anchor DB_PATH, then project_key_from_cwd/TOPICS_PROJECT, then project_db_path)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+        import server as srv
+        srv.DB_PATH = srv.DEFAULT_DB
+        proj = os.environ.get("TOPICS_PROJECT") or srv.project_key_from_cwd()
+        db = os.environ.get("TOPICS_DB") or srv.project_db_path(proj)
+        return Path(db).exists()
+    except Exception:
+        return False
+
+
 try:
     today = time.strftime("%Y-%m-%d")
     if STAMP.exists() and STAMP.read_text().strip() == today:
@@ -48,5 +80,19 @@ try:
             "additionalContext":
                 "FIRST-OF-DAY TOPIC CARD (skippable with a word; owner-ratified ritual): "
                 + card["title"] + " -- " + card["body"][:400]}}))
+    if not card:
+        # installed-but-not-set-up nudge: capturing works, but the visualizer web UI and
+        # semantic ranking are dark until /topics-setup runs. Once per day (own stamp, so
+        # it never doubles up with a served card), and never when autostart is installed
+        # or nothing has been captured yet.
+        if not _autostart_installed() and _store_exists():
+            if not (NUDGE_STAMP.exists() and NUDGE_STAMP.read_text().strip() == today):
+                NUDGE_STAMP.write_text(today)
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext":
+                        "topic-visualizer is CAPTURING, but the visualizer web UI and semantic "
+                        "ranking are not set up yet (they need a persistent local server). Run "
+                        "/topics-setup once to finish - it is no-admin and reversible."}}))
 except Exception:
     pass
