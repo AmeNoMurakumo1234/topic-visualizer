@@ -118,7 +118,8 @@ def _stop_processes(dry) -> list:
     paths = _our_script_paths()
     if platform.system() == "Windows":
         conds = "(" + " -or ".join(
-            "$_.CommandLine.Contains('" + p.replace("'", "''") + "')" for p in paths) + ")"
+            "$_.CommandLine.IndexOf('" + p.replace("'", "''") + "', [StringComparison]::OrdinalIgnoreCase) -ge 0"
+            for p in paths) + ")"
         ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and "
               "$_.ProcessId -ne " + str(os.getpid()) + " -and $_.CommandLine -and " + conds +
               " } | Select-Object -ExpandProperty ProcessId")
@@ -293,6 +294,26 @@ def uninstall(dry) -> list:
     return stopped
 
 
+def _inherit_deployed(args):
+    """Inherit settings from a previously deployed config when the corresponding CLI arg was left
+    at its default: a plain re-run (no --embedder, default --port/--embed-port) must never silently
+    tear down an embedder a previous install provisioned, nor reset custom ports back to defaults.
+    An explicitly-passed non-default CLI value always wins; missing/corrupt config leaves the
+    (default) args untouched."""
+    if not args.embedder or args.port == 8991 or args.embed_port == 8082:
+        try:
+            prev = json.loads(CFG.read_text(encoding="utf-8"))
+            if not args.embedder and prev.get("embedder"):
+                args.embedder = True
+            if args.port == 8991:
+                args.port = int(prev.get("server_port", 8991))
+            if args.embed_port == 8082:
+                args.embed_port = int(prev.get("embed_port", 8082))
+        except Exception:
+            pass
+    return args
+
+
 def main():
     ap = argparse.ArgumentParser(description="No-admin, self-healing, upgrade-aware autostart")
     ap.add_argument("--port", type=int, default=8991, help="server port")
@@ -312,16 +333,9 @@ def main():
     if args.uninstall:
         print(json.dumps({"removed": True, "stopped": uninstall(args.dry_run), "dry_run": args.dry_run}))
         return
-    # Inherit the deployed embedder setup: a plain re-run (no --embedder) must never silently
-    # tear down an embedder a previous install provisioned - absence of the flag is not a request
-    # to remove it.
-    if not args.embedder:
-        try:
-            prev = json.loads(CFG.read_text(encoding="utf-8"))
-            if prev.get("embedder"):
-                args.embedder = True
-        except Exception:
-            pass
+    # Inherit deployed embedder flag + custom ports for any arg left at its default (see
+    # _inherit_deployed docstring).
+    args = _inherit_deployed(args)
     rc, autostart = install(args.port, args.embedder, args.embed_port, args.dry_run)
     if rc == 0:
         started = False

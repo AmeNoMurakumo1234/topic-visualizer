@@ -6,6 +6,7 @@ report started=False in the JSON output.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -152,6 +153,78 @@ class EmbedderInheritReuseTests(unittest.TestCase):
                               return_value="/fake/new/venv/python") as mock_provision:
                 install_service.install(8991, True, 8082, dry=True)
             mock_provision.assert_called_once()
+
+
+class InheritDeployedTests(unittest.TestCase):
+    """_inherit_deployed(args) (audit-3): default args pick up embedder/ports from a deployed
+    config; an explicitly-passed non-default CLI value must never be overridden."""
+
+    def _fake_args(self, port=8991, embedder=False, embed_port=8082):
+        ns = argparse.Namespace()
+        ns.port, ns.embedder, ns.embed_port = port, embedder, embed_port
+        return ns
+
+    def test_defaults_inherit_embedder_and_ports_from_deployed_config(self):
+        import install_service
+        with tempfile.TemporaryDirectory() as td:
+            cfg_path = Path(td) / "tv-autostart.json"
+            cfg_path.write_text(json.dumps({
+                "embedder": True, "server_port": 9500, "embed_port": 9600,
+            }), encoding="utf-8")
+            with patch.object(install_service, "CFG", cfg_path):
+                args = install_service._inherit_deployed(self._fake_args())
+            self.assertEqual(args.port, 9500)
+            self.assertEqual(args.embed_port, 9600)
+            self.assertTrue(args.embedder)
+
+    def test_explicit_non_default_args_are_not_overridden(self):
+        import install_service
+        with tempfile.TemporaryDirectory() as td:
+            cfg_path = Path(td) / "tv-autostart.json"
+            cfg_path.write_text(json.dumps({
+                "embedder": True, "server_port": 9500, "embed_port": 9600,
+            }), encoding="utf-8")
+            with patch.object(install_service, "CFG", cfg_path):
+                args = install_service._inherit_deployed(self._fake_args(port=9000))
+            # explicit port wins; embed_port still left at default so it inherits
+            self.assertEqual(args.port, 9000)
+            self.assertEqual(args.embed_port, 9600)
+            self.assertTrue(args.embedder)
+
+    def test_missing_config_leaves_defaults_untouched(self):
+        import install_service
+        with tempfile.TemporaryDirectory() as td:
+            cfg_path = Path(td) / "does-not-exist.json"
+            with patch.object(install_service, "CFG", cfg_path):
+                args = install_service._inherit_deployed(self._fake_args())
+            self.assertEqual(args.port, 8991)
+            self.assertEqual(args.embed_port, 8082)
+            self.assertFalse(args.embedder)
+
+
+class StopConditionCaseInsensitiveTests(unittest.TestCase):
+    """_stop_processes' generated PowerShell match condition (audit-3) must use ordinal
+    case-insensitive literal matching, so a hand-typed path with differing case still matches,
+    and must still double-escape a literal apostrophe in a path."""
+
+    def test_conds_use_ordinal_ignorecase_and_escape_apostrophe(self):
+        import install_service
+        with patch.object(install_service, "_our_script_paths",
+                           return_value=[r"C:\Users\it's-a-path\server.py"]):
+            captured = {}
+
+            def fake_run(cmd, **kwargs):
+                captured["ps"] = cmd[-1]
+                class R:
+                    stdout = ""
+                return R()
+
+            with patch.object(install_service.subprocess, "run", side_effect=fake_run), \
+                 patch.object(install_service.platform, "system", return_value="Windows"):
+                install_service._stop_processes(dry=True)
+            ps = captured["ps"]
+            self.assertIn("[StringComparison]::OrdinalIgnoreCase", ps)
+            self.assertIn("it''s-a-path", ps)  # doubled-apostrophe escape preserved
 
 
 class ProvisionEmbedderDryRunTests(unittest.TestCase):
