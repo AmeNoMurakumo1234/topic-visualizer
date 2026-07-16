@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.41.1 - 2026-07-15 - Audit-2 fixes: upgrade-safe stop, truthful "started", reinstall keeps the embedder
+
+A second adversarial audit of 0.41.0 found three defects on real field paths - all fixed:
+
+- **Stop now matches servers from ANY installed version dir.** A server started before a plugin
+  upgrade carries the OLD version-dir path on its command line; the previous stop matched only the
+  current dir, so the one-step heal silently no-op'd and the doctor's --stop advice could not work.
+  Stop paths now derive from the deployed launcher config (pinned + every version dir under base).
+- **The installer's "started" is truthful.** It now health-polls the server after the launcher run
+  instead of reporting the mere spawn of the launcher as success.
+- **A plain reinstall no longer tears down the embedder.** Running install_service.py without
+  --embedder now inherits the deployed embedder setup (and reuses an existing venv instead of
+  re-downloading) - absence of the flag is not a request to remove it.
+- **Posix persistence is honest.** On macOS/Linux the doctor now reports persistence "ok" only when
+  a launchd/systemd unit actually exists (the installer only prints one) - no more manufactured
+  false-green on unix. Windows behavior unchanged.
+- **PowerShell stop matching is literal** (paths with apostrophes/brackets no longer break it), the
+  daily setup nudge honors TOPICS_NUDGE=off, and the session-bound doctor message no longer
+  overstates ("nothing guarantees it returns after a logoff/reboot").
+
 ## 0.41.0 - 2026-07-15 - Field-postmortem hardening: honest persistence, visible failures, clean-machine embedder
 
 From a real user's fresh-machine install report (0.40.1): the install ended "fully working" only
