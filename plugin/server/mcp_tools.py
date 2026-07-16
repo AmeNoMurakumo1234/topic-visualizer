@@ -89,6 +89,16 @@ def _launcher_stamps() -> bool:
         return False
 
 
+def _launcher_port() -> int:
+    """The port the deployed launcher will start the server on (its config's server_port),
+    default 8991 - so callers can tell whether the launcher would serve the port they poll."""
+    cfgp = Path.home() / ".topic-visualizer" / "tv-autostart.json"
+    try:
+        return int(json.loads(cfgp.read_text(encoding="utf-8")).get("server_port", 8991))
+    except Exception:
+        return 8991
+
+
 # ------------------------------------------------------- server backend ----
 class ServerBackend:
     """HTTP passthrough to the plugin server when it is running; DIRECT in-process
@@ -272,9 +282,12 @@ class ServerBackend:
                 kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
             else:
                 kwargs["start_new_session"] = True
-            if launcher.exists():
+            if launcher.exists() and _launcher_port() == int(port):
                 # start THROUGH the persistent launcher so the server is stamped (launched_by=autostart)
-                # and the doctor sees the detached login server, never a bare unstamped server.py spawn
+                # and the doctor sees the detached login server, never a bare unstamped server.py spawn.
+                # The launcher starts on ITS OWN configured port; when that differs from the port this
+                # session is polling, route through it would start a server the poll never sees - spawn
+                # directly on the polled port instead (the env's port is what this session expects).
                 subprocess.Popen([py, str(launcher)], **kwargs)
             else:
                 script = str(Path(__file__).resolve().parent / "server.py")

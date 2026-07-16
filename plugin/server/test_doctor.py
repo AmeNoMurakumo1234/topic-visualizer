@@ -132,5 +132,32 @@ class LauncherStampsTests(unittest.TestCase):
                 self.assertFalse(mcp_tools._launcher_stamps())
 
 
+class LauncherPortTests(unittest.TestCase):
+    """_launcher_port() reads the port the DEPLOYED login launcher will start the server on
+    (its own config's server_port) - so open_visualizer() can tell whether routing through the
+    launcher would actually serve the port this session is polling."""
+
+    def test_returns_configured_server_port(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text(
+                '{"server_port": 9123}', encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertEqual(mcp_tools._launcher_port(), 9123)
+
+    def test_defaults_to_8991_when_config_missing_or_unreadable(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)     # no ~/.topic-visualizer/tv-autostart.json at all
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertEqual(mcp_tools._launcher_port(), 8991)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text("not json", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home):
+                self.assertEqual(mcp_tools._launcher_port(), 8991)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
