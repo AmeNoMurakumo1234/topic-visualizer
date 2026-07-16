@@ -53,3 +53,14 @@ backend); snapshots live in [docs/prototype/](docs/prototype/):
 
 - Form factor details: marketplace listing? versioned releases like the sibling suite?
 - Multi-tree support (work/personal)? Likely just multiple db files + a picker.
+
+## Known minors (field-observed, next cycle)
+
+- **cwd-keyed default store** (found 2026-07-15, 0.41.1 field test): the server keys its
+  DEFAULT project store from its working directory at start. A login autostart (Startup
+  VBS) starts it with cwd C:\WINDOWS\system32, so a garbage-keyed store
+  (C--WINDOWS-system32.db) appears and pollutes the web UI's project picker. Session MCP
+  captures are unaffected (they pass the project explicitly); only the server's default
+  store and the picker's initial selection drift with the start context. Fix direction:
+  the launcher should pass an explicit neutral default project (or the server should
+  refuse to auto-key from a system directory and fall back to "default").
