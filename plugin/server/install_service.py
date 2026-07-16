@@ -27,6 +27,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -89,7 +90,25 @@ def _quiet(cmd):
 
 
 def _our_script_paths():
-    return [str(HERE / "server.py"), str(HERE / "serve_embedder.py")]
+    """Every path our server/embedder could be running from - the CURRENT code's dir, the deployed
+    config's pinned paths, and EVERY version dir under the config's base (a server started before a
+    plugin upgrade carries the OLD version dir on its command line; stop must match it too)."""
+    paths = [str(HERE / "server.py"), str(HERE / "serve_embedder.py")]
+    try:
+        cfg = json.loads(CFG.read_text(encoding="utf-8"))
+        for leaf_key, pin_key in (("server_leaf", "pinned_server"), ("embed_leaf", "pinned_embedder")):
+            pin = cfg.get(pin_key)
+            if pin:
+                paths.append(str(pin))
+            base, leaf = cfg.get("base"), cfg.get(leaf_key)
+            if base and leaf:
+                for d in Path(base).iterdir():
+                    cand = d / leaf
+                    if cand.exists():
+                        paths.append(str(cand))
+    except Exception:
+        pass
+    return list(dict.fromkeys(paths))     # dedupe, keep order
 
 
 def _stop_processes(dry) -> list:
@@ -98,7 +117,8 @@ def _stop_processes(dry) -> list:
     merely MENTIONS the path (a shell/this teardown would match that). Returns the pids acted on."""
     paths = _our_script_paths()
     if platform.system() == "Windows":
-        conds = "(" + " -or ".join("$_.CommandLine -like '*" + p + "*'" for p in paths) + ")"
+        conds = "(" + " -or ".join(
+            "$_.CommandLine.Contains('" + p.replace("'", "''") + "')" for p in paths) + ")"
         ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and "
               "$_.ProcessId -ne " + str(os.getpid()) + " -and $_.CommandLine -and " + conds +
               " } | Select-Object -ExpandProperty ProcessId")
@@ -170,6 +190,17 @@ def _unix_unit(argv):
               f"Restart=on-failure\n\n[Install]\nWantedBy=default.target")
 
 
+def _server_answers(port) -> bool:
+    """True when OUR server answers its health signature on `port` (JSON object with a version key)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/api/version", timeout=1) as r:
+            body = json.loads(r.read())
+            return isinstance(body, dict) and "version" in body
+    except Exception:
+        return False
+
+
 def _start_via_launcher() -> bool:
     """Start the visualizer the SAME detached way login does - via the launcher, never server.py
     directly (a directly-spawned server is a child of THIS process and dies with it). Idempotent:
@@ -192,7 +223,17 @@ def install(server_port, embedder, embed_port, dry):
     # Best-effort: a provisioning failure (no network, pip error, disk full, ...) must NEVER fail the
     # install. _provision_embedder catches everything internally and returns None on failure; the
     # plugin then simply runs in keyword mode (embed_python absent, launcher falls back to pyw).
-    embed_python = _provision_embedder(dry) if embedder else None
+    embed_python = None
+    if embedder:
+        try:
+            prev = json.loads(CFG.read_text(encoding="utf-8"))
+            prior = prev.get("embed_python")
+            if prior and Path(prior).exists():
+                embed_python = prior          # venv already provisioned - reuse, don't re-download
+        except Exception:
+            pass
+        if embed_python is None:
+            embed_python = _provision_embedder(dry)
     cfg = _config(server_port, embedder, embed_port, [str(vbs)] if vbs else [], embed_python=embed_python)
     if dry:
         print(f"DRY-RUN: copy launcher -> {LAUNCHER}")
@@ -271,12 +312,30 @@ def main():
     if args.uninstall:
         print(json.dumps({"removed": True, "stopped": uninstall(args.dry_run), "dry_run": args.dry_run}))
         return
+    # Inherit the deployed embedder setup: a plain re-run (no --embedder) must never silently
+    # tear down an embedder a previous install provisioned - absence of the flag is not a request
+    # to remove it.
+    if not args.embedder:
+        try:
+            prev = json.loads(CFG.read_text(encoding="utf-8"))
+            if prev.get("embedder"):
+                args.embedder = True
+        except Exception:
+            pass
     rc, autostart = install(args.port, args.embedder, args.embed_port, args.dry_run)
     if rc == 0:
         started = False
         if not args.dry_run and not args.no_start:
             _stop_processes(False)      # replace any old/unstamped running server so the refreshed,
-            started = _start_via_launcher()   # stamped launcher's server takes over in one step
+            _start_via_launcher()       # stamped launcher's server takes over in one step
+            # "started" must mean an actual takeover, not merely that we spawned the launcher -
+            # poll for the server's health signature so a launch that silently failed (missing
+            # launcher, crash on start, port fight) is reported honestly.
+            for _ in range(10):
+                time.sleep(0.5)
+                if _server_answers(args.port):
+                    break
+            started = _server_answers(args.port)
         print(json.dumps({"installed": True, "autostart": autostart, "launcher": str(LAUNCHER),
                           "started": started, "no_admin": True, "self_healing": True,
                           "upgrade_aware": True, "dry_run": args.dry_run}))

@@ -75,7 +75,13 @@ def _autostart_installed() -> bool:
     arts = c.get("artifacts", [])
     if arts:
         return any(Path(a).exists() for a in arts)
-    return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+    if os.name == "nt":
+        return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+    # posix: install only PRINTS the launchd/systemd unit - trust persistence only if the user
+    # actually installed one of them
+    return any(p.exists() for p in (
+        Path.home() / "Library" / "LaunchAgents" / "com.topicvisualizer.plist",
+        Path.home() / ".config" / "systemd" / "user" / "topic-visualizer.service"))
 
 
 def _launcher_stamps() -> bool:
@@ -170,8 +176,8 @@ class ServerBackend:
             out["persistence"] = "degraded"
             degraded.append(
                 "The server is RUNNING but as a hand-started/session-bound process (launched_by="
-                f"{launched_by!r}) - it will NOT survive the shell that started it, even though a login "
-                "autostart is installed. Stop it and let the DETACHED login server take over: run "
+                f"{launched_by!r}) - nothing guarantees it returns after a logoff/reboot, even though a "
+                "login autostart is installed. Stop it and let the DETACHED login server take over: run "
                 f'\'python "{installer}" --stop\', then re-run the /topics-setup skill (or install_service.py) '
                 "to start the persistent one.")
         elif running and autostart and not stamp_capable:

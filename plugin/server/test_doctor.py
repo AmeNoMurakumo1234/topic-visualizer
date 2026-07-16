@@ -11,6 +11,7 @@ both make those two booleans true. launched_by is the third leg that closes the 
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import unittest
@@ -157,6 +158,66 @@ class LauncherPortTests(unittest.TestCase):
             (tvdir / "tv-autostart.json").write_text("not json", encoding="utf-8")
             with patch("mcp_tools.Path.home", return_value=home):
                 self.assertEqual(mcp_tools._launcher_port(), 8991)
+
+
+class AutostartInstalledPosixTests(unittest.TestCase):
+    """_autostart_installed()'s empty-artifacts fallback is only valid on Windows (install always
+    records the Startup VBS artifact there). On posix, install only PRINTS a launchd/systemd unit
+    and records artifacts:[] - the old 'launcher file exists' fallback then manufactured a false
+    'persistence ok'. On posix, trust persistence only if a real unit file exists."""
+
+    def test_false_when_artifacts_empty_and_no_unit_installed(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8")
+            (tvdir / "tv-autostart.py").write_text("# launcher present", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home), \
+                 patch.object(mcp_tools.os, "name", "posix"):
+                self.assertFalse(mcp_tools._autostart_installed())
+
+    def test_true_when_systemd_unit_installed(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8")
+            unit_dir = home / ".config" / "systemd" / "user"
+            unit_dir.mkdir(parents=True, exist_ok=True)
+            (unit_dir / "topic-visualizer.service").write_text("[Unit]\n", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home), \
+                 patch.object(mcp_tools.os, "name", "posix"):
+                self.assertTrue(mcp_tools._autostart_installed())
+
+    def test_true_when_launchd_plist_installed(self):
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8")
+            agents_dir = home / "Library" / "LaunchAgents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            (agents_dir / "com.topicvisualizer.plist").write_text("<plist/>", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home), \
+                 patch.object(mcp_tools.os, "name", "posix"):
+                self.assertTrue(mcp_tools._autostart_installed())
+
+    def test_windows_fallback_still_uses_launcher_file(self):
+        """Windows legacy behavior must be unchanged: empty artifacts + launcher file present -> ok."""
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            tvdir = home / ".topic-visualizer"
+            tvdir.mkdir(parents=True, exist_ok=True)
+            (tvdir / "tv-autostart.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8")
+            (tvdir / "tv-autostart.py").write_text("# launcher present", encoding="utf-8")
+            with patch("mcp_tools.Path.home", return_value=home), \
+                 patch.object(mcp_tools.os, "name", "nt"):
+                self.assertTrue(mcp_tools._autostart_installed())
 
 
 if __name__ == "__main__":

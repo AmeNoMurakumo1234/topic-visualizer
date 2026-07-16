@@ -51,7 +51,13 @@ def _autostart_installed() -> bool:
     arts = c.get("artifacts", [])
     if arts:
         return any(Path(a).exists() for a in arts)
-    return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+    if os.name == "nt":
+        return (Path.home() / ".topic-visualizer" / "tv-autostart.py").exists()
+    # posix: install only PRINTS the launchd/systemd unit - trust persistence only if the user
+    # actually installed one of them
+    return any(p.exists() for p in (
+        Path.home() / "Library" / "LaunchAgents" / "com.topicvisualizer.plist",
+        Path.home() / ".config" / "systemd" / "user" / "topic-visualizer.service"))
 
 
 def _store_exists() -> bool:
@@ -85,6 +91,10 @@ try:
         # semantic ranking are dark until /topics-setup runs. Once per day (own stamp, so
         # it never doubles up with a served card), and never when autostart is installed
         # or nothing has been captured yet.
+        # opt-out: fully silent for users who do not want the setup nudge at all (the CARD
+        # above is untouched - only this nudge is gated).
+        if os.environ.get("TOPICS_NUDGE", "").strip().lower() in ("off", "0", "false"):
+            sys.exit(0)
         if not _autostart_installed() and _store_exists():
             if not (NUDGE_STAMP.exists() and NUDGE_STAMP.read_text(encoding="utf-8").strip() == today):
                 NUDGE_STAMP.write_text(today, encoding="utf-8")

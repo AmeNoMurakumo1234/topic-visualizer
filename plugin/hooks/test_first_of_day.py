@@ -188,6 +188,19 @@ class NudgeSubprocessTests(unittest.TestCase):
             t.join(timeout=2)
             httpd.server_close()
 
+    def test_nudge_opt_out_via_env(self):
+        """TOPICS_NUDGE=off must fully silence the setup nudge even when otherwise eligible
+        (store exists, autostart missing) - the CARD path is untouched by this opt-out."""
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            db = home / "topics.db"
+            make_empty_store(db)
+            env = isolated_env(home, {"TOPICS_DB": str(db), "TOPICS_NUDGE": "off"})
+            r = run_hook(env)
+            self.assertEqual(r.returncode, 0)
+            self.assertEqual(r.stdout.strip(), "")
+            self.assertFalse((home / ".topic-visualizer-last-nudged").exists())
+
     def test_hook_fails_silent_and_exits_zero_with_no_input(self):
         with tempfile.TemporaryDirectory() as td:
             env = isolated_env(Path(td))
