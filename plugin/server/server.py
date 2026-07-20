@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.41.2"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.42.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -36,6 +36,14 @@ _lock = threading.RLock()     # single-writer discipline; REENTRANT so a request
                               # pin its project's connection and still call locked helpers
 _conn: sqlite3.Connection | None = None
 DB_PATH = "topics.db"
+# 0.42 fight-staleness knobs (design: docs/2026-07-20-fight-staleness-design.md)
+SERVE_COOLDOWN_DAYS = float(os.environ.get("TOPICS_SERVE_COOLDOWN_DAYS", "3") or 3)
+STALE_DAYS = 30                       # an open topic un-ENGAGED this long is stale
+STALE_WARN_COUNT = int(os.environ.get("TOPICS_STALE_WARN", "5") or 5)
+# 0.35 calibrated against the real MiniLM embedder: a clearly-belongs title pair
+# measures ~0.45, unrelated noise ~0.0 - so 0.35 catches real cases with a wide
+# margin over noise, and the hint is advisory (the groom human ratifies).
+HINT_THRESHOLD = float(os.environ.get("TOPICS_HINT_THRESHOLD", "0.35") or 0.35)
 
 
 # ---------------------------------------------------------------- store ----
@@ -219,6 +227,18 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     xcols = {r["name"] for r in conn.execute("PRAGMA table_info(topic_parent)")}
     if "rel" not in xcols:                            # co_parent | see_also (avenue relationship)
         conn.execute("ALTER TABLE topic_parent ADD COLUMN rel TEXT NOT NULL DEFAULT 'co_parent'")
+    # 0.42 keystone: engaged_at (genuine engagement - the staleness clock) + served_at
+    # (serve impressions - the cooldown clock). Backfill: engaged_at = touched_at is the
+    # least-wrong assumption for existing rows; served_at from the newest 'served' event
+    # (NULL = honestly never served).
+    if "engaged_at" not in cols:
+        conn.execute("ALTER TABLE topic ADD COLUMN engaged_at TEXT")
+        conn.execute("UPDATE topic SET engaged_at = touched_at")
+    if "served_at" not in cols:
+        conn.execute("ALTER TABLE topic ADD COLUMN served_at TEXT")
+        conn.execute(
+            "UPDATE topic SET served_at = (SELECT MAX(e.at) FROM topic_event e "
+            "WHERE e.topic_id = topic.id AND e.event = 'served')")
 
 
 def open_db(path: str) -> sqlite3.Connection:
@@ -262,6 +282,8 @@ def _row_to_topic(r: sqlite3.Row, links: dict | None = None) -> dict:
         "state": r["state"], "priority": r["priority"], "tags": r["tags"],
         "created_by": r["created_by"], "created_at": r["created_at"],
         "touched_at": r["touched_at"], "provenance": r["provenance"],
+        "engaged_at": r["engaged_at"] if "engaged_at" in r.keys() else None,
+        "served_at": r["served_at"] if "served_at" in r.keys() else None,
         "state_note": r["state_note"],
         "links": (links or {}).get(r["id"], []),
     }
@@ -468,9 +490,9 @@ def _insert_imported(obj: dict, slug: str) -> int:
     state = obj.get("state") if obj.get("state") in ("seedling", "open", "discussed") else "open"
     _conn.execute(
         """INSERT INTO topic (slug, title, body, state, priority, created_by,
-                              created_at, touched_at, provenance)
+                              created_at, touched_at, engaged_at, provenance)
            VALUES (?,?,?,?,?,?, COALESCE(NULLIF(?, ''), datetime('now')),
-                   datetime('now'), ?)""",
+                   datetime('now'), datetime('now'), ?)""",
         (slug, obj["title"], obj.get("body", ""), state,
          "critical" if obj.get("priority") == "critical" else "normal",
          "import", obj.get("created_at", ""), obj.get("provenance", "")))
@@ -722,9 +744,22 @@ def _event(topic_id: int, event: str, actor: str, note: str = "") -> None:
 
 
 def _touch(topic_id: int, actor: str, note: str = "") -> None:
+    """A STRUCTURAL write (reparent/attach/merge bookkeeping). 0.42: no longer graduates -
+    reshaping the tree is not engaging with the idea (field repro: a bulk reshape silently
+    graduated 13 seedlings). Engagement flows through _engage below."""
     _conn.execute("UPDATE topic SET touched_at = datetime('now') WHERE id=?", (topic_id,))
     _event(topic_id, "touched", actor, note)
-    # first touch graduates a seedling to a full topic (death-by-choice from here on)
+
+
+def _engage(topic_id: int, actor: str, note: str = "") -> None:
+    """A GENUINE engagement with the idea (content edit, beacon change). Refreshes the
+    staleness clock and is the only graduator: first engagement makes a seedling a full
+    topic (death-by-choice from here on). Deliberate state changes engage inline in
+    set_state/convert (they set the state explicitly, so no graduation step needed)."""
+    _conn.execute(
+        "UPDATE topic SET touched_at = datetime('now'), engaged_at = datetime('now') "
+        "WHERE id=?", (topic_id,))
+    _event(topic_id, "touched", actor, note)
     _conn.execute(
         "UPDATE topic SET state='open' WHERE id=? AND state='seedling'", (topic_id,))
 
@@ -831,10 +866,13 @@ def restore_checkpoint(actor: str, cid=None) -> dict:
             if not _tid(slug):
                 _conn.execute(
                     "INSERT INTO topic (slug, title, body, state, priority, tags, created_by, "
-                    "provenance, role, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "provenance, role, created_at, engaged_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (slug, t["title"], t["body"], t["state"], t["priority"], t.get("tags") or "",
                      t.get("created_by") or actor, t.get("provenance") or "", t.get("role") or "topic",
-                     t.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S")))
+                     t.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                     # least-wrong engagement for a resurrected row = its snapshot birth
+                     # (identical on fresh and migrated stores; review LOW-4b)
+                     t.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())))
                 reinserted.add(slug)
         # pass 2: reset each snapshot topic to its snapshot fields + primary parent (+ un-tombstone).
         # SLUG-REUSE GUARD: a live row NEWER than the checkpoint that we did NOT just re-insert is a
@@ -1094,8 +1132,8 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                 try:
                     cur = _conn.execute(
                         """INSERT INTO topic (slug, title, body, parent_id, state, priority,
-                                              tags, created_by, provenance, role)
-                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                                              tags, created_by, provenance, role, engaged_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
                         (slug, title, str(it.get("body") or ""), parent_id, state,
                          "critical" if it.get("priority") == "critical" else "normal",
                          str(it.get("tags") or ""), actor, str(it.get("provenance") or ""),
@@ -1186,7 +1224,8 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
         for tid in ids:
             _conn.execute(
                 """UPDATE topic SET state=?, state_changed_at=datetime('now'),
-                   state_changed_by=?, state_note=?, touched_at=datetime('now')
+                   state_changed_by=?, state_note=?, touched_at=datetime('now'),
+                   engaged_at=datetime('now')
                    WHERE id=?""", (state, actor, note, tid))
             # resurrecting a merged tombstone (-> open) makes it an ordinary LIVE topic: clear the
             # stale merged_into, else a later prune re-arms the 14-day hard-delete sweep (F6). No-op
@@ -1217,7 +1256,8 @@ def convert(slug: str, links: list[dict], actor: str, note: str = "") -> dict:
                 (row["id"], l["kind"], str(l.get("ref") or ""), str(l.get("note") or "")))
         _conn.execute(
             """UPDATE topic SET state='discussed', state_changed_at=datetime('now'),
-               state_changed_by=?, state_note=?, touched_at=datetime('now')
+               state_changed_by=?, state_note=?, touched_at=datetime('now'),
+               engaged_at=datetime('now')
                WHERE id=?""", (actor, note or "converted", row["id"]))
         _event(row["id"], "converted", actor,
                "; ".join(f"{l['kind']}:{l.get('ref','')}" for l in links))
@@ -1282,7 +1322,13 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
             _event(tid, "beacon_set" if critical else "beacon_cleared", actor)
         if title is not None or body is not None:
             _event(tid, "edited", actor)
-        _touch(tid, actor)
+        # 0.42 keystone: only CONTENT work (title/body/beacon) is engagement; a
+        # reparent-only call (the groom's bread and butter) is structural - it must
+        # neither graduate a seedling nor refresh the staleness clock.
+        if title is not None or body is not None or critical is not None:
+            _engage(tid, actor)
+        else:
+            _touch(tid, actor)
         _conn.commit()
     return {"ok": True}
 
@@ -1412,12 +1458,19 @@ def rank_candidates(topics, context=""):
     now = time.time()
     cands = []
     for x in live:
-        age_days = max(0.0, (now - _parse_ts(x.get("touched_at") or x.get("created_at") or "")) / 86400.0)
+        age_days = max(0.0, (now - _parse_ts(x.get("engaged_at") or x.get("touched_at")
+                                             or x.get("created_at") or "")) / 86400.0)
         score = (100.0 if x["priority"] == "critical" else 0.0)
         if context:
             score += 40.0 * (sem_by_slug.get(x["slug"], 0.0) if sem
                              else _score(ctx, x["title"] + " " + x["body"]))
-        score += min(20.0, age_days * 0.7)          # spaced resurfacing
+        score += min(20.0, age_days * 0.7)          # spaced resurfacing (engagement age)
+        # COOLDOWN (0.42): a recently-shown card falls behind every un-served candidate,
+        # so a re-serve ADVANCES. A demotion, not a filter - the only live candidate
+        # still serves (never a blank card).
+        sat = x.get("served_at")
+        if sat and (now - _parse_ts(sat)) < SERVE_COOLDOWN_DAYS * 86400.0:
+            score -= 1000.0
         cands.append((score, x))
     cands.sort(key=lambda y: -y[0])
     return cands
@@ -1431,15 +1484,20 @@ def serve_card(context: str = "") -> dict:
     card = cands[0][1]
     with _lock:
         _event(card["id"], "served", "server", f"context={context[:60]}")
-        _conn.execute("UPDATE topic SET touched_at = datetime('now') WHERE id=?",
-                      (card["id"],))          # resurface clock resets; NO graduation
+        # 0.42: an impression is NOT engagement. Writing touched_at here made a
+        # served-but-ignored topic look permanently fresh (staleness laundering).
+        _conn.execute("UPDATE topic SET served_at = datetime('now') WHERE id=?",
+                      (card["id"],))
         _conn.commit()
     return {"card": card, "alternates": [c[1] for c in cands[1:3]]}
 
 
 def _parse_ts(ts: str) -> float:
+    # DB timestamps are UTC (sqlite datetime('now')); parse them as UTC or every
+    # age/cooldown window skews by the local UTC offset (review LOW-1).
+    import calendar
     try:
-        return time.mktime(time.strptime(ts[:19], "%Y-%m-%d %H:%M:%S"))
+        return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%d %H:%M:%S"))
     except Exception:
         return time.time()
 
@@ -1457,6 +1515,8 @@ def expire_seedlings() -> int:
                 "state_changed_by='server', state_note='seedling expiry' WHERE id=?",
                 (r["id"],))
             _event(r["id"], "expired", "server", f"untouched > {SEEDLING_EXPIRY_DAYS}d")
+        _conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES "
+                      "('expiry_last_run', datetime('now'))")
         _conn.commit()
     return len(rows)
 
@@ -1515,19 +1575,57 @@ def health() -> dict:
             by_state[r["state"]] = r["c"]
         converted_topics = _conn.execute(
             "SELECT COUNT(DISTINCT topic_id) c FROM topic_link").fetchone()["c"]
+        # 0.42 STALENESS - the loudest signal, computed on ENGAGEMENT (serve no longer
+        # launders it). The failure mode this catches is the graveyard: a beautifully
+        # filed tree nobody deals cards from (field: served:live ran 7:122 unnoticed).
+        stale_open = _conn.execute(
+            "SELECT COUNT(*) c FROM topic WHERE state='open' AND "
+            "julianday('now') - julianday(COALESCE(engaged_at, created_at)) > ?",
+            (STALE_DAYS,)).fetchone()["c"]
+        never_served = _conn.execute(
+            "SELECT COUNT(*) c FROM topic WHERE state='open' AND served_at IS NULL"
+        ).fetchone()["c"]
+        expiry_last = _conn.execute(
+            "SELECT value FROM meta WHERE key='expiry_last_run'").fetchone()
+        human_acts = [dict(r) for r in _conn.execute(
+            "SELECT t.slug AS slug, e.event AS event, e.at AS at "
+            "FROM topic_event e JOIN topic t ON t.id = e.topic_id "
+            "WHERE e.actor = 'human' AND e.at > datetime('now', '-7 days') "
+            "ORDER BY e.at DESC LIMIT 20")]
     ratio = (beacons / opens) if opens else 0.0
-    return {"window_days": 30,
-            # 30-day ACTIVITY window (events), not current state:
-            "window": {"captured": created, "served": served, "discussed": discussed,
-                       "converted": converted, "pruned": pruned, "expired": expired},
-            # CURRENT state snapshot:
-            "by_state": by_state, "converted_topics": converted_topics,
-            "live_topics": live, "beacons": beacons,
-            "beacon_ratio": round(ratio, 3), "beacon_warning": ratio > BEACON_WARN_RATIO,
-            "embedder": {"url": EMBED_URL, "status": _embed_status()},
-            # legacy flat keys (kept for back-compat; prefer window{} / by_state{}):
-            "captured": created, "served": served, "discussed": discussed,
-            "converted": converted, "pruned": pruned, "expired": expired}
+    return {
+        # FIRST on purpose: under-serving is the failure the seam exists to prevent,
+        # so it outranks beacon hygiene in the report order.
+        "staleness": {
+            "note": f"stale = open and un-ENGAGED > {STALE_DAYS}d (structural edits and "
+                    "serves do not refresh this clock). warning trips at "
+                    f"{STALE_WARN_COUNT}+ stale opens - run a reconcile pass.",
+            "served_30d": served, "live_topics": live,
+            "served_to_live": round(served / live, 3) if live else None,
+            "stale_open_count": stale_open, "stale_threshold_days": STALE_DAYS,
+            "never_served_count": never_served,
+            "warning": stale_open >= STALE_WARN_COUNT,
+        },
+        "window_days": 30,
+        # 30-day ACTIVITY window (events), not current state:
+        "window": {"captured": created, "served": served, "discussed": discussed,
+                   "converted": converted, "pruned": pruned, "expired": expired},
+        # CURRENT state snapshot:
+        "by_state": by_state, "converted_topics": converted_topics,
+        "live_topics": live, "beacons": beacons,
+        "beacon_ratio": round(ratio, 3), "beacon_warning": ratio > BEACON_WARN_RATIO,
+        "embedder": {"url": EMBED_URL, "status": _embed_status()},
+        # 0.42: 'expired: 0' used to read as healthy even when the expiry valve had
+        # never run. evaluated=False says the zero is uninformative.
+        "expiry": {"last_run": expiry_last["value"] if expiry_last else None,
+                   "evaluated": bool(expiry_last)},
+        # 0.42: what the HUMAN did in the last 7d (visualizer UI actions land as
+        # actor='human') - so a co-driving agent sees cross-surface changes instead of
+        # suspecting a tool bug (field: exactly that happened).
+        "recent_human_activity": human_acts,
+        # legacy flat keys (kept for back-compat; prefer window{} / by_state{}):
+        "captured": created, "served": served, "discussed": discussed,
+        "converted": converted, "pruned": pruned, "expired": expired}
 
 
 def groom_report() -> dict:
@@ -1544,7 +1642,12 @@ def groom_report() -> dict:
                FROM topic t GROUP BY t.created_by""").fetchall()
         stale = _conn.execute(
             "SELECT slug, title FROM topic WHERE state='open' AND "
-            "julianday('now') - julianday(touched_at) > 30 LIMIT 3").fetchall()
+            "julianday('now') - julianday(COALESCE(engaged_at, created_at)) > ? LIMIT 3",
+            (STALE_DAYS,)).fetchall()
+        stale_total = _conn.execute(
+            "SELECT COUNT(*) c FROM topic WHERE state='open' AND "
+            "julianday('now') - julianday(COALESCE(engaged_at, created_at)) > ?",
+            (STALE_DAYS,)).fetchone()["c"]
         # fan-out lens: the widest nodes are where SHAPE work concentrates. A node with many
         # children means merge (they're dupes) and/or nest (missing sub-structure); target ~3-7.
         wide = _conn.execute(
@@ -1627,6 +1730,11 @@ def groom_report() -> dict:
                     redundant_parents.append(
                         {"child": child, "redundant_parent": anc, "keep_parent": keep})
         redundant_parents = redundant_parents[:20]
+    # 0.42: root-orphan -> nearest-hub hints. The GET route holds the request lock, so the
+    # embedder work is bounded to ONE batched /v1/embeddings call (roots + hubs together) -
+    # the same worst-case as the pre-existing serve/search-under-lock posture, never a
+    # per-root multiplication.
+    orphan_hints, orphan_note = _root_orphan_hints()
     return {"health": h,
             "fan_out": {"target": "3-7 children is a SOFT band, not the goal - real relational "
                                   "DEPTH outranks it (see coherence.reparent_hints). Wider MAY "
@@ -1641,9 +1749,155 @@ def groom_report() -> dict:
                         "siblings need JUDGMENT - the report can't compute them; the skill lists those.",
                 "redundant_parents": redundant_parents,
                 "reparent_hints": [dict(r) for r in reparent_hints],
+                # 0.42: the hint class the field groom actually needed - 32 roots, ~20 of
+                # them belonging under existing hubs, and every legacy hint empty by
+                # construction (reparent_hints requires a parent; buckets is title-regex).
+                "root_orphan_hints": orphan_hints,
+                "root_orphan_note": orphan_note,
                 "possible_buckets": buckets},
             "capture_calibration": [dict(r) for r in by_actor],
+            "expiry_candidates_count": stale_total,
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
+
+
+def _root_orphan_hints() -> tuple[list[dict], str]:
+    """Root-level topics that semantically belong under an existing hub (a live topic with
+    >=2 live children) - the most common real grooming action, previously unassisted.
+    SEMANTIC-ONLY by design: when the embedder is down the hints are honestly ABSENT (a
+    keyword guess would recreate the misleading-emptiness problem in a worse form). Never
+    suggests a hub inside the orphan's own subtree (that hint would describe a cycle).
+    Reads without the lock: worst case a hint is momentarily stale, and the embedding
+    round-trip must not block writers."""
+    LIVE = "('seedling','open','discussed')"
+    roots = [dict(r) for r in _conn.execute(
+        f"SELECT id, slug, title, body FROM topic WHERE parent_id IS NULL "
+        f"AND state IN {LIVE}")]
+    hubs = [dict(r) for r in _conn.execute(
+        f"SELECT p.id AS id, p.slug AS slug, p.title AS title, p.body AS body, "
+        f"COUNT(*) AS children FROM topic t JOIN topic p ON p.id = t.parent_id "
+        f"WHERE t.state IN {LIVE} AND p.state IN {LIVE} "
+        f"GROUP BY t.parent_id HAVING children >= 2")]
+    if not roots or not hubs:
+        return [], "no hubs (>=2 live children) to compare against - hints unavailable"
+    # parent map over BOTH edge kinds, for the own-subtree guard (walk UP from the hub;
+    # reaching the orphan means the hub is the orphan's descendant)
+    parents_of: dict = {}
+    for r in _conn.execute(
+            f"SELECT c.slug AS c, p.slug AS p FROM topic c JOIN topic p ON p.id=c.parent_id "
+            f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
+        parents_of.setdefault(r["c"], set()).add(r["p"])
+    for r in _conn.execute(
+            f"SELECT c.slug AS c, p.slug AS p FROM topic_parent tp "
+            f"JOIN topic c ON c.id=tp.topic_id JOIN topic p ON p.id=tp.parent_id "
+            f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
+        parents_of.setdefault(r["c"], set()).add(r["p"])
+
+    def _up_reaches(start: str, target: str) -> bool:
+        seen, frontier = set(), list(parents_of.get(start, ()))
+        while frontier:
+            cur = frontier.pop()
+            if cur == target:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            frontier += list(parents_of.get(cur, ()))
+        return False
+
+    # ONE batched embed call for every text (roots + hubs): _embed accepts a list and
+    # caches per-text, so this is a single bounded HTTP round-trip even for 30+ roots.
+    texts = [(r["title"] + " " + (r["body"] or "")[:400]).strip() for r in roots] \
+          + [(h["title"] + " " + (h["body"] or "")[:400]).strip() for h in hubs]
+    vecs = _embed(texts)
+    if vecs is None:
+        return [], ("semantic ranking unavailable (embedder down) - hints honestly "
+                    "absent, no keyword guess")
+    rvecs, hvecs = vecs[:len(roots)], vecs[len(roots):]
+    hints = []
+    for r, rv in zip(roots, rvecs):
+        best, best_score = None, 0.0
+        for h, hv in zip(hubs, hvecs):
+            if h["slug"] == r["slug"] or _up_reaches(h["slug"], r["slug"]):
+                continue
+            s = max(0.0, _cosine(rv, hv))
+            if s > best_score:
+                best, best_score = h, s
+        if best is not None and best_score >= HINT_THRESHOLD:
+            hints.append({"orphan": r["slug"], "orphan_title": r["title"],
+                          "hub": best["slug"], "hub_title": best["title"],
+                          "score": round(best_score, 3)})
+    hints.sort(key=lambda h: -h["score"])
+    return hints[:10], "up"
+
+
+def reconcile(items: list[dict], actor: str) -> dict:
+    """0.42 bulk reconcile-against-a-work-tracker: apply {slug, disposition, ref?, note?}
+    batches with PER-ITEM results (a bad item fails alone, never the batch). The MATCHING
+    of topics to tracker items stays the agent's job (skill: topics-tracker-reconcile) - this verb
+    is the one-call apply step after the human ratifies the mapping. Dispositions ride the
+    existing state machinery; each applied item leaves a 'reconciled' audit event.
+    Safety: pruning through reconcile is CHILDLESS-ONLY - a bulk call must never silently
+    cascade a subtree the human did not see (topic_state has the confirm-cascade path)."""
+    results, applied, errors = [], 0, 0
+    for it in (items or []):
+        it = it if isinstance(it, dict) else {}
+        slug = str(it.get("slug") or "")
+        disp = str(it.get("disposition") or "")
+        ref = str(it.get("ref") or "")
+        note = str(it.get("note") or "")
+
+        def fail(msg):
+            results.append({"slug": slug, "error": msg})
+
+        if disp not in ("discussed", "pruned", "converted"):
+            fail(f"bad disposition {disp!r} (discussed | pruned | converted)")
+            errors += 1
+            continue
+        with _lock:
+            row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            fail("not found")
+            errors += 1
+            continue
+        tid = row["id"]
+        if disp == "converted" and not ref:
+            fail("converted requires ref (the existing tracker item this topic became); "
+                 "to MINT a new item use topic_convert after the human confirms")
+            errors += 1
+            continue
+        if disp == "pruned":
+            with _lock:
+                kids = _conn.execute(
+                    "SELECT COUNT(*) c FROM topic WHERE parent_id=? AND "
+                    "state IN ('seedling','open','discussed')", (tid,)).fetchone()["c"]
+            if kids:
+                fail(f"has {kids} live child(ren) - bulk prune refuses to cascade unseen; "
+                     "prune via topic_state with its confirm-cascade, or reconcile the "
+                     "children first")
+                errors += 1
+                continue
+        if disp == "converted":
+            res = convert(slug, [{"kind": "work_item", "ref": ref, "note": note}],
+                          actor, note or "reconciled against tracker")
+        elif disp == "pruned":
+            # cascade=[slug] = "the subtree I saw is exactly this one node"; set_state
+            # re-verifies under its own lock, so a child added between our childless
+            # check and the prune REFUSES instead of cascading unseen (review LOW-2)
+            res = set_state(slug, disp, actor, note or "reconciled against tracker",
+                            cascade=[slug])
+        else:
+            res = set_state(slug, disp, actor, note or "reconciled against tracker")
+        if isinstance(res, dict) and res.get("error"):
+            fail(res["error"])
+            errors += 1
+            continue
+        with _lock:
+            _event(tid, "reconciled", actor,
+                   disp + (f" -> {ref}" if ref else "") + (f" | {note}" if note else ""))
+            _conn.commit()
+        results.append({"slug": slug, "ok": True, "disposition": disp})
+        applied += 1
+    return {"results": results, "applied": applied, "errors": errors}
 
 
 def _store_path(key) -> str:
@@ -1833,6 +2087,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, merge_topics(
                     str(body.get("into") or ""), str(body.get("from") or ""), actor,
                     body.get("body")))
+            if u.path == "/api/topics/reconcile":        # 0.42 bulk tracker reconcile
+                return self._json(200, reconcile(body.get("items") or [], actor))
             if u.path == "/api/topics/checkpoint":       # groom undo: drop a restore point
                 return self._json(200, create_checkpoint(actor, str(body.get("label") or "")))
             if u.path == "/api/topics/restore":          # groom undo: roll back (id omitted = latest)

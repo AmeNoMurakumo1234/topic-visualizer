@@ -49,6 +49,7 @@ window.TopicsRenderers.starchart = (function () {
     fogG = stage.querySelector(".tv-fog");
     edgesG = stage.querySelector(".tv-edges");
     nodesG = stage.querySelector(".tv-nodes");
+    core.discussedToggle(stage, "starchart");  // AFTER the innerHTML reset, or it is wiped
     focus = null;
     const r = stage.getBoundingClientRect();
     tx = r.width / 2; ty = r.height / 2; scale = 1; apply();
@@ -99,7 +100,7 @@ window.TopicsRenderers.starchart = (function () {
       if (!n.cur) n.cur = { x: 0, y: 0 };
       visible.push(n);
       if (depth >= MAXDEPTH) return;
-      const kids = n.children,
+      const kids = n.children.filter(c => !core.hiddenDiscussed(c, "starchart")),
             total = kids.reduce((s, c) => s + visWeight(c, MAXDEPTH - depth - 1), 0) || 1;
       let a = a0;
       for (const c of kids) {
@@ -107,7 +108,8 @@ window.TopicsRenderers.starchart = (function () {
         place(c, depth + 1, a, a + span); a += span;
       }
     };
-    const level1 = focus ? focus.children : core.roots;
+    const level1 = (focus ? focus.children : core.roots)
+      .filter(c => !core.hiddenDiscussed(c, "starchart"));
     if (focus) {
       focus.tgt = { x: 0, y: 0, depth: 0, hidden: 0 };
       if (!focus.cur) focus.cur = { x: 0, y: 0 };

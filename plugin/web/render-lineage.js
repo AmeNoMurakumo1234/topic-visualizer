@@ -17,6 +17,7 @@ window.TopicsRenderers.lineage = (function () {
     ac = new AbortController();
     critsRevealed = false;
     stage.innerHTML = `<div class="tv-world"><svg class="tv-wires"></svg><div class="tv-cards"></div></div>`;
+    core.discussedToggle(stage, "lineage");   // AFTER the innerHTML reset, or it is wiped
     world = stage.querySelector(".tv-world");
     wires = stage.querySelector(".tv-wires");
     cards = stage.querySelector(".tv-cards");
@@ -128,10 +129,12 @@ window.TopicsRenderers.lineage = (function () {
       visible.push(n);
       // PARTIAL expand: when a node is not fully open, still show any children individually revealed
       // (by navigating to them) - a thin thread to the node you asked for, not its whole fan.
-      const kids = n.open ? n.children : n.children.filter(c => c.revealed);
+      const kids = (n.open ? n.children : n.children.filter(c => c.revealed))
+        .filter(c => !core.hiddenDiscussed(c, "lineage"));
       kids.forEach(c => collect(c, depth + 1));
     };
-    core.roots.forEach(r => collect(r, 0));
+    core.roots.filter(r => !core.hiddenDiscussed(r, "lineage"))
+      .forEach(r => collect(r, 0));
 
     // pass 1: build every card (position set later), measure real heights
     const domOf = {};

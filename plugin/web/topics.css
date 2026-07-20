@@ -371,3 +371,11 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .bglabel { font-size: 12px; color: var(--dim); padding: 0 2px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 .bgtile.sel .bglabel { color: var(--ink); }
+
+/* 0.42: per-view hide-discussed toggle (Lineage + Star Chart) */
+.hide-discussed-tgl {
+  position: absolute; top: 8px; right: 12px; z-index: 30;
+  font-size: 12px; opacity: 0.75; cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.hide-discussed-tgl:hover { opacity: 1; }

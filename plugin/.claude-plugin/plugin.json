@@ -2,7 +2,7 @@
   "name": "topic-visualizer",
   "displayName": "Topic Visualizer",
   "description": "A home for might-not-do: keeps the conversations you haven't had yet from dying. AI sessions silently plant unpursued topics (MCP tools: topic_add/get/list/serve/search/state/convert/attach/groom_report/export/import/merge/duplicates) into a local SQLite tree; three switchable views (force-graph Constellation, collapsible Lineage, radial focus+context Star Chart) with a shared state language - seedlings, frontier sparkles, rare AI-set critical beacons, discussed embers you can reopen, prune-with-consequence. Topics convert explicitly into work items or recorded decisions, so a maybe never silently becomes a commitment.",
-  "version": "0.41.2",
+  "version": "0.42.0",
   "author": {
     "name": "Ame No Murakumo"
   },

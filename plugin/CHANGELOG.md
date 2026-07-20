@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.42.0 - 2026-07-20 - Fight staleness: honest engagement clocks, serve cooldown, tracker reconcile
+
+From the first substantive field session (Eric + Assay, 0.41.1): the tree held ~120 real forks,
+but storing outpaced serving ~17x and nothing alarmed; a bulk reshape silently graduated 13
+seedlings; the biggest structural problem (root-level orphans) produced zero hints; and the
+highest-value act - reconciling topics against the shipped work tracker - had zero support.
+Root defect: touched_at conflated three meanings (structural edit / serve impression / genuine
+engagement). Design doc: docs/2026-07-20-fight-staleness-design.md.
+
+- **Keystone: engaged_at + served_at split out of touched_at** (migration backfills:
+  engaged_at = touched_at, served_at from the newest served event, NULL = honestly never
+  served). Structural reparents/attaches no longer graduate seedlings - only genuine
+  engagement does (content edit, deliberate state change, convert, beacon change). Seedling
+  AUTO-expiry deliberately stays on touched_at (a groomed-but-never-engaged seedling is not
+  silently reaped mid-curation; flagged as a judgment seam, owner can revisit). Serve no
+  longer writes touched_at: a served-but-ignored topic used to look permanently fresh
+  (staleness laundering) - the "N opens unserved and untouched" metric was uncomputable.
+- **Serve cooldown (both backends).** A served card is demoted for TOPICS_SERVE_COOLDOWN_DAYS
+  (default 3), so a re-serve after the human defers simply advances - no defer verb, no new
+  state to learn. A demotion, not a filter: the only live candidate still serves. The board
+  backend (which recorded nothing on serve) gets a local sidecar of serve timestamps.
+- **Staleness is the loudest health signal.** health() now LEADS with a staleness block:
+  served:live ratio, stale-open count (on engagement, threshold 30d), never-served count, and
+  a warning flag (TOPICS_STALE_WARN, default 5). expiry reports whether the valve has ever
+  actually run ("expired: 0" used to read as healthy even when nothing had been evaluated).
+  The first-of-day card carries a one-line reconcile nudge when the alarm trips.
+- **topic_reconcile + the topics-tracker-reconcile skill.** Bulk close topics against a work tracker
+  after the human ratifies the mapping: per-item results, a reconciled audit event each,
+  converted requires an existing ref (minting stays topic_convert's confirmed act), and bulk
+  prune refuses topics with live children. The matching stays the agent's job - the plugin
+  grows no tracker integrations.
+- **Root-orphan -> nearest-hub hints in the groom report.** The field groom's actual problem
+  (32 roots, ~20 belonging under existing hubs) matched none of the legacy hint classes by
+  construction. New: each root's embedding vs every hub (>=2 live children), own-subtree
+  excluded (a hint must never describe a cycle). Semantic-only and honestly absent when the
+  embedder is down - no keyword guess.
+- **recent_human_activity in health/groom** - last-7d human actions (visualizer UI writes land
+  as actor=human), so a co-driving agent sees cross-surface changes instead of suspecting a
+  tool bug.
+- **Hide-discussed toggle (Lineage + Star Chart, per-view, persisted).** After a reconcile the
+  walked embers no longer bury the live cards; a discussed node still holding live structure
+  stays visible.
+- (0.41.2, folded here: the topics-serve skill no longer claims topic_convert is
+  side-effect-free - on the board backend a bare work_item convert mints a real issue;
+  both backends documented with confirm-first.)
+
+
 ## 0.41.1 - 2026-07-15 - Audit-2 fixes: upgrade-safe stop, truthful "started", reinstall keeps the embedder
 
 A second adversarial audit of 0.41.0 found three defects on real field paths - all fixed:

@@ -417,6 +417,36 @@ window.TopicsCore = (function () {
     core.searchDim = n => core.matched !== null && !core.matched.has(n.slug);
     core.labelForced = n => core.matched !== null && core.matched.has(n.slug);
 
+    /* --- hide-discussed (0.42, per-view): after a big reconcile the walked embers bury
+       the live cards in the discovery views. Hidden = discussed AND no live descendant -
+       a discussed node still holding live structure stays visible (hiding it would orphan
+       its children). Persisted per view, like the remembered view choice. --- */
+    core.hideDiscussed = {
+      lineage: localStorage.getItem("topics-hide-discussed-lineage") === "on",
+      starchart: localStorage.getItem("topics-hide-discussed-starchart") === "on",
+    };
+    core.setHideDiscussed = function (view, on) {
+      core.hideDiscussed[view] = !!on;
+      localStorage.setItem("topics-hide-discussed-" + view, on ? "on" : "off");
+      core.onChange();
+    };
+    const liveBelow = m => (m.children || []).some(c =>
+      (c.state === "seedling" || c.state === "open") || liveBelow(c));
+    core.hiddenDiscussed = function (n, view) {
+      if (!core.hideDiscussed[view]) return false;
+      return n.state === "discussed" && !liveBelow(n);
+    };
+    core.discussedToggle = function (container, view) {
+      const tgl = document.createElement("label");
+      tgl.className = "hide-discussed-tgl";
+      tgl.innerHTML = '<input type="checkbox"> hide discussed';
+      const box = tgl.querySelector("input");
+      box.checked = core.hideDiscussed[view];
+      box.addEventListener("change", () => core.setHideDiscussed(view, box.checked));
+      container.appendChild(tgl);
+      return tgl;
+    };
+
     /* --- quick-add: the human's two-second door --- */
     core.quickAdd = async function (title, parentSlug) {
       if (!title.trim()) return;

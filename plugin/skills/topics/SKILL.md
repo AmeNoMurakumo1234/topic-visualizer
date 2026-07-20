@@ -26,7 +26,9 @@ health signal lie.
 - **convert** a topic into a work item or a recorded decision - the ONLY bridge from might-do to
   committed; a maybe never silently becomes a promise
 - **groom** the tree (merge dupes, expire the stale, verify conversions got recorded) -> `topics-groom`;
-  reconcile drift between the tree and the work it spawned -> `topics-reconcile`
+  curate an imported/duplicated pile into one tree -> `topics-reconcile`;
+  close topics against the WORK TRACKER when shipped work answered them (the staleness
+  alarm's cure) -> `topics-tracker-reconcile`
 
 ## Health (if the tree, visualizer, or search looks off)
 

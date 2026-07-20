@@ -405,6 +405,13 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().groom_report()
 
+    def reconcile(self, items):
+        try:
+            return _http("POST", f"{self.base}/api/topics/reconcile",
+                         self._p({"items": items, "actor": ACTOR}))
+        except Unreachable:
+            return self._fallback().reconcile(items, ACTOR)
+
     def checkpoint(self, label=""):
         try:
             return _http("POST", f"{self.base}/api/topics/checkpoint",
@@ -618,13 +625,56 @@ class BoardBackend:
                          "bodies are immutable through the API). Set it at capture time "
                          "(topic_add priority=critical), or use the sqlite backend."}
 
+    # 0.42 serve cooldown, board leg: board posts have no served_at column and the board
+    # API records nothing on serve, so the MCP layer keeps a local sidecar of serve
+    # timestamps and overlays them before ranking - rank_candidates applies the same
+    # cooldown demotion as the sqlite server. Agent-driven serving therefore advances on
+    # both backends; the sidecar prunes itself so it never grows unbounded.
+    def _sidecar_path(self):
+        # keyed per board base URL + project so two boards (or colliding slugs across
+        # projects) never cross-contaminate cooldowns (review LOW-3)
+        key = "".join(c if c.isalnum() else "_" for c in f"{self.base}_{self.project}")
+        return Path.home() / ".topic-visualizer" / f"serve-cooldown-{key}.json"
+
+    def _sidecar_load(self):
+        try:
+            return json.loads(self._sidecar_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _sidecar_save(self, data):
+        import calendar, time
+        cutoff = time.time() - 30 * 86400
+        keep = {}
+        for slug, ts in data.items():
+            try:
+                if calendar.timegm(time.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")) > cutoff:
+                    keep[slug] = ts
+            except Exception:
+                pass
+        try:
+            p = self._sidecar_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(keep, indent=1), encoding="utf-8")
+        except Exception:
+            pass                                   # cooldown is best-effort, never a blocker
+
     def serve(self, context):
-        cands = rank_candidates(self._load(), context)
+        import time
+        served = self._sidecar_load()
+        topics = self._load()
+        for t in topics:
+            if t["slug"] in served:
+                t["served_at"] = served[t["slug"]]
+        cands = rank_candidates(topics, context)
         if not cands:
             return {"card": None, "note": "no open topics"}
         top = [{"slug": t["slug"], "title": t["title"], "state": t["state"],
                 "priority": t["priority"], "score": round(s, 2)}
                for s, t in cands[:3]]
+        # UTC, matching the server's datetime('now') and _parse_ts's UTC parse (LOW-1)
+        served[top[0]["slug"]] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        self._sidecar_save(served)
         return {"card": top[0], "alternates": top[1:]}
 
     def search(self, query):
@@ -670,6 +720,48 @@ class BoardBackend:
                     "created": created, "ref": ref, "resolve": res}
         return {"ok": True, "kind": kind, "ref": ref, "created": created,
                 "resolve": res}
+
+    def reconcile(self, items):
+        """Board leg of the bulk reconcile: same per-item contract as the server verb.
+        converted REQUIRES ref here too - the board's mint-an-issue path stays behind
+        topic_convert's explicit human-confirmed act, never a bulk side effect."""
+        results, applied, errors = [], 0, 0
+        for it in (items or []):
+            it = it if isinstance(it, dict) else {}
+            slug = str(it.get("slug") or "")
+            disp = str(it.get("disposition") or "")
+            ref = str(it.get("ref") or "")
+            note = str(it.get("note") or "")
+            if disp not in ("discussed", "pruned", "converted"):
+                results.append({"slug": slug,
+                                "error": f"bad disposition {disp!r} "
+                                         "(discussed | pruned | converted)"})
+                errors += 1
+                continue
+            if disp == "converted" and not ref:
+                results.append({"slug": slug,
+                                "error": "converted requires ref (an existing tracker "
+                                         "item); minting stays topic_convert's "
+                                         "human-confirmed act"})
+                errors += 1
+                continue
+            try:
+                if disp == "converted":
+                    res = self.convert(slug, "work_item", ref,
+                                       note or "reconciled against tracker")
+                else:
+                    res = self.state(slug, disp, note or "reconciled against tracker")
+            except Unreachable as e:
+                results.append({"slug": slug, "error": str(e)})
+                errors += 1
+                continue
+            if isinstance(res, dict) and res.get("error"):
+                results.append({"slug": slug, "error": res["error"]})
+                errors += 1
+            else:
+                results.append({"slug": slug, "ok": True, "disposition": disp})
+                applied += 1
+        return {"results": results, "applied": applied, "errors": errors}
 
     def groom(self):
         topics = self._load()
@@ -873,7 +965,9 @@ TOOLS = [
          "Get ONE topic card worth raising now (plus 2 alternates) - beacons first, "
          "then semantic fit to the given context, then oldest-important resurfacing. "
          "Default cadence: first session of the day. Serve the card conversationally; "
-         "never dump a list."),
+         "never dump a list. COOLDOWN (0.42): a served card is demoted for ~3 days "
+         "(TOPICS_SERVE_COOLDOWN_DAYS), so re-serving after the human defers simply "
+         "advances to the next card - no defer verb needed."),
      "inputSchema": {"type": "object", "properties": {
          "context": {"type": "string",
                      "description": "what we're working on right now (for territory fit)"}}}},
@@ -889,7 +983,8 @@ TOOLS = [
                     "through), pruned (dead branch; sqlite cascades to the live subtree). "
                     "And/or set `priority`: critical (beacon) | normal - this is how the "
                     "groom's beacon audit promotes/demotes an existing topic. At least one "
-                    "of state/priority. Touching a topic graduates a seedling. BATCH: pass "
+                    "of state/priority. A deliberate state change graduates a seedling; "
+                    "structural reparents/attaches no longer do (0.42). BATCH: pass "
                     "items:[{slug,state?,priority?,note?}, ...] to change many in one call "
                     "(per-item results) instead of a call each.",
      "inputSchema": {"type": "object", "properties": {
@@ -903,6 +998,26 @@ TOOLS = [
                        "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
                        "priority": {"type": "string", "enum": ["normal", "critical"]},
                        "note": {"type": "string"}}, "required": ["slug"]}}}}},
+    {"name": "topic_reconcile",
+     "description": (
+         "Bulk close topics AGAINST A WORK TRACKER after the human ratifies the mapping "
+         "(workflow: skill topics-tracker-reconcile - the MATCHING of topics to shipped tracker "
+         "items is your job with your own tools; this verb is the one-call apply step). "
+         "items: [{slug, disposition: discussed|pruned|converted, ref?, note?}] applied "
+         "PER-ITEM (one bad item never fails the batch); each applied item leaves a "
+         "'reconciled' audit event. converted REQUIRES ref (an existing tracker item - "
+         "minting a new one stays topic_convert's human-confirmed act). pruned refuses a "
+         "topic with live children (bulk must never cascade a subtree unseen). Use "
+         "topic_state for ad-hoc changes; use THIS when closing topics because tracker "
+         "work shipped."),
+     "inputSchema": {"type": "object", "properties": {
+         "items": {"type": "array", "items": {"type": "object", "properties": {
+             "slug": {"type": "string"},
+             "disposition": {"type": "string",
+                             "enum": ["discussed", "pruned", "converted"]},
+             "ref": {"type": "string"}, "note": {"type": "string"}},
+             "required": ["slug", "disposition"]}}},
+         "required": ["items"]}},
     {"name": "topic_convert",
      "description": (
          "The atomic crossing out of EXPLORING: record what a discussed topic became - "
@@ -1165,6 +1280,8 @@ def _call(name: str, args: dict) -> dict:
         return b.merge(str(args.get("into") or ""), str(args.get("from") or ""), args.get("body"))
     if name == "topic_duplicates":
         return b.duplicates(str(args.get("band") or "kin"))
+    if name == "topic_reconcile":
+        return b.reconcile(args.get("items") or [])
     return {"error": f"unknown tool {name!r}"}
 
 

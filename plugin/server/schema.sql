@@ -24,7 +24,16 @@ CREATE TABLE IF NOT EXISTS topic (
   tags             TEXT NOT NULL DEFAULT '',
   created_by       TEXT NOT NULL,                    -- 'human' | agent name
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-  touched_at       TEXT NOT NULL DEFAULT (datetime('now')),  -- any serve/view/edit/state act
+  touched_at       TEXT NOT NULL DEFAULT (datetime('now')),  -- last write of ANY kind (structural
+                                                     -- reparent/attach included). 0.42: serve no
+                                                     -- longer writes this (it was laundering
+                                                     -- staleness) and it no longer graduates.
+  engaged_at       TEXT NOT NULL DEFAULT (datetime('now')),  -- last GENUINE engagement with the idea
+                                                     -- (capture, content edit, deliberate state
+                                                     -- change, convert, beacon change) - the ONLY
+                                                     -- graduators, and the staleness clock (0.42)
+  served_at        TEXT,                             -- last serve impression; drives the serve
+                                                     -- cooldown; NULL = never served (honest)
   provenance       TEXT NOT NULL DEFAULT '',
   state_changed_at TEXT,
   state_changed_by TEXT,
@@ -74,7 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_link_topic ON topic_link(topic_id);
 CREATE TABLE IF NOT EXISTS topic_event (
   id       INTEGER PRIMARY KEY,
   topic_id INTEGER NOT NULL REFERENCES topic(id),
-  event    TEXT NOT NULL,   -- created|touched|served|discussed|reopened|pruned|expired|converted|beacon_set|beacon_cleared|reparented|edited
+  event    TEXT NOT NULL,   -- created|touched|served|discussed|reopened|pruned|expired|converted|beacon_set|beacon_cleared|reparented|edited|reconciled
   actor    TEXT NOT NULL,
   note     TEXT NOT NULL DEFAULT '',
   at       TEXT NOT NULL DEFAULT (datetime('now'))

@@ -13,10 +13,20 @@ NUDGE_STAMP = Path.home() / ".topic-visualizer-last-nudged"
 
 
 def _serve():
+    """Returns (card, staleness_block_or_None). Both legs supply staleness so the 0.42
+    reconcile nudge works in the out-of-box serverless configuration too - the field gap
+    was precisely that nothing prompted a reconcile (review MED-2)."""
     url = os.environ.get("TOPICS_SERVER_URL", "http://127.0.0.1:8991").rstrip("/")
     try:
         with urllib.request.urlopen(url + "/api/topics/serve", timeout=2) as r:
-            return json.loads(r.read()).get("card")
+            card = json.loads(r.read()).get("card")
+        stale = None
+        try:
+            with urllib.request.urlopen(url + "/api/topics/health", timeout=2) as r:
+                stale = json.loads(r.read()).get("staleness")
+        except Exception:
+            pass
+        return card, stale
     except Exception:
         pass
     # direct-sqlite fallback: mirror mcp_tools.ServerBackend._fallback
@@ -32,9 +42,15 @@ def _serve():
             return None                       # nothing captured yet - stay silent
         srv.DB_PATH = db
         srv._conn = srv.open_db(db)
-        return srv.serve_card("").get("card")
+        card = srv.serve_card("").get("card")
+        stale = None
+        try:
+            stale = srv.health().get("staleness")
+        except Exception:
+            pass
+        return card, stale
     except Exception:
-        return None
+        return None, None
 
 
 def _autostart_installed() -> bool:
@@ -78,14 +94,23 @@ try:
     today = time.strftime("%Y-%m-%d")
     if STAMP.exists() and STAMP.read_text().strip() == today:
         sys.exit(0)
-    card = _serve()
+    card, st = _serve()
     if card:
         STAMP.write_text(today)
+        ctx = ("FIRST-OF-DAY TOPIC CARD (skippable with a word; owner-ratified ritual): "
+               + card["title"] + " -- " + card["body"][:400])
+        # 0.42 proactive reconcile nudge: the field session's highest-value act was a
+        # reconcile pass, and nothing prompted it. One line, only when the alarm trips.
+        if st and st.get("warning"):
+            ratio = st.get("served_to_live")
+            ctx += (f" || STALENESS ALARM: {st.get('stale_open_count')} open topics "
+                    f"un-engaged >{st.get('stale_threshold_days', 30)}d"
+                    + (f", served:live {ratio}" if ratio is not None else "")
+                    + " - the highest-value response is a reconcile pass against the "
+                      "work tracker (skill: topics-tracker-reconcile). Offer it to the human.")
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext":
-                "FIRST-OF-DAY TOPIC CARD (skippable with a word; owner-ratified ritual): "
-                + card["title"] + " -- " + card["body"][:400]}}))
+            "additionalContext": ctx}}))
     if not card:
         # installed-but-not-set-up nudge: capturing works, but the visualizer web UI and
         # semantic ranking are dark until /topics-setup runs. Once per day (own stamp, so
