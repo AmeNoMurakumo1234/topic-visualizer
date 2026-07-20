@@ -47,9 +47,17 @@ resurfacing. Time-weight is not a ranking input - read it off the card when matc
    discussed. A maybe never silently becomes a commitment - conversion is the only
    bridge, and it is always explicit.
 
-   "Converted to work" means the HUMAN takes it into their own work tracker. The skill records the
-   conversion with `topic_convert` (a local state change) - it does NOT create an external task in
-   Asana/Jira/Linear/etc. unless the human explicitly asks, and if they do, confirm WHICH tracker first.
+   "Converted to work" means the HUMAN takes it into their own work tracker. What `topic_convert`
+   does depends on the backend, and you must know which one you are on BEFORE calling it:
+   - **sqlite backend (the plugin default):** a local state change only. It records the link and marks
+     the topic discussed - it does NOT create an external task. If the work item should exist in a real
+     tracker (GitHub/Asana/Jira/etc.), the human creates it there first (or explicitly asks you to),
+     then you pass its reference via `ref`. Confirm WHICH tracker before touching any external one.
+   - **message-board backend:** `topic_convert` with `kind=work_item` and NO `ref` **creates a real
+     board issue** (P2, from the topic's title/body) and links it - a genuine side effect, not a local
+     mark. Treat it with the same confirm-first discipline as any external tracker: name the issue it
+     will mint and get the human's yes before calling it, or pass an existing issue's `ref` to link
+     without minting.
 3. **Pruned** - the human decides the branch isn't worth exploring. Confirm with the
    descendant count ("pruning this removes N topics beneath it - whole branch, or
    lower?"), remind them it is reversible, then prune. Celebrate this outcome equally:
