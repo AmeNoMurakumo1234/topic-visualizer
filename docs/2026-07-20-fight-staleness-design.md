@@ -69,7 +69,11 @@ Proactive nudge: the existing SessionStart first-of-day hook adds one line when
 `staleness_warning` is true — "N stale opens, served:live is X — want a reconcile
 pass?" No new hook.
 
-## 4. `topic_reconcile` bulk verb + `topics-reconcile` skill (owner-ratified)
+## 4. `topic_reconcile` bulk verb + tracker-reconcile skill (owner-ratified)
+
+> Erratum (0.42.0 ship): the skill shipped as **`topics-tracker-reconcile`** - the name
+> this section originally used collided with the existing `topics-reconcile` import-dedup
+> skill and briefly overwrote it during implementation (caught in review, restored).
 
 New MCP tool: batch of `{slug, disposition: discussed|pruned|converted, ref?, note?}`
 → each applied atomically via existing state machinery, event-logged `reconciled`,

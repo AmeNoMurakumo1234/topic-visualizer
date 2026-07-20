@@ -66,8 +66,9 @@ Each topic is self-contained - written for a future session with zero context:
 - **Body**: 3-5 sentences of context (why it matters, where it came from), then
   `THE QUESTION:` - the one question a future conversation must answer.
 - **Parent**: the topic it branched from, if it was born inside another topic's
-  conversation. Root topics are fine and normal. One parent maximum; use tags for
-  cross-cutting themes. Never force a hierarchy at capture time.
+  conversation. Root topics are fine and normal. One parent at capture; a cross-cutting
+  theme gets extra avenues LATER via `topic_attach` (topics form a DAG), not at capture
+  time. Never force a hierarchy at capture time.
 - **Provenance**: date + which conversation/work surfaced it.
 
 ## The beacon (use sparingly)

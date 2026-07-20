@@ -14,15 +14,17 @@ workflow, with `topic_reconcile` as the one-call apply step.
 ## When
 
 - `health.staleness.warning` is true (the report now leads with it), or the first-of-day
-  card carries the STALENESS ALARM line.
+  card carries the STALENESS ALARM line. (sqlite backend only - the BOARD backend has no
+  staleness block, so on the board run this on the sprint/monthly triggers below.)
 - A sprint/release just landed work the tree predicted.
 - Monthly, as part of a groom, even without the alarm.
 
 ## The pass (three steps, human ratifies between 2 and 3)
 
 **1. Pull the candidates.** `topic_list` (or `topic_search` scoped to a territory), keep
-`state: open` + long-stale opens from `health.staleness`. This is YOUR read - the tool
-does not fetch tracker state.
+`state: open`. `health.staleness` carries the stale COUNTS (and the groom report's
+`expiry_candidates_full_topics` a 3-item sample) - the full stale list you assemble
+yourself from `topic_list`. This is YOUR read - the tool does not fetch tracker state.
 
 **2. Match with your own tools, then present the mapping.** Grep the tracker the human
 actually uses (gh CLI, board `mb issues`, etc.) for each candidate's territory. Build a
@@ -41,9 +43,11 @@ table: topic -> disposition -> evidence:
 
 Present the table and WAIT for the human's ratification. Adjust what they push back on.
 
-**3. Apply in one call.** `topic_reconcile` with the ratified items. Read the per-item
-results - one bad item fails alone, never the batch - and report `applied`/`errors`
-honestly. Every applied item leaves a `reconciled` audit event.
+**3. Apply in one call.** `topic_reconcile` with the ratified items (each slug at most
+once - duplicates in a batch error rather than double-apply). Read the per-item results -
+one bad item fails alone, never the batch - and report `applied`/`errors` honestly. On
+the sqlite backend every applied item leaves a `reconciled` audit event; the board leg
+records the note on the resolve instead.
 
 ## Discipline
 

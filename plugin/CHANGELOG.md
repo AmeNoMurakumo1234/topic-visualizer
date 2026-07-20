@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.42.1 - 2026-07-20 - Pre-marketplace audit: board reconcile safety, no-op laundering, burst rotation
+
+Four independent audit lenses over 0.42.0 (diff correctness / upgrade + cross-repo / docs
+coherence / tests + adversarial probes) before the marketplace push. Everything found was
+fixed same-day; 11 new tests pin the fixes (137 total, 8 suites green; `claude plugin
+validate` now passes - it did not before).
+
+**Behavior fixes**
+- **Board reconcile enforces its promised safety contract (audit MAJOR).** The board leg
+  of `topic_reconcile` skipped the childless-only prune guard and never checked the slug
+  was a topic at all - a bulk prune could silently orphan a hub's subtree, and a board
+  ISSUE slug passed by mistake would resolve a non-topic post. Both guards now run off one
+  `_load()`; the previously-untested board leg has stubbed unit coverage.
+- **A no-op state re-assertion no longer engages.** `set_state(open->open)` refreshed
+  `engaged_at`, so a bulk sweep re-stating the status quo re-laundered the staleness clock
+  0.42.0 un-laundered. Only a real state CHANGE engages now.
+- **Serve rotation survives bursts.** The flat -1000 cooldown penalty pinned serving to
+  one card once EVERY candidate was cooling (ties broke by insertion order). Now, among
+  cooling cards, base score is deliberately discarded and the rank IS the serve order
+  (least-recently-served first, score = -1000 - index, always below every un-served
+  candidate) - "re-serving advances" is a contract, not a fight between tiny floats.
+  `served_at` is stamped at MICROSECOND resolution from Python's clock, because burst
+  serves (5 in ~2ms observed) tie at second and even millisecond resolution and a tied
+  stamp re-pins the rotation. Pure function of the topic list - the board leg ranks its
+  sidecar-overlaid topics through the same code, store untouched.
+- **`topic_reconcile` input hardening.** A bare-string `items` errored per-CHARACTER
+  (response amplification) - now rejected outright; duplicate slugs in one batch errored
+  into silent double-apply (discussed -> pruned flip) - first occurrence applies, repeats
+  error loudly. Both legs.
+- **Import keeps the original engagement clock.** `_insert_imported` stamped
+  `engaged_at=now`, so a 60-day-stale export read as engaged today and the alarm went
+  silent for 30 days. Imports now inherit the topic's `created_at` (the export format
+  deliberately carries no volatile clocks) - an un-curated import pile correctly trips the
+  reconcile nudge.
+- **`first_of_day` fallback honors the 0.42 tuple contract** (`return None, None`) - the
+  bare `None` raised a TypeError silently absorbed by the never-block-a-session catch,
+  turning that catch into a bug-masker.
+- **Version-skew hint.** `topic_reconcile` against a still-running pre-0.42 server now says
+  "restart the topics server" instead of a bare HTTP 404.
+
+**Validation + docs (audit findings, all fixed)**
+- `topics-reconcile` skill frontmatter had unparseable YAML (unquoted `:`) since before
+  0.42 - the skill loaded with EMPTY metadata and could never trigger by description, and
+  `claude plugin validate` failed. Quoted; validation green.
+- INSTALL.md: tool count corrected (13 -> 21), per-project fallback store path corrected,
+  full skill roster listed. ROADMAP: tool list refreshed, "first real install" milestone
+  closed. Groom skill now teaches `root_orphan_hints` (+ the embedder-down caveat) and the
+  engagement-keyed expiry wording; serve skill documents the 3-day cooldown consequence;
+  tracker-reconcile skill notes the audit-event and staleness blocks are sqlite-only and
+  where the full stale LIST actually comes from; capture skill's dead "use tags" advice
+  replaced with the real `topic_attach` DAG mechanism; `topic_groom_report`'s description
+  finally mentions what the report leads with. Design-doc erratum records the skill-name
+  collision. `_root_orphan_hints`' "never blocks" docstring corrected (the HTTP groom
+  route holds the request lock; embedder round-trip serializes it).
+
+**Known accepted (audited, deliberately unchanged)**: sidecar key sanitizer can collide
+`a-b`/`a_b` project names (hash if it ever matters); fresh-install `engaged_at` is NOT
+NULL DEFAULT while migrated stores are nullable (all readers COALESCE; third-party
+inserts differ); `merge_topics` body rewrite classifies structural (touched, not
+engaged); board vendored web copies are at 0.37 (non-breaking - re-vendor is the board
+repo's own chore).
+
 ## 0.42.0 - 2026-07-20 - Fight staleness: honest engagement clocks, serve cooldown, tracker reconcile
 
 From the first substantive field session (Eric + Assay, 0.41.1): the tree held ~120 real forks,

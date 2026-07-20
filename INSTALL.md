@@ -49,15 +49,19 @@ some builds; the commands above work there too.
 
 ## What you get, immediately
 
-- **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`, and ten more
-  (`topic_get`/`list`/`state`/`convert`/`attach`/`groom_report`/`export`/`import`/`merge`/
-  `duplicates`) - thirteen in all. No server needs to be running: the tools fall back to direct SQLite at
-  `~/.topic-visualizer/topics.db` (a plain file in your home dir, created on first
-  capture; survives plugin updates). If the topics server IS running they pass
-  through it - same store, same behavior.
+- **MCP tools, zero setup.** `topic_add`, `topic_serve`, `topic_search`, and the rest
+  (`topic_get`/`list`/`state`/`convert`/`attach`/`reparent`/`edit`/`reconcile`/
+  `groom_report`/`doctor`/`export`/`import`/`merge`/`duplicates`/`checkpoint`/
+  `checkpoints`/`restore`/`open`/`serve`...) - twenty-one in all. No server needs to be
+  running: the tools fall back to direct SQLite in `~/.topic-visualizer/projects/<key>.db`
+  (per-project files in your home dir, created on first capture; survive plugin
+  updates; `topics.db` at the root is only the pre-0.5 legacy store). If the topics
+  server IS running they pass through it - same store, same behavior.
 - **Skills**: `topics-capture` (silent capture at the fork; mortality-aware near
   compaction), `topics-serve` (one card, first session of the day), `topics-groom`
-  (the gardener's round, evidence-calibrated).
+  (the gardener's round, evidence-calibrated), `topics-reconcile` (curate an imported
+  pile), `topics-tracker-reconcile` (bulk-close topics whose tracker work shipped),
+  `topics` (the lifecycle map), `topics-setup` / `topics-teardown` (install lifecycle).
 - **Hooks**: SessionStart serves the first-of-day card (works with no server
   running - direct sqlite fallback); Stop runs a ONE-per-session capture sweep.
   The pre-compaction mortality sweep lives in the topics-capture skill (the

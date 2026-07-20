@@ -13,6 +13,13 @@ Serve exactly ONE topic - the top-ranked open card - formed as an artifact with 
 question: its context (self-contained), its `THE QUESTION:` line, and its time-weight,
 so they can accept, defer, or say "next" for the second card.
 
+**Serving has a ~3-day cooldown (0.42).** A served card is demoted behind every un-served
+candidate, so a fresh `topic_serve` naturally advances - "defer" needs no verb, and cooled
+cards rotate least-recently-served-first. Know the consequence: a card the human defers
+will not come back from `topic_serve` for ~3 days (`TOPICS_SERVE_COOLDOWN_DAYS`). If they
+mean "later TODAY", hold it yourself in-session or use the already-returned `alternates` -
+don't re-call serve expecting it back.
+
 Use the `topic_add` / `topic_list` / `topic_serve` tools from the topic-visualizer MCP
 server (namespace `mcp__plugin_topic-visualizer_topics__*`), not a similarly-worded tool
 from another server.

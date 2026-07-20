@@ -39,7 +39,7 @@ def _serve():
         proj = os.environ.get("TOPICS_PROJECT") or srv.project_key_from_cwd()
         db = os.environ.get("TOPICS_DB") or srv.project_db_path(proj)
         if not Path(db).exists():
-            return None                       # nothing captured yet - stay silent
+            return None, None                 # nothing captured yet - stay silent (0.42 tuple contract)
         srv.DB_PATH = db
         srv._conn = srv.open_db(db)
         card = srv.serve_card("").get("card")

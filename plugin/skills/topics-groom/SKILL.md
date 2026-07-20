@@ -34,8 +34,9 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    `topic_merge`/`topic_attach`) rather than merging by hand - it carries the
    survivor-picking and propagation discipline.
 
-2. **Expiry candidates - by choice, never by silence.** A topic unserved and untouched
-   for ~a month is a candidate, not a casualty. Present candidates to the human ONE at
+2. **Expiry candidates - by choice, never by silence.** A topic un-ENGAGED for ~a month
+   is a candidate, not a casualty (as of 0.42 the clock is engagement: a card merely
+   served, or moved during a reshape, but never actually worked with, still qualifies). Present candidates to the human ONE at
    a time or in a tiny batch (<=3) with the one question: *"expire this, keep it
    waiting, or talk about it now?"* Every answer is recorded. The difference between a
    graveyard and an archive is that someone chose the archive.
@@ -103,6 +104,12 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    - **junk-drawer nodes** (`possible_buckets`): a parent whose title is a BUCKET, not a question
      ("conversations we haven't had", "misc") hides a real sub-cluster - open it, reparent the
      members to true homes.
+   - **root orphans near a hub** (`coherence.root_orphan_hints`, 0.42 - the most common real
+     grooming action): a topic captured at ROOT (chronological capture, not meaning) that
+     semantically belongs under an existing hub. Each hint is {orphan, hub, score}; propose the
+     move, the human ratifies, then `topic_reparent`. SEMANTIC-ONLY: when the embedder is down
+     the list is honestly absent (`root_orphan_note` says so) - absence of hints is then NOT
+     evidence the roots are fine; eyeball `fan_out.root_count` yourself.
    - **mixed-altitude / mixed-voice siblings** (judgment - the report can't compute it): children at
      different levels of abstraction, or in different phrasings, under one parent -> re-level them
      (`topic_edit` to rename/rephrase a title, `topic_reparent` to re-nest).

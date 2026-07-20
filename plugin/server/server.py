@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.42.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.42.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -492,10 +492,17 @@ def _insert_imported(obj: dict, slug: str) -> int:
         """INSERT INTO topic (slug, title, body, state, priority, created_by,
                               created_at, touched_at, engaged_at, provenance)
            VALUES (?,?,?,?,?,?, COALESCE(NULLIF(?, ''), datetime('now')),
-                   datetime('now'), datetime('now'), ?)""",
+                   datetime('now'), COALESCE(NULLIF(?, ''), datetime('now')), ?)""",
         (slug, obj["title"], obj.get("body", ""), state,
          "critical" if obj.get("priority") == "critical" else "normal",
-         "import", obj.get("created_at", ""), obj.get("provenance", "")))
+         "import", obj.get("created_at", ""), obj.get("created_at", ""),
+         obj.get("provenance", "")))
+    # 0.42.1 (audit): engaged_at = the topic's ORIGINAL created_at, not now. The export
+    # format deliberately carries no volatile clocks (byte-stable mirror), so import
+    # cannot know the true last engagement - but stamping "now" laundered the staleness
+    # clock (a 60-day-stale export read as engaged today and the alarm went silent).
+    # Biasing old imports toward stale is honest: an un-curated pile SHOULD trip the
+    # reconcile nudge - that is the workflow (topics-reconcile) built for it.
     tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()["id"]
     _event(tid, "imported", "import", f'from {obj["slug"]}')
     return tid
@@ -1222,10 +1229,14 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
             ids = subtree
         ev = {"open": "reopened", "discussed": "discussed", "pruned": "pruned"}[state]
         for tid in ids:
+            # 0.42.1 (audit): a deliberate state CHANGE engages; a no-op re-assertion of
+            # the current state does not - a bulk sweep re-stating what already holds must
+            # not refresh the staleness clock this release un-laundered.
+            cur = _conn.execute("SELECT state FROM topic WHERE id=?", (tid,)).fetchone()
+            engage = ", engaged_at=datetime('now')" if (cur and cur["state"] != state) else ""
             _conn.execute(
-                """UPDATE topic SET state=?, state_changed_at=datetime('now'),
-                   state_changed_by=?, state_note=?, touched_at=datetime('now'),
-                   engaged_at=datetime('now')
+                f"""UPDATE topic SET state=?, state_changed_at=datetime('now'),
+                   state_changed_by=?, state_note=?, touched_at=datetime('now'){engage}
                    WHERE id=?""", (state, actor, note, tid))
             # resurrecting a merged tombstone (-> open) makes it an ordinary LIVE topic: clear the
             # stale merged_into, else a later prune re-arms the 14-day hard-delete sweep (F6). No-op
@@ -1456,7 +1467,7 @@ def rank_candidates(topics, context=""):
     sem_by_slug = {x["slug"]: s for s, x in sem} if sem else {}
     ctx = _tokens(context)
     now = time.time()
-    cands = []
+    cands, cooled = [], []
     for x in live:
         age_days = max(0.0, (now - _parse_ts(x.get("engaged_at") or x.get("touched_at")
                                              or x.get("created_at") or "")) / 86400.0)
@@ -1470,8 +1481,21 @@ def rank_candidates(topics, context=""):
         # still serves (never a blank card).
         sat = x.get("served_at")
         if sat and (now - _parse_ts(sat)) < SERVE_COOLDOWN_DAYS * 86400.0:
-            score -= 1000.0
-        cands.append((score, x))
+            cooled.append((_parse_ts(sat), x))
+        else:
+            cands.append((score, x))
+    # 0.42.1 (audit): among COOLING cards the base score is deliberately DISCARDED and
+    # the rank IS the serve order - "re-serving advances" is a contract, and it lost
+    # every tiny-float fight we tried (a flat -1000 pinned to the highest base score;
+    # a recency-scaled penalty at ms resolution, ~4e-7, was outvoted by a one-second
+    # engagement-age difference, ~8e-6). Least-recently-served first, stable on ties:
+    # score = -1000 - index, always below every un-served candidate (those are >= 0).
+    # Self-healing even from exact same-millisecond ties (burst serves - observed 5 in
+    # ~2ms): each serve stamps the served card STRICTLY past the others, so the next
+    # serve advances regardless of how the tie broke. Pure function of the topics list
+    # (no store access) - the BOARD leg ranks its sidecar-overlaid topics through here.
+    cooled.sort(key=lambda y: y[0])
+    cands.extend((-1000.0 - i, x) for i, (_, x) in enumerate(cooled))
     cands.sort(key=lambda y: -y[0])
     return cands
 
@@ -1486,8 +1510,15 @@ def serve_card(context: str = "") -> dict:
         _event(card["id"], "served", "server", f"context={context[:60]}")
         # 0.42: an impression is NOT engagement. Writing touched_at here made a
         # served-but-ignored topic look permanently fresh (staleness laundering).
-        _conn.execute("UPDATE topic SET served_at = datetime('now') WHERE id=?",
-                      (card["id"],))
+        # 0.42.1: MICROSECOND stamp from Python's clock, not datetime('now') - the
+        # cooldown rotation ranks cooled cards by serve ORDER, and burst serves (5 in
+        # ~2ms observed) tie at second- and even millisecond-resolution: a fresh stamp
+        # that EQUALS the oldest un-refreshed stamp re-pins the rotation. At micro-
+        # second resolution (time.time() is ~100ns-precise on modern platforms) two
+        # serves cannot collide in practice, so the order survives in the data.
+        t = time.time()
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(t)) + f".{int(t % 1 * 1e6):06d}"
+        _conn.execute("UPDATE topic SET served_at = ? WHERE id=?", (stamp, card["id"]))
         _conn.commit()
     return {"card": card, "alternates": [c[1] for c in cands[1:3]]}
 
@@ -1497,7 +1528,11 @@ def _parse_ts(ts: str) -> float:
     # age/cooldown window skews by the local UTC offset (review LOW-1).
     import calendar
     try:
-        return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%d %H:%M:%S"))
+        base = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%d %H:%M:%S"))
+        # 0.42.1: honor a fractional-seconds suffix (served_at now carries millis so
+        # burst serves keep their order for the cooldown rotation).
+        frac = float("0" + ts[19:]) if ts[19:20] == "." else 0.0
+        return base + frac
     except Exception:
         return time.time()
 
@@ -1766,8 +1801,10 @@ def _root_orphan_hints() -> tuple[list[dict], str]:
     SEMANTIC-ONLY by design: when the embedder is down the hints are honestly ABSENT (a
     keyword guess would recreate the misleading-emptiness problem in a worse form). Never
     suggests a hub inside the orphan's own subtree (that hint would describe a cycle).
-    Reads without the lock: worst case a hint is momentarily stale, and the embedding
-    round-trip must not block writers."""
+    Takes no lock ITSELF (worst case a hint is momentarily stale) - but note the HTTP
+    groom route holds the request lock for the whole GET, so in that path the embedder
+    round-trip (8s timeout) does serialize other API requests; acceptable for a
+    human-cadence groom, called out here so nobody trusts the old 'never blocks' claim."""
     LIVE = "('seedling','open','discussed')"
     roots = [dict(r) for r in _conn.execute(
         f"SELECT id, slug, title, body FROM topic WHERE parent_id IS NULL "
@@ -1838,7 +1875,12 @@ def reconcile(items: list[dict], actor: str) -> dict:
     existing state machinery; each applied item leaves a 'reconciled' audit event.
     Safety: pruning through reconcile is CHILDLESS-ONLY - a bulk call must never silently
     cascade a subtree the human did not see (topic_state has the confirm-cascade path)."""
+    # 0.42.1 (audit): items must be a real list - a bare string is iterable and would
+    # produce one error entry PER CHARACTER (unbounded response amplification via HTTP).
+    if items is not None and not isinstance(items, list):
+        return _fail("items must be a list of {slug, disposition, ref?, note?} objects")
     results, applied, errors = [], 0, 0
+    seen_slugs: set = set()
     for it in (items or []):
         it = it if isinstance(it, dict) else {}
         slug = str(it.get("slug") or "")
@@ -1853,6 +1895,15 @@ def reconcile(items: list[dict], actor: str) -> dict:
             fail(f"bad disposition {disp!r} (discussed | pruned | converted)")
             errors += 1
             continue
+        # 0.42.1 (audit): a tracker-join batch can accidentally carry the same slug twice
+        # with different dispositions; last-wins double-apply silently flipped e.g.
+        # discussed -> pruned. First occurrence applies; repeats error out loudly.
+        if slug in seen_slugs:
+            fail("duplicate slug in this batch (first occurrence already applied); "
+                 "dedupe the mapping and re-send just the correction if intended")
+            errors += 1
+            continue
+        seen_slugs.add(slug)
         with _lock:
             row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
@@ -1872,8 +1923,8 @@ def reconcile(items: list[dict], actor: str) -> dict:
                     "state IN ('seedling','open','discussed')", (tid,)).fetchone()["c"]
             if kids:
                 fail(f"has {kids} live child(ren) - bulk prune refuses to cascade unseen; "
-                     "prune via topic_state with its confirm-cascade, or reconcile the "
-                     "children first")
+                     "prune via topic_state with its confirm-cascade, or prune the "
+                     "children first (discussed children still count as live here)")
                 errors += 1
                 continue
         if disp == "converted":

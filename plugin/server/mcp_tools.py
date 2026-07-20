@@ -407,8 +407,14 @@ class ServerBackend:
 
     def reconcile(self, items):
         try:
-            return _http("POST", f"{self.base}/api/topics/reconcile",
-                         self._p({"items": items, "actor": ACTOR}))
+            res = _http("POST", f"{self.base}/api/topics/reconcile",
+                        self._p({"items": items, "actor": ACTOR}))
+            # 0.42.1 (audit): a pre-0.42 RUNNING server has no /reconcile route and answers
+            # 404, which reads like a routing bug. Name the actual fix (version skew).
+            if isinstance(res, dict) and res.get("error") == "HTTP 404":
+                res["hint"] = ("the running topics server predates this verb (pre-0.42 "
+                               "code still in memory) - restart the topics server, then retry")
+            return res
         except Unreachable:
             return self._fallback().reconcile(items, ACTOR)
 
@@ -724,8 +730,23 @@ class BoardBackend:
     def reconcile(self, items):
         """Board leg of the bulk reconcile: same per-item contract as the server verb.
         converted REQUIRES ref here too - the board's mint-an-issue path stays behind
-        topic_convert's explicit human-confirmed act, never a bulk side effect."""
+        topic_convert's explicit human-confirmed act, never a bulk side effect.
+        0.42.1 (audit MAJOR): this leg now enforces the SAME safety contract the tool
+        description promises - childless-only prune and topic-identity - which it
+        previously dropped: a bulk prune could silently orphan a hub's subtree, and a
+        board ISSUE slug passed by mistake (easy in a tracker join, both are board
+        slugs) would resolve a non-topic post. One _load() serves both guards."""
+        if items is not None and not isinstance(items, list):
+            return {"error": "items must be a list of {slug, disposition, ref?, note?} objects"}
+        board_topics = self._load()   # board down -> Unreachable propagates, same as every verb
+        by_slug = {t["slug"]: t for t in board_topics}
+        live_kids: dict = {}
+        for t in board_topics:
+            p = t.get("parentSlug")
+            if p and t.get("state") in ("seedling", "open", "discussed"):
+                live_kids[p] = live_kids.get(p, 0) + 1
         results, applied, errors = [], 0, 0
+        seen_slugs: set = set()
         for it in (items or []):
             it = it if isinstance(it, dict) else {}
             slug = str(it.get("slug") or "")
@@ -736,6 +757,26 @@ class BoardBackend:
                 results.append({"slug": slug,
                                 "error": f"bad disposition {disp!r} "
                                          "(discussed | pruned | converted)"})
+                errors += 1
+                continue
+            if slug in seen_slugs:
+                results.append({"slug": slug,
+                                "error": "duplicate slug in this batch (first occurrence "
+                                         "already applied); dedupe the mapping"})
+                errors += 1
+                continue
+            seen_slugs.add(slug)
+            if slug not in by_slug:
+                results.append({"slug": slug,
+                                "error": "not a topic on this board (check you passed the "
+                                         "TOPIC slug, not the tracker item's)"})
+                errors += 1
+                continue
+            if disp == "pruned" and live_kids.get(slug):
+                results.append({"slug": slug,
+                                "error": f"has {live_kids[slug]} live child(ren) - bulk "
+                                         "prune refuses to cascade unseen; prune via "
+                                         "topic_state, or prune the children first"})
                 errors += 1
                 continue
             if disp == "converted" and not ref:
@@ -1004,8 +1045,10 @@ TOOLS = [
          "(workflow: skill topics-tracker-reconcile - the MATCHING of topics to shipped tracker "
          "items is your job with your own tools; this verb is the one-call apply step). "
          "items: [{slug, disposition: discussed|pruned|converted, ref?, note?}] applied "
-         "PER-ITEM (one bad item never fails the batch); each applied item leaves a "
-         "'reconciled' audit event. converted REQUIRES ref (an existing tracker item - "
+         "PER-ITEM (one bad item never fails the batch); duplicate slugs in one batch "
+         "error rather than double-apply. On the sqlite backend each applied item leaves "
+         "a 'reconciled' audit event (the board leg records the note on the resolve "
+         "instead). converted REQUIRES ref (an existing tracker item - "
          "minting a new one stays topic_convert's human-confirmed act). pruned refuses a "
          "topic with live children (bulk must never cascade a subtree unseen). Use "
          "topic_state for ad-hoc changes; use THIS when closing topics because tracker "
@@ -1122,8 +1165,13 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "id": {"type": "integer", "description": "checkpoint id; omit for the latest"}}}},
     {"name": "topic_groom_report",
-     "description": "Seam vital signs + capture calibration (expiry rates per actor "
-                    "where available). Read during a grooming round; adjust your "
+     "description": "The grooming round's evidence: STALENESS-FIRST health (stale-open "
+                    "count + served:live ratio + warning flag - the graveyard alarm), "
+                    "coherence hints incl. root_orphan_hints (root topics that "
+                    "semantically belong under an existing hub; semantic-only, honestly "
+                    "absent when the embedder is down), fan-out, capture calibration, "
+                    "recent_human_activity (what the human changed in the UI - check "
+                    "before suspecting a tool bug), and expiry candidates. Adjust your "
                     "capture threshold from the evidence.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "topic_doctor",

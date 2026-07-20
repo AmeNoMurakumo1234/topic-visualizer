@@ -400,5 +400,185 @@ class KeystoneUnit(unittest.TestCase):
                     "hinting a root under a hub inside its own subtree suggests a cycle")
 
 
+class AuditFixUnit(unittest.TestCase):
+    """0.42.1 pre-marketplace audit fixes. Each test pins a defect the four-lens audit
+    confirmed: no-op state re-assertion re-laundered the staleness clock; reconcile
+    accepted a bare string (per-char error amplification) and double-applied in-batch
+    duplicate slugs; the flat cooldown penalty pinned serving to one card once EVERY
+    candidate was cooling; import stamped engaged_at=now (a 60d-stale export read as
+    fresh); expiry.evaluated's False leg and the first-of-day tuple contract were
+    unpinned."""
+
+    def setUp(self):
+        sys.path.insert(0, str(HERE))
+        import server
+        self.server = server
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self._orig_db, self._orig_conn = server.DB_PATH, getattr(server, "_conn", None)
+        server.DB_PATH = str(Path(self.tmp.name) / "t.db")
+        server._conn = server.open_db(server.DB_PATH)
+
+    def tearDown(self):
+        try:
+            self.server._conn.close()
+        except Exception:
+            pass
+        self.server.DB_PATH, self.server._conn = self._orig_db, self._orig_conn
+        self.tmp.cleanup()
+
+    def _backdate(self, slug, col, days):
+        self.server._conn.execute(
+            f"UPDATE topic SET {col} = datetime('now', '-{days} days') WHERE slug=?", (slug,))
+        self.server._conn.commit()
+
+    def _col(self, slug, col):
+        return self.server._conn.execute(
+            f"SELECT {col} v FROM topic WHERE slug=?", (slug,)).fetchone()["v"]
+
+    def test_noop_state_reassertion_does_not_engage(self):
+        s = self.server.add_topics([{"title": "held open", "state": "open"}], "t")[0]["slug"]
+        self._backdate(s, "engaged_at", 40)
+        old = self._col(s, "engaged_at")
+        self.server.set_state(s, "open", "t", "bulk sweep re-assert")   # no-op change
+        self.assertEqual(self._col(s, "engaged_at"), old,
+                         "a no-op state re-assertion must not refresh the staleness clock")
+        self.server.set_state(s, "discussed", "t", "real change")       # genuine change
+        self.assertNotEqual(self._col(s, "engaged_at"), old,
+                            "a real state change is engagement and must refresh it")
+
+    def test_reconcile_rejects_non_list_items(self):
+        res = self.server.reconcile("abc", "t")
+        self.assertTrue(res.get("error"), "a bare string must be rejected outright")
+        self.assertNotIn("results", res,
+                         "must not iterate a string into per-character error entries")
+
+    def test_reconcile_in_batch_duplicate_slug_errors(self):
+        s = self.server.add_topics([{"title": "dup target", "state": "open"}], "t")[0]["slug"]
+        res = self.server.reconcile(
+            [{"slug": s, "disposition": "discussed"},
+             {"slug": s, "disposition": "pruned"}], "t")
+        self.assertEqual((res["applied"], res["errors"]), (1, 1))
+        self.assertEqual(self._col(s, "state"), "discussed",
+                         "first occurrence applies; the duplicate must not flip it to pruned")
+
+    def test_cooldown_rotates_when_every_candidate_is_cooling(self):
+        for i in range(3):
+            self.server.add_topics([{"title": f"rotation card {i}", "state": "open"}], "t")
+        first_round = [self.server.serve_card("")["card"]["slug"] for _ in range(3)]
+        self.assertEqual(len(set(first_round)), 3, "un-served candidates serve first")
+        second_round = [self.server.serve_card("")["card"]["slug"] for _ in range(3)]
+        self.assertEqual(len(set(second_round)), 3,
+                         "all-cooling candidates must rotate least-recently-served-first, "
+                         "not pin to the highest base score")
+
+    def test_import_keeps_the_original_engagement_clock(self):
+        old = "2026-05-01 12:00:00"
+        with self.server._lock:
+            self.server._insert_imported(
+                {"slug": "old-import", "title": "old idea", "created_at": old}, "old-import")
+            self.server._conn.commit()
+        self.assertEqual(self._col("old-import", "engaged_at"), old,
+                         "import must not stamp engaged_at=now - that laundered a "
+                         "60-day-stale export into looking engaged today")
+
+    def test_expiry_evaluated_false_leg(self):
+        h = self.server.health()
+        self.assertFalse(h["expiry"]["evaluated"],
+                         "a store whose expiry sweep never ran must say so - its "
+                         "'expired: 0' is uninformative, not healthy")
+
+    def test_first_of_day_serve_returns_a_tuple_on_the_empty_fallback(self):
+        import importlib.util
+        hook = HERE.parent / "hooks" / "first_of_day.py"
+        env_backup = {k: os.environ.get(k) for k in
+                      ("TOPICS_SERVER_URL", "TOPICS_DB", "TOPICS_PROJECT")}
+        # dead server + nonexistent store BEFORE loading: the hook runs its main at
+        # module level (sys.exit inside), so exec under this env is side-effect-free
+        os.environ["TOPICS_SERVER_URL"] = "http://127.0.0.1:9"
+        os.environ["TOPICS_DB"] = str(Path(self.tmp.name) / "nonexistent.db")
+        try:
+            spec = importlib.util.spec_from_file_location("fod_test", hook)
+            mod = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(mod)   # module-level main exits; defs survive
+            except SystemExit:
+                pass
+            card, stale = mod._serve()   # must unpack - the audited bare-None broke this
+            self.assertIsNone(card)
+            self.assertIsNone(stale)
+        finally:
+            for k, v in env_backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+class BoardReconcileGuardUnit(unittest.TestCase):
+    """The audit MAJOR: BoardBackend.reconcile must enforce the same safety contract the
+    tool description promises (childless-only prune, topic identity) - stubbed board, no
+    server required, so the previously-untested board leg gets pinned."""
+
+    class _Stub:
+        def __init__(self, topics):
+            self._topics = topics
+            self.calls = []
+
+        def _load(self):
+            return self._topics
+
+        def state(self, slug, st, note=""):
+            self.calls.append(("state", slug, st))
+            return {"ok": True}
+
+        def convert(self, slug, kind, ref, note=""):
+            self.calls.append(("convert", slug, ref))
+            return {"ok": True}
+
+    def _backend(self, topics):
+        sys.path.insert(0, str(HERE))
+        import mcp_tools
+        stub = self._Stub(topics)
+        # borrow the real reconcile, bound to the stub - it must only use _load/state/convert
+        stub.reconcile = mcp_tools.BoardBackend.reconcile.__get__(stub)
+        return stub
+
+    TOPICS = [
+        {"slug": "hub-1", "state": "open", "parentSlug": None},
+        {"slug": "leaf-1", "state": "open", "parentSlug": "hub-1"},
+        {"slug": "lone-1", "state": "open", "parentSlug": None},
+    ]
+
+    def test_prune_with_live_children_refused_and_untouched(self):
+        b = self._backend(list(self.TOPICS))
+        res = b.reconcile([{"slug": "hub-1", "disposition": "pruned"}])
+        self.assertEqual(res["errors"], 1)
+        self.assertIn("live child", res["results"][0]["error"])
+        self.assertEqual(b.calls, [], "a refused prune must not touch the board")
+
+    def test_non_topic_slug_refused(self):
+        b = self._backend(list(self.TOPICS))
+        res = b.reconcile([{"slug": "some-board-issue", "disposition": "discussed"}])
+        self.assertEqual(res["errors"], 1)
+        self.assertIn("not a topic", res["results"][0]["error"])
+        self.assertEqual(b.calls, [])
+
+    def test_valid_items_still_apply(self):
+        b = self._backend(list(self.TOPICS))
+        res = b.reconcile([{"slug": "lone-1", "disposition": "pruned"},
+                           {"slug": "leaf-1", "disposition": "discussed"}])
+        self.assertEqual((res["applied"], res["errors"]), (2, 0))
+        self.assertEqual(len(b.calls), 2)
+
+    def test_string_items_and_duplicates_guarded(self):
+        b = self._backend(list(self.TOPICS))
+        self.assertTrue(b.reconcile("abc").get("error"))
+        res = b.reconcile([{"slug": "lone-1", "disposition": "discussed"},
+                           {"slug": "lone-1", "disposition": "pruned"}])
+        self.assertEqual((res["applied"], res["errors"]), (1, 1))
+        self.assertEqual(b.calls, [("state", "lone-1", "discussed")],
+                         "the duplicate must not reach the board")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

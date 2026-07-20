@@ -28,9 +28,10 @@ backend); snapshots live in [docs/prototype/](docs/prototype/):
    /v1/embeddings endpoint (TOPICS_EMBED_URL); keyword fallback when absent. The
    "only when the synonym gap bites" question resolved early because a local CPU
    embedder was already running here - zero extra install cost.
-5. **The MCP face** (plugin/server/mcp_tools.py, 11 e2e over real stdio): thirteen tools
-   (capture/get/list/serve/search/state/convert/attach/groom + export/import/merge/
-   duplicates), TWO backends (plugin sqlite w/ zero-setup direct fallback; message-board
+5. **The MCP face** (plugin/server/mcp_tools.py, 11 e2e over real stdio): 21 tools as of
+   0.42 (capture/get/list/serve/search/state/convert/attach/reparent/edit/reconcile/groom
+   + export/import/merge/duplicates + checkpoint/checkpoints/restore/doctor/open), TWO
+   backends (plugin sqlite w/ zero-setup direct fallback; message-board
    posts w/ topic_convert minting REAL work items). plugin/.mcp.json registers it.
 6. **Archive explorer + panel edit** (web): pruned/expired ghosts, resurrect, edit
    title/body/re-parent/beacon (capability-detected per adapter). Verified live on
@@ -41,13 +42,13 @@ backend); snapshots live in [docs/prototype/](docs/prototype/):
 
 ## Next
 
-1. **First real install** (this machine, then a genuinely outside user): run the
-   INSTALL.md flow, validate hooks fire (SessionStart card, Stop/PreCompact sweeps),
-   watch where it hurts, fix. The tool about conversations will be improved by
-   having them.
+1. ~~**First real install**~~ DONE (0.40.1 fresh-machine install; 0.41.x field tests; the
+   2026-07-20 Eric+Assay working session whose feedback became 0.42's staleness push).
+   The loop continues, but the milestone is passed.
 2. **Capture UX in anger**: live with the skills + MCP tools through real sessions;
    calibrate the capture threshold from groom evidence, not intuition.
 3. **Serving ritual polish**: does the first-of-day card actually feel like a gift?
+   (0.42 gave serve a cooldown + rotation; the ritual-feel question stays open.)
 
 ## Open questions (tracked as topics, fittingly)
 

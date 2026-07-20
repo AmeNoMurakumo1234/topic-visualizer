@@ -1,6 +1,6 @@
 ---
 name: topics-reconcile
-description: Use after a topic_import returns a worklist, or when topic_duplicates shows near-duplicate pairs, to curate a merged topic pile into one living tree. Governs the add-both-reconcile-later discipline - import adds liberally, and THIS is where the judgment happens: combine, keep-both-linked, or leave. Also governs export back to the git-committable .topics dir.
+description: "Use after a topic_import returns a worklist, or when topic_duplicates shows near-duplicate pairs, to curate a merged topic pile into one living tree. Governs the add-both-reconcile-later discipline - import adds liberally, and THIS is where the judgment happens: combine, keep-both-linked, or leave. Also governs export back to the git-committable .topics dir."
 ---
 
 # topics-reconcile: turn a merged pile into one living tree
