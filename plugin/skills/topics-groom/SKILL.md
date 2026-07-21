@@ -50,10 +50,15 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    items minted, links back)? An extracted-but-unrecorded conversion is a decision
    dying in a notebook - the exact disease this system exists to cure. Fix on sight.
 
-5. **Shape the tree - DEPTH first, width second.** The trap is a width-first rule ("aim for 3-7
-   children"): an agent hits the number by inventing sibling hubs and flattening everything under
-   them, producing a shallow, wide, incoherent tree that PASSES the metric and still reads as
-   "weird." Lead instead with the relationships already in the graph.
+5. **Shape the tree - BREADTH is the alarmed axis; DEPTH is unbounded (owner call, 2026-07-20).**
+   `fan_out.breadth_warning` trips when roots sprawl (> `root_warn_at`) or any hub goes over-wide
+   (`over_wide`) - that warning IS the groom trigger for this step. There is **NO max depth and no
+   depth warning, by design**: a 5-deep chain of genuine sub-questions is a healthy tree, and the
+   cure for a breadth warning is always real depth (merge twins, nest sub-questions under the
+   sibling they refine) - never a flatten. The trap in the other direction still stands: don't fix
+   width by inventing hubs ("aim for 3-7" hit by manufacturing siblings produces a shallow, wide,
+   incoherent tree that PASSES the metric and still reads as "weird"). Lead with the relationships
+   already in the graph.
 
    > **Propose the axis, THEN apply - never impose your own taxonomy silently.** The reshape (new
    > hubs, reparents, merges) applies a POINT OF VIEW about how the tree should be organized, and the

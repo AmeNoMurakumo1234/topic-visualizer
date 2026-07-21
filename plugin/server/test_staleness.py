@@ -481,6 +481,35 @@ class AuditFixUnit(unittest.TestCase):
                          "import must not stamp engaged_at=now - that laundered a "
                          "60-day-stale export into looking engaged today")
 
+    # 0.43: breadth is the alarmed axis; depth is unbounded by design (owner call 2026-07-20)
+    def test_breadth_warning_trips_on_root_sprawl(self):
+        for i in range(self.server.ROOT_WARN_COUNT + 1):
+            self.server.add_topics([{"title": f"sprawl root {i}", "state": "open"}], "t")
+        fo = self.server.groom_report()["fan_out"]
+        self.assertTrue(fo["breadth_warning"], "root sprawl must trip the breadth warning")
+        self.assertEqual(fo["over_wide"], [], "no hub is over-wide here - roots did it")
+
+    def test_breadth_warning_trips_on_over_wide_hub(self):
+        hub = self.server.add_topics([{"title": "one wide hub", "state": "open"}], "t")[0]["slug"]
+        for i in range(self.server.FANOUT_WARN_CHILDREN + 1):
+            self.server.add_topics([{"title": f"wide child {i}", "parent_slug": hub,
+                                     "state": "open"}], "t")
+        fo = self.server.groom_report()["fan_out"]
+        self.assertTrue(fo["breadth_warning"], "an over-wide hub must trip the breadth warning")
+        self.assertEqual([w["slug"] for w in fo["over_wide"]], [hub])
+
+    def test_depth_never_warns(self):
+        """A deep chain of genuine sub-questions is a HEALTHY tree - no cap, no flag, ever."""
+        parent = None
+        for i in range(8):   # depth 8, far past anything the reshape produced
+            it = {"title": f"sub-question depth {i}", "state": "open"}
+            if parent:
+                it["parent_slug"] = parent
+            parent = self.server.add_topics([it], "t")[0]["slug"]
+        fo = self.server.groom_report()["fan_out"]
+        self.assertFalse(fo["breadth_warning"], "a deep narrow chain must never warn")
+        self.assertNotIn("depth_warning", fo, "no depth warning key may ever exist")
+
     def test_expiry_evaluated_false_leg(self):
         h = self.server.health()
         self.assertFalse(h["expiry"]["evaluated"],

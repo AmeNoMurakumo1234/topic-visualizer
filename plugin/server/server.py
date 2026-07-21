@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.42.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.43.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -40,6 +40,13 @@ DB_PATH = "topics.db"
 SERVE_COOLDOWN_DAYS = float(os.environ.get("TOPICS_SERVE_COOLDOWN_DAYS", "3") or 3)
 STALE_DAYS = 30                       # an open topic un-ENGAGED this long is stale
 STALE_WARN_COUNT = int(os.environ.get("TOPICS_STALE_WARN", "5") or 5)
+# 0.43 (owner call 2026-07-20): BREADTH is the alarmed axis; DEPTH is unbounded by design.
+# The two breadth diseases (a root sprawl, an over-wide hub) were invisible until a human
+# looked at the picture - root_count sat bare and widest carried no flag while both stale-
+# ness and beacon-ratio had warnings. Thresholds tunable; the cure for breadth is real
+# depth (merge twins, nest sub-questions), never a depth cap - there is NO max depth.
+ROOT_WARN_COUNT = int(os.environ.get("TOPICS_ROOT_WARN", "10") or 10)
+FANOUT_WARN_CHILDREN = int(os.environ.get("TOPICS_FANOUT_WARN", "9") or 9)
 # 0.35 calibrated against the real MiniLM embedder: a clearly-belongs title pair
 # measures ~0.45, unrelated noise ~0.0 - so 0.35 catches real cases with a wide
 # margin over noise, and the hint is advisory (the groom human ratifies).
@@ -1770,11 +1777,22 @@ def groom_report() -> dict:
     # the same worst-case as the pre-existing serve/search-under-lock posture, never a
     # per-root multiplication.
     orphan_hints, orphan_note = _root_orphan_hints()
+    # 0.43: breadth is the ALARMED axis (owner call 2026-07-20). Depth has no cap and no
+    # warning by design; a warning here means merge-or-nest work exists, and the cure for
+    # breadth is always real depth, never a depth limit.
+    over_wide = [dict(r) for r in wide if r["children"] > FANOUT_WARN_CHILDREN]
+    breadth_warning = root_count > ROOT_WARN_COUNT or bool(over_wide)
     return {"health": h,
-            "fan_out": {"target": "3-7 children is a SOFT band, not the goal - real relational "
-                                  "DEPTH outranks it (see coherence.reparent_hints). Wider MAY "
-                                  "mean merge and/or nest.",
+            "fan_out": {"target": "BREADTH is the alarmed axis: roots > "
+                                  f"{ROOT_WARN_COUNT} or a hub > {FANOUT_WARN_CHILDREN} children "
+                                  "trips breadth_warning. DEPTH is unbounded by design - never "
+                                  "flatten to fix a warning; merge twins and nest sub-questions "
+                                  "(see coherence.reparent_hints / root_orphan_hints). 3-7 "
+                                  "children stays a soft band, not a goal.",
                         "root_count": root_count,
+                        "root_warn_at": ROOT_WARN_COUNT,
+                        "breadth_warning": breadth_warning,
+                        "over_wide": over_wide,
                         "widest": [dict(r) for r in wide]},
             "coherence": {
                 "note": "Width is necessary, never sufficient. Prefer real relational depth over "

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.43.0 - 2026-07-20 - Breadth is the alarmed axis; depth is unbounded by design
+
+Owner call after the first deep groom: "i don't think we should have a max depth - we have an
+issue with max breadth." He was right on both halves: nothing ever capped depth, but BREADTH -
+the disease both of tonight's grooms actually treated - had no alarm anywhere. root_count sat in
+the report as a bare integer and the 15-child hub was listed without a flag, while staleness and
+beacon-ratio both warned. The tree's two real breadth problems were invisible until a human
+looked at the constellation.
+
+- `fan_out.breadth_warning` (new): trips when roots exceed `root_warn_at`
+  (TOPICS_ROOT_WARN, default 10) or any hub exceeds TOPICS_FANOUT_WARN children (default 9;
+  those hubs are listed in the new `over_wide`). The `target` copy now leads with the axis
+  doctrine: the cure for a breadth warning is real depth (merge twins, nest sub-questions),
+  never a flatten - and there is NO max depth and no depth warning, by design (a test pins
+  that no `depth_warning` key may ever exist).
+- topics-groom skill step 5 rewritten to match: breadth_warning is the groom trigger; the
+  width-first trap warning (don't invent hubs to hit a number) stands unchanged.
+- The first-of-day nudge deliberately stays staleness-only - breadth is a groom-time signal
+  read from `topic_groom_report`, not a session-start alarm.
+
+
 ## 0.42.1 - 2026-07-20 - Pre-marketplace audit: board reconcile safety, no-op laundering, burst rotation
 
 Four independent audit lenses over 0.42.0 (diff correctness / upgrade + cross-repo / docs
