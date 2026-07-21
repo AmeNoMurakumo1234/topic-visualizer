@@ -57,6 +57,7 @@ window.TopicsRenderers.projects = (function () {
     if (!stage) return;
     let ov = null;
     try { ov = await admin.overview(); } catch (e) { ov = null; }
+    if (!stage) return;   // 0.44.2: the tab can unmount during the await - stale render must drop
     if (!ov || !ov.boards) {
       stage.innerHTML = '<div class="pj-wrap"><p class="pj-note">projects overview unavailable ' +
         "(server down, or it predates 0.44 - restart the topics server)</p></div>";

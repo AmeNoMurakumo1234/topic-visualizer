@@ -44,6 +44,12 @@
 
   let active = null, activeName = "";
   function show(name) {
+    // 0.44.2 (audit MEDIUM): the Projects tab is demo-gated at injection, but the
+    // boot-time stored-view restore was not - a session whose last view was Projects
+    // booted ?demo= straight into the REAL management page (live trash/delete against
+    // real stores inside a session the README promises never touches a database).
+    // Gate the VIEW, not just the tab, so no path reaches it in demo.
+    if (demo && name === "projects") name = "starchart";
     const next = window.TopicsRenderers[name];
     if (!next) return;
     if (active) active.unmount();

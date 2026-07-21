@@ -202,6 +202,124 @@ class ProjectsAdminTests(unittest.TestCase):
         self.assertIn(server._safe_key(server._default_project), server._conns,
                       "the default store stays pinned")
 
+    # --- 0.44.2 audit pins ---
+    def test_12_copy_failure_rolls_back_no_poisoned_txn(self):
+        """Audit HIGH: an exception mid-copy left partial inserts PENDING on the cached
+        dst conn; whichever unrelated action committed next silently landed them."""
+        self._add("alpha", [{"title": "one", "state": "open"},
+                            {"title": "two", "state": "open"}])
+        with server._lock:
+            server._use_project("beta")
+        orig_event = server._event
+        calls = {"n": 0}
+
+        def bomb(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("boom mid-copy")
+            return orig_event(*a, **k)
+
+        server._event = bomb
+        try:
+            with self.assertRaises(RuntimeError):
+                server.project_copy("alpha", "beta")
+        finally:
+            server._event = orig_event
+        # the unrelated next write must NOT drag the half-copy in with it
+        self._add("beta", [{"title": "unrelated later add", "state": "open"}])
+        titles = [r["title"] for r in self._rows("beta", "SELECT slug, title, state FROM topic")]
+        self.assertEqual(titles, ["unrelated later add"],
+                         "a failed copy must leave the target byte-honest")
+
+    def test_13_refusal_does_not_destroy_concurrent_writes(self):
+        """Audit HIGH: admin refusals ran _fail() -> rollback on the SHARED pinned conn,
+        lock-free - erasing another request's in-flight writes. Refusals write nothing
+        and must touch nothing."""
+        with server._lock:
+            server._use_project("alpha")
+            server._conn.execute(
+                "INSERT INTO topic (slug, title, created_by, engaged_at) "
+                "VALUES ('inflight', 'uncommitted victim', 't', datetime('now'))")
+            # in-flight, uncommitted - now an admin typo arrives on another 'thread'
+            res = server.project_copy("ghost-src", "alpha")
+            self.assertTrue(res.get("error"))
+            server._conn.commit()
+        rows = [r["slug"] for r in self._rows("alpha")]
+        self.assertIn("inflight", rows,
+                      "an admin refusal must not roll back a concurrent request's writes")
+
+    def test_14_root_store_is_not_a_manageable_board(self):
+        """Audit MEDIUM: trashing the legacy root store misroutes its data to a board
+        named 'topics' on restore. Admin verbs refuse it."""
+        self.assertIn("root store", server.project_delete("default", "trash").get("error", ""))
+        self.assertIn("root store", server.project_delete("default", "hard").get("error", ""))
+        self.assertIn("root store", server.project_copy("default", "alpha").get("error", ""))
+        self.assertIn("root store", server.project_copy("alpha", "default").get("error", ""))
+
+    def test_15_same_second_double_trash_does_not_collide(self):
+        """Audit LOW/MED: second-resolution trash names collided; POSIX rename would
+        silently clobber the first trashed store."""
+        self._add("alpha", [{"title": "first life", "state": "open"}])
+        r1 = server.project_delete("alpha", "trash")
+        self._add("alpha", [{"title": "second life", "state": "open"}])   # re-mint
+        r2 = server.project_delete("alpha", "trash")
+        self.assertTrue(r1.get("ok") and r2.get("ok"))
+        self.assertNotEqual(r1["as"], r2["as"], "trash names must be unique")
+        self.assertEqual(len(list(server._trash_dir().glob("alpha.*.db"))), 2,
+                         "both trashed stores must survive")
+
+    def test_16_skipped_identical_rows_are_not_reparented(self):
+        """Audit LOW: pass 2 mutated PRE-EXISTING dst rows (filled their NULL parent),
+        contradicting the identical-topics-skip contract."""
+        hub = self._add("alpha", [{"title": "src hub", "state": "open"}])[0]["slug"]
+        self._add("alpha", [{"title": "shared child", "parent_slug": hub, "state": "open"}])
+        with server._lock:
+            server._use_project("beta")
+        # beta already holds an IDENTICAL 'shared child' - but as a ROOT topic
+        shared = self._add("beta", [{"title": "shared child", "state": "open"}])[0]["slug"]
+        # force identical slug+content so the copy skips it
+        src_child = next(r["slug"] for r in self._rows("alpha") if "shared-child" in r["slug"])
+        with server._lock:
+            server._use_project("beta")
+            server._conn.execute("UPDATE topic SET slug=? WHERE slug=?", (src_child, shared))
+            server._conn.commit()
+        res = server.project_copy("alpha", "beta")
+        self.assertEqual(res["skipped_identical"], 1)
+        parent = self.server._conn if False else sqlite3.connect(
+            f"file:{Path(server.project_db_path('beta')).as_posix()}?mode=ro", uri=True)
+        parent.row_factory = sqlite3.Row
+        row = parent.execute(
+            "SELECT parent_id FROM topic WHERE slug=?", (src_child,)).fetchone()
+        parent.close()
+        self.assertIsNone(row["parent_id"],
+                          "a skipped pre-existing row must not be silently reparented")
+
+    def test_17_hard_delete_recounts_inside_the_lock(self):
+        """Audit MEDIUM (TOCTOU): a topic committed between the empty-check and the
+        unlink was destroyed on the one non-restorable path. The locked recount
+        refuses instead."""
+        with server._lock:
+            server._use_project("racy")          # minted empty
+        db_file = Path(server.project_db_path("racy"))
+        orig_close = server._close_project_conn
+
+        def close_then_sneak(key):
+            orig_close(key)
+            if key == "racy":                    # a write lands in the race window
+                c = sqlite3.connect(str(db_file))
+                c.execute("INSERT INTO topic (slug, title, created_by, engaged_at) "
+                          "VALUES ('sneaky', 'raced in', 't', datetime('now'))")
+                c.commit()
+                c.close()
+
+        server._close_project_conn = close_then_sneak
+        try:
+            res = server.project_delete("racy", "hard")
+        finally:
+            server._close_project_conn = orig_close
+        self.assertTrue(res.get("error"), "the locked recount must refuse")
+        self.assertTrue(db_file.exists(), "the raced-in topic must survive")
+
     def test_10_overview_reads_without_minting(self):
         self._add("alpha", [{"title": "x", "state": "open"}])
         before = set(Path(server.project_db_path("alpha")).parent.glob("*.db"))

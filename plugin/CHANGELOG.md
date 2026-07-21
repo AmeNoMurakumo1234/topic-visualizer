@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.44.2 - 2026-07-20 - Three-lens audit of the Projects page: the error paths get honest
+
+CEO-requested health check (three independent auditors) before the marketplace push.
+The happy path came back clean everywhere it was probed - path traversal, XSS, sweep
+hygiene, cross-process refusals, version skew. The ERROR paths did not. All confirmed
+findings fixed same-day; 6 new tests pin them (172 total, 9 suites green).
+
+**HIGH (both server auditors reproduced independently)**
+- **A failed copy no longer poisons the target.** An exception mid-copy left partial
+  inserts PENDING on the cached target connection - whichever unrelated action committed
+  next silently landed the half-copy. The copy body now rolls back on any failure; a
+  failed copy leaves the target byte-honest.
+- **Admin refusals stop touching the shared connection.** Refusal paths called _fail(),
+  whose rollback hits the SHARED pinned connection - and admin routes run outside the
+  request lock, so a typo'd copy request could erase a concurrent request's in-flight
+  writes. New _refuse() returns the error without touching _conn: a path that wrote
+  nothing rolls back nothing.
+
+**MEDIUM**
+- **Hard delete recounts inside the lock.** The empty-check was a TOCTOU: a topic
+  committed between check and unlink was destroyed on the one non-restorable path.
+- **The legacy root store is refused by all admin verbs.** Trashing it misrouted its
+  data to a brand-new board named 'topics' on restore (the trash-name key derivation);
+  the overview never listed it anyway - now the verbs match the page.
+- **Demo isolation actually holds.** The Projects TAB was demo-gated but the boot-time
+  stored-view restore was not: a session whose last view was Projects booted ?demo=
+  straight into the real management page. The view itself is now gated.
+- **The trash roots at DB_PATH, not the real home.** Rooted at DEFAULT_DB, every
+  E2E-suite server (spawned with a custom --db) ran its startup purge against the REAL
+  user trash - merely running the tests could cut short the restorable-30-days promise.
+
+**LOW**
+- Same-second re-trash of a re-minted key uniquifies instead of colliding (POSIX rename
+  silently clobbered the first trashed store; Windows surfaced a misleading lock error).
+- "skipped_identical" rows are truly skipped - pass 2 no longer fills a pre-existing
+  row's NULL parent (created-only reparenting; a created child may still parent onto a
+  skipped row, which is the correct direction).
+- The cross-process slug race during copy (another process committing the same slug
+  between check and insert) degrades to a graceful -copyN rename instead of a raw
+  UNIQUE-constraint 500.
+- A stale Projects render after switching tabs mid-fetch no longer throws (post-await
+  stage recheck).
+- The 0.44.0 dispatch comment claimed a deadlock rationale; _lock is an RLock and that
+  half was fiction - corrected (mint-avoidance is the real reason, and it stands).
+
+**Known residue (audited, deliberate, next cycle)**: the MCP direct-fallback holds ONE
+store handle (its session's project) from first fallback until the session closes - a
+GUI delete of that board is refused with the friendly message until then. Fix direction:
+release the fallback conn once HTTP succeeds again. Also: E2E suite ports are hardcoded
+(reserved set: 8082, 8991, 8992, 8993, 8994) and the suites inherit the real HOME;
+parameterize both. Copy's torn-read edge (an avenue committed between the two source
+SELECTs drops silently) is accepted for a single-user tool.
+
+
 ## 0.44.1 - 2026-07-20 - Handle hygiene: the server stops being a lock on every store
 
 Found live during the 0.44.0 real-click verification: hard-deleting the junk board was

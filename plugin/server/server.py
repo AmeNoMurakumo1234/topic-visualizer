@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.44.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.44.2"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -224,7 +224,20 @@ def list_projects(current: str) -> dict:
 
 
 def _trash_dir() -> Path:
-    return Path(DEFAULT_DB).expanduser().resolve().parent / "trash"
+    # 0.44.2 (audit): root at DB_PATH like _projects_dir, NOT DEFAULT_DB - rooting at the
+    # real home meant a custom-db server (exactly how every E2E suite spawns one) ran its
+    # startup purge_trash() against the REAL user trash, silently cutting short the
+    # "restorable ~30 days" promise whenever the tests ran.
+    return Path(DB_PATH).expanduser().resolve().parent / "trash"
+
+
+def _is_root_store(key: str) -> bool:
+    """The legacy/default ROOT store (topics.db, key 'default') is not a projects/*.db
+    board: the overview doesn't list it, and trash/restore would misroute it (its trash
+    name re-derives to key 'topics', restoring the data to the WRONG board - 0.44.2
+    audit MEDIUM). Admin verbs refuse it outright."""
+    return _safe_key(key) == "default" or (
+        Path(project_db_path(key)).resolve() == Path(DB_PATH).expanduser().resolve())
 
 
 def _close_project_conn(key: str) -> None:
@@ -289,12 +302,14 @@ def project_copy(src_key: str, dst_key: str) -> dict:
     safe. Events/links do not copy (the audit trail belongs to the source board)."""
     src_key, dst_key = _safe_key(src_key), _safe_key(dst_key)
     if src_key == dst_key:
-        return _fail("source and target are the same board")
+        return _refuse("source and target are the same board")
+    if _is_root_store(src_key) or _is_root_store(dst_key):
+        return _refuse("the legacy root store is not a manageable board (0.44.2)")
     src_file = Path(project_db_path(src_key))
     if not src_file.exists():
-        return _fail(f"no store for source '{src_key}'")
+        return _refuse(f"no store for source '{src_key}'")
     if not Path(project_db_path(dst_key)).exists():
-        return _fail(f"no store for target '{dst_key}' (copy targets an existing board)")
+        return _refuse(f"no store for target '{dst_key}' (copy targets an existing board)")
     sc = sqlite3.connect(f"file:{src_file.as_posix()}?mode=ro", uri=True)
     sc.row_factory = sqlite3.Row
     rows = [dict(r) for r in sc.execute(
@@ -306,6 +321,7 @@ def project_copy(src_key: str, dst_key: str) -> dict:
     by_id = {r["id"]: r for r in rows}
     copied, skipped, renamed = 0, 0, 0
     slug_map: dict[str, str] = {}
+    created: set = set()   # source slugs whose dst row THIS copy created (vs skipped)
     with _lock:
         prev = _default_project
         _use_project(dst_key)
@@ -325,29 +341,47 @@ def project_copy(src_key: str, dst_key: str) -> dict:
                         n += 1
                     dst_slug = f"{dst_slug}-copy{n}"
                     renamed += 1
-                _conn.execute(
-                    """INSERT INTO topic (slug, title, body, state, priority, tags,
-                       created_by, created_at, touched_at, engaged_at, provenance, role)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (dst_slug, r["title"], r["body"], r["state"], r["priority"],
-                     r.get("tags", ""), r.get("created_by", ""), r["created_at"],
-                     r["touched_at"], r.get("engaged_at") or r["touched_at"],
-                     r.get("provenance", ""), r.get("role") or "topic"))
+                ins = """INSERT INTO topic (slug, title, body, state, priority, tags,
+                         created_by, created_at, touched_at, engaged_at, provenance, role)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
+                vals = [dst_slug, r["title"], r["body"], r["state"], r["priority"],
+                        r.get("tags", ""), r.get("created_by", ""), r["created_at"],
+                        r["touched_at"], r.get("engaged_at") or r["touched_at"],
+                        r.get("provenance", ""), r.get("role") or "topic"]
+                try:
+                    _conn.execute(ins, vals)
+                except sqlite3.IntegrityError:
+                    # 0.44.2 (audit): a SECOND PROCESS (MCP fallback, another server) can
+                    # commit the same slug between our existence check and this insert -
+                    # that raced a raw UNIQUE 500 to the GUI. Treat it as the collision it
+                    # is: suffix and continue, same as a pre-existing different topic.
+                    n = 2
+                    while _conn.execute("SELECT 1 FROM topic WHERE slug=?",
+                                        (f"{r['slug']}-copy{n}",)).fetchone():
+                        n += 1
+                    dst_slug = f"{r['slug']}-copy{n}"
+                    vals[0] = dst_slug
+                    renamed += 1
+                    _conn.execute(ins, vals)
                 tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (dst_slug,)).fetchone()["id"]
                 _event(tid, "imported", "projects-admin", f"copied from board {src_key}")
                 slug_map[r["slug"]] = dst_slug
+                created.add(r["slug"])
                 copied += 1
-            # pass 2: primary parents (only where both ends landed/mapped)
+            # pass 2: primary parents - ONLY for rows THIS copy created. Reparenting a
+            # pre-existing "skipped_identical" row silently mutated the target against
+            # the "identical topics skip" contract (0.44.2 audit LOW). A created child
+            # may still parent onto a skipped/pre-existing row - that direction is fine.
             for r in rows:
                 p = by_id.get(r.get("parent_id"))
-                if p and r["slug"] in slug_map and p["slug"] in slug_map:
+                if p and r["slug"] in created and p["slug"] in slug_map:
                     _conn.execute(
                         "UPDATE topic SET parent_id = (SELECT id FROM topic WHERE slug=?) "
                         "WHERE slug=? AND parent_id IS NULL",
                         (slug_map[p["slug"]], slug_map[r["slug"]]))
-            # pass 3: extra avenues
+            # pass 3: extra avenues - same created-only rule on the child side
             for e in src_extra:
-                if e["child"] in slug_map and e["parent"] in slug_map:
+                if e["child"] in created and e["parent"] in slug_map:
                     _conn.execute(
                         """INSERT OR IGNORE INTO topic_parent (topic_id, parent_id, note, rel, added_by)
                            SELECT c.id, p.id, ?, ?, 'projects-admin' FROM topic c, topic p
@@ -355,6 +389,15 @@ def project_copy(src_key: str, dst_key: str) -> dict:
                         (e.get("note", ""), e.get("rel") or "co_parent",
                          slug_map[e["child"]], slug_map[e["parent"]]))
             _conn.commit()
+        except Exception:
+            # 0.44.2 (audit HIGH): without this, partial inserts stay PENDING on the
+            # cached dst connection and whichever unrelated action commits next silently
+            # lands the half-copy. A failed copy must leave the target byte-honest.
+            try:
+                _conn.rollback()
+            except Exception:
+                pass
+            raise
         finally:
             _use_project(prev)
     return {"ok": True, "copied": copied, "skipped_identical": skipped,
@@ -366,46 +409,69 @@ def project_delete(key: str, mode: str = "trash") -> dict:
     purged after ~30d). hard: unlink outright - ONLY for an EMPTY board (the
     bogus-URL-mint cleanup case, owner-ratified 2026-07-20)."""
     key = _safe_key(key)
+    if _is_root_store(key):
+        return _refuse("the legacy root store is not a manageable board (0.44.2): "
+                       "trashing it would misroute its data on restore")
     if not _store_files(key):
-        return _fail(f"no store for '{key}'")
-    if mode == "hard":
+        return _refuse(f"no store for '{key}'")
+
+    def _count() -> int:
         try:
             c = sqlite3.connect(
                 f"file:{Path(project_db_path(key)).as_posix()}?mode=ro", uri=True)
             n = c.execute("SELECT COUNT(*) FROM topic").fetchone()[0]
             c.close()
+            return n
         except sqlite3.Error:
-            n = -1   # unreadable/corrupt counts as not-provably-empty
-        if n != 0:
-            return _fail(f"hard delete refused: board holds {n} topic row(s) (or is "
-                         "unreadable) - use trash, which is restorable")
+            return -1   # unreadable/corrupt counts as not-provably-empty
+
+    if mode == "hard":
+        if _count() != 0:
+            return _refuse("hard delete refused: board is not provably empty - use "
+                           "trash, which is restorable")
         try:
             with _lock:
                 _close_project_conn(key)
+                # 0.44.2 (audit MEDIUM): RECOUNT inside the lock - a topic committed
+                # between the first check and the unlink would be destroyed on the one
+                # non-restorable path. The lock stops in-process writers; a cross-process
+                # write in this window still loses, accepted for a single-user tool.
+                n = _count()
+                if n != 0:
+                    return _refuse(f"hard delete refused: board gained {n} row(s) since "
+                                   "the check - use trash")
                 # re-glob AFTER the close: closing checkpoints the WAL, which REMOVES the
                 # -wal/-shm sidecars - a pre-close snapshot names files that no longer exist
                 for f in _store_files(key):
                     f.unlink()
         except OSError as e:
-            return _fail("another topics process holds this store "
-                         f"({e.__class__.__name__}) - close other topic-visualizer "
-                         "servers/sessions (or restart the main server) and retry")
+            return _refuse("another topics process holds this store "
+                           f"({e.__class__.__name__}) - close other topic-visualizer "
+                           "servers/sessions (or restart the main server) and retry")
         return {"ok": True, "hard_deleted": key}
-    ts = time.strftime("%Y%m%d-%H%M%S")
     td = _trash_dir()
     td.mkdir(parents=True, exist_ok=True)
     try:
         with _lock:
             _close_project_conn(key)
+            # 0.44.2 (audit): uniquify the trash name - the second-resolution timestamp
+            # collided when a key was trashed, re-minted, and trashed again in the same
+            # second (POSIX rename would silently CLOBBER the first trashed store).
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            stem = Path(project_db_path(key)).stem
+            suffix_n = 0
+            while (td / f"{stem}.{ts}{'' if not suffix_n else f'-{suffix_n}'}.db").exists():
+                suffix_n += 1
+            tag = f"{ts}{'' if not suffix_n else f'-{suffix_n}'}"
             moved = []
             for f in _store_files(key):   # post-close re-glob (see hard-delete note above)
-                dest = td / f"{f.stem}.{ts}{f.suffix if f.suffix != '.db' else '.db'}"
+                dest = td / f"{f.stem}.{tag}{f.suffix if f.suffix != '.db' else '.db'}"
                 f.rename(dest)
                 moved.append(dest.name)
     except OSError as e:
-        return _fail("another topics process holds this store "
-                     f"({e.__class__.__name__}) - close other topic-visualizer "
-                     "servers/sessions (or restart the main server) and retry")
+        return _refuse("another topics process holds this store "
+                       f"({e.__class__.__name__}) - close other topic-visualizer "
+                       "servers/sessions (or restart the main server) and retry")
     return {"ok": True, "trashed": key, "as": moved[0] if moved else None,
             "restore_within": "~30 days (then purged)"}
 
@@ -413,11 +479,11 @@ def project_delete(key: str, mode: str = "trash") -> dict:
 def project_restore(trash_name: str) -> dict:
     src = _trash_dir() / Path(trash_name).name        # basename only - no traversal
     if not src.exists() or src.suffix != ".db":
-        return _fail(f"no trashed store named '{trash_name}'")
+        return _refuse(f"no trashed store named '{trash_name}'")
     key = _safe_key(src.name.rsplit(".", 2)[0])
     dst = Path(project_db_path(key))
     if dst.exists():
-        return _fail(f"a live store for '{key}' already exists - delete or rename it first")
+        return _refuse(f"a live store for '{key}' already exists - delete or rename it first")
     with _lock:
         src.rename(dst)
     return {"ok": True, "restored": key}
@@ -972,6 +1038,17 @@ def _fail(msg: str, **extra) -> dict:
     on a shared autocommit-off connection they would otherwise be committed by
     whichever unrelated action commits next (audit 2026-07-11, HIGH)."""
     _conn.rollback()
+    out = {"error": msg}
+    out.update(extra)
+    return out
+
+
+def _refuse(msg: str, **extra) -> dict:
+    """Error return for paths that WROTE NOTHING - notably the 0.44 projects-admin
+    routes, which dispatch OUTSIDE the request pin/lock. _fail's rollback there hits
+    the SHARED pinned connection lock-free and can erase a concurrent request's
+    in-flight writes (0.44.2 audit, HIGH). A refusal that made no writes must not
+    touch _conn at all."""
     out = {"error": msg}
     out.update(extra)
     return out
@@ -2389,9 +2466,10 @@ class Handler(BaseHTTPRequestHandler):
         actor = str(body.get("actor") or "unknown")
         key = (parse_qs(u.query).get("project", [None])[0]
                or body.get("project") or _default_project)
-        # 0.44 projects admin - dispatched BEFORE the project-pinning block: these act on
-        # whole stores and take _lock themselves (non-reentrant - inside the pin they'd
-        # deadlock), and pinning would also mint the very store a delete targets.
+        # 0.44 projects admin - dispatched BEFORE the project-pinning block because
+        # pinning would MINT the very store a delete targets (_use_project creates on
+        # open). (0.44.2 correction: _lock is an RLock, so the deadlock rationale the
+        # 0.44.0 comment also claimed was fiction - mint-avoidance is the real reason.)
         if u.path == "/api/projects/copy":
             return self._json(200, project_copy(str(body.get("from") or ""),
                                                 str(body.get("to") or "")))
