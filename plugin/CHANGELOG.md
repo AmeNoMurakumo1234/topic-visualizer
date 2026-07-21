@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.43.2 - 2026-07-20 - The hide-discussed toggle never worked for a real mouse
+
+Field repro (owner): clicking the toggle did nothing - no checkmark, no filtering - while
+every pre-ship verification passed. Root cause: the toggle mounts INSIDE the renderer's
+drag-to-pan stage, whose pointerdown handler takes setPointerCapture; capture retargets
+the whole pointer sequence to the stage, so the browser never synthesizes a click on the
+checkbox. Synthetic element.click() bypasses the pointer pipeline entirely - which is
+exactly what every verification (ship-time and audits) used. The owner's mouse was the
+first honest test the feature ever got.
+
+- Fix (one line, shared mount in topics-core.discussedToggle, so it covers Lineage,
+  Star Chart, and any future renderer): the toggle owns its pointerdown via
+  stopPropagation - pan never starts from a click on it. Proven with a real pointer
+  click in the reporter's own browser before shipping.
+- LESSON, recorded here because process caused this: verify UI with the USER'S input
+  modality. A synthetic click is to a checkbox what ok:true is to a write - the same
+  disease that bit three other surfaces today. Real-pointer verification is now the bar
+  for any interactive web change in this repo.
+
+
 ## 0.43.1 - 2026-07-20 - Audit fixes: env dead zone, complete over_wide, no more stale-tab mixed pages
 
 Two audit lenses over 0.43.0 plus one live field repro (the owner's hide-discussed toggle

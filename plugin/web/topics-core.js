@@ -443,6 +443,13 @@ window.TopicsCore = (function () {
       const box = tgl.querySelector("input");
       box.checked = core.hideDiscussed[view];
       box.addEventListener("change", () => core.setHideDiscussed(view, box.checked));
+      // The toggle mounts INSIDE the renderer's drag-to-pan stage, whose pointerdown
+      // handler takes setPointerCapture - capture retargets the whole pointer sequence
+      // to the stage, so the browser never synthesizes a click on the checkbox and a
+      // REAL mouse click does nothing (synthetic element.click() worked, which is how
+      // every pre-ship verification missed it; the owner's mouse was the first honest
+      // test - 0.43.2 field repro). The toggle owns its pointerdown; pan never starts here.
+      tgl.addEventListener("pointerdown", e => e.stopPropagation());
       container.appendChild(tgl);
       return tgl;
     };
