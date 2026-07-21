@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.44.2"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.44.3"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -228,7 +228,20 @@ def _trash_dir() -> Path:
     # real home meant a custom-db server (exactly how every E2E suite spawns one) ran its
     # startup purge_trash() against the REAL user trash, silently cutting short the
     # "restorable ~30 days" promise whenever the tests ran.
-    return Path(DB_PATH).expanduser().resolve().parent / "trash"
+    # 0.44.3 (audit F7): normalize when DB_PATH has been REPOINTED at a per-project file
+    # (the MCP fallback sets DB_PATH = .../projects/<key>.db) - naive parenting would
+    # put trash INSIDE projects/. Same mutable-DB_PATH trap _store_path documents.
+    base = Path(DB_PATH).expanduser().resolve().parent
+    if base.name == "projects":
+        base = base.parent
+    return base / "trash"
+
+
+def _copy_dst_row(slug):
+    """The copy loop's dedup probe against the PINNED (dst) connection. Module-level so
+    the race tests can interpose (a second process committing this slug mid-copy)."""
+    return _conn.execute("SELECT title, body, state FROM topic WHERE slug=?",
+                         (slug,)).fetchone()
 
 
 def _is_root_store(key: str) -> bool:
@@ -319,7 +332,7 @@ def project_copy(src_key: str, dst_key: str) -> dict:
            JOIN topic c ON c.id = tp.topic_id JOIN topic p ON p.id = tp.parent_id""")]
     sc.close()
     by_id = {r["id"]: r for r in rows}
-    copied, skipped, renamed = 0, 0, 0
+    copied, skipped, renamed, healed = 0, 0, 0, 0
     slug_map: dict[str, str] = {}
     created: set = set()   # source slugs whose dst row THIS copy created (vs skipped)
     with _lock:
@@ -327,58 +340,78 @@ def project_copy(src_key: str, dst_key: str) -> dict:
         _use_project(dst_key)
         try:
             for r in rows:
-                dst_slug = r["slug"]
-                ex = _conn.execute("SELECT title, body, state FROM topic WHERE slug=?",
-                                   (dst_slug,)).fetchone()
-                if ex is not None:
-                    if (ex["title"], ex["body"], ex["state"]) == (r["title"], r["body"], r["state"]):
-                        slug_map[r["slug"]] = dst_slug
-                        skipped += 1
-                        continue
-                    n = 2
-                    while _conn.execute("SELECT 1 FROM topic WHERE slug=?",
-                                        (f"{dst_slug}-copy{n}",)).fetchone():
-                        n += 1
-                    dst_slug = f"{dst_slug}-copy{n}"
-                    renamed += 1
+                # 0.44.3: one retry LOOP owns dedup + rename + insert, so an
+                # IntegrityError (a second process committed this slug mid-copy) simply
+                # re-runs the SAME identical-check - the 0.44.2 catch skipped that check
+                # and silently DUPLICATED an identical topic as -copyN, and it also
+                # double-counted renamed_collisions when both paths fired for one row.
+                dst_slug, inserted, was_skipped = r["slug"], False, False
                 ins = """INSERT INTO topic (slug, title, body, state, priority, tags,
                          created_by, created_at, touched_at, engaged_at, provenance, role)
                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
-                vals = [dst_slug, r["title"], r["body"], r["state"], r["priority"],
-                        r.get("tags", ""), r.get("created_by", ""), r["created_at"],
-                        r["touched_at"], r.get("engaged_at") or r["touched_at"],
-                        r.get("provenance", ""), r.get("role") or "topic"]
-                try:
-                    _conn.execute(ins, vals)
-                except sqlite3.IntegrityError:
-                    # 0.44.2 (audit): a SECOND PROCESS (MCP fallback, another server) can
-                    # commit the same slug between our existence check and this insert -
-                    # that raced a raw UNIQUE 500 to the GUI. Treat it as the collision it
-                    # is: suffix and continue, same as a pre-existing different topic.
-                    n = 2
-                    while _conn.execute("SELECT 1 FROM topic WHERE slug=?",
-                                        (f"{r['slug']}-copy{n}",)).fetchone():
-                        n += 1
-                    dst_slug = f"{r['slug']}-copy{n}"
-                    vals[0] = dst_slug
-                    renamed += 1
-                    _conn.execute(ins, vals)
+                for _attempt in range(4):
+                    ex = _copy_dst_row(dst_slug)
+                    if ex is not None:
+                        if (ex["title"], ex["body"], ex["state"]) == (
+                                r["title"], r["body"], r["state"]):
+                            slug_map[r["slug"]] = dst_slug
+                            skipped += 1
+                            was_skipped = True
+                            break
+                        n = 2
+                        while _copy_dst_row(f"{r['slug']}-copy{n}") is not None:
+                            n += 1
+                        dst_slug = f"{r['slug']}-copy{n}"
+                        continue   # re-check the fresh slug before inserting
+                    try:
+                        _conn.execute(ins, [dst_slug, r["title"], r["body"], r["state"],
+                                            r["priority"], r.get("tags", ""),
+                                            r.get("created_by", ""), r["created_at"],
+                                            r["touched_at"],
+                                            r.get("engaged_at") or r["touched_at"],
+                                            r.get("provenance", ""),
+                                            r.get("role") or "topic"])
+                        inserted = True
+                        break
+                    except sqlite3.IntegrityError:
+                        continue   # raced by another process - loop re-runs the check
+                if was_skipped:
+                    continue
+                if not inserted:
+                    raise sqlite3.IntegrityError(
+                        f"could not place '{r['slug']}' after 4 attempts (heavy "
+                        "concurrent writes) - re-run the copy")
+                if dst_slug != r["slug"]:
+                    renamed += 1               # once per row, whichever path renamed it
                 tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (dst_slug,)).fetchone()["id"]
                 _event(tid, "imported", "projects-admin", f"copied from board {src_key}")
                 slug_map[r["slug"]] = dst_slug
                 created.add(r["slug"])
                 copied += 1
-            # pass 2: primary parents - ONLY for rows THIS copy created. Reparenting a
-            # pre-existing "skipped_identical" row silently mutated the target against
-            # the "identical topics skip" contract (0.44.2 audit LOW). A created child
-            # may still parent onto a skipped/pre-existing row - that direction is fine.
+            # pass 2: primary parents for rows THIS copy created - PLUS the heal case
+            # (0.44.3): a skipped-identical row whose parent_id is NULL while the source
+            # carries a parent gets the parent FILLED and REPORTED (healed_parents).
+            # This restores the only self-repair path for half-copies the pre-0.44.2
+            # bug left in the wild (created, committed by an unrelated action, never
+            # parented) - which created-only reparenting had made permanently
+            # unhealable. Reported, so the merge contract stays honest: a skipped row
+            # is never SILENTLY mutated, and a skipped row with an existing parent is
+            # never touched at all.
             for r in rows:
                 p = by_id.get(r.get("parent_id"))
-                if p and r["slug"] in created and p["slug"] in slug_map:
+                if not (p and r["slug"] in slug_map and p["slug"] in slug_map):
+                    continue
+                if r["slug"] in created:
                     _conn.execute(
                         "UPDATE topic SET parent_id = (SELECT id FROM topic WHERE slug=?) "
                         "WHERE slug=? AND parent_id IS NULL",
                         (slug_map[p["slug"]], slug_map[r["slug"]]))
+                else:
+                    cur = _conn.execute(
+                        "UPDATE topic SET parent_id = (SELECT id FROM topic WHERE slug=?) "
+                        "WHERE slug=? AND parent_id IS NULL",
+                        (slug_map[p["slug"]], slug_map[r["slug"]]))
+                    healed += cur.rowcount
             # pass 3: extra avenues - same created-only rule on the child side
             for e in src_extra:
                 if e["child"] in created and e["parent"] in slug_map:
@@ -401,7 +434,8 @@ def project_copy(src_key: str, dst_key: str) -> dict:
         finally:
             _use_project(prev)
     return {"ok": True, "copied": copied, "skipped_identical": skipped,
-            "renamed_collisions": renamed, "source_untouched": True}
+            "renamed_collisions": renamed, "healed_parents": healed,
+            "source_untouched": True}
 
 
 def project_delete(key: str, mode: str = "trash") -> dict:
@@ -425,6 +459,15 @@ def project_delete(key: str, mode: str = "trash") -> dict:
         except sqlite3.Error:
             return -1   # unreadable/corrupt counts as not-provably-empty
 
+    def _repin():
+        # 0.44.3 (audit F8): a refusal after _close_project_conn left the module _conn
+        # DANGLING (closed) when the target was the pinned board. Benign (next request
+        # re-pins) but fragile - re-pin the default explicitly before returning.
+        try:
+            _use_project(_default_project)
+        except Exception:
+            pass
+
     if mode == "hard":
         if _count() != 0:
             return _refuse("hard delete refused: board is not provably empty - use "
@@ -438,40 +481,64 @@ def project_delete(key: str, mode: str = "trash") -> dict:
                 # write in this window still loses, accepted for a single-user tool.
                 n = _count()
                 if n != 0:
+                    _repin()
                     return _refuse(f"hard delete refused: board gained {n} row(s) since "
                                    "the check - use trash")
                 # re-glob AFTER the close: closing checkpoints the WAL, which REMOVES the
-                # -wal/-shm sidecars - a pre-close snapshot names files that no longer exist
-                for f in _store_files(key):
+                # -wal/-shm sidecars - a pre-close snapshot names files that no longer
+                # exist. 0.44.3: unlink the .db LAST - if a sidecar unlink fails, the
+                # board is still intact and listed; .db-first left an invisible husk.
+                for f in sorted(_store_files(key), key=lambda p: p.suffix == ".db"):
                     f.unlink()
         except OSError as e:
+            with _lock:
+                _repin()
             return _refuse("another topics process holds this store "
                            f"({e.__class__.__name__}) - close other topic-visualizer "
                            "servers/sessions (or restart the main server) and retry")
         return {"ok": True, "hard_deleted": key}
     td = _trash_dir()
     td.mkdir(parents=True, exist_ok=True)
-    try:
-        with _lock:
-            _close_project_conn(key)
-            # 0.44.2 (audit): uniquify the trash name - the second-resolution timestamp
-            # collided when a key was trashed, re-minted, and trashed again in the same
-            # second (POSIX rename would silently CLOBBER the first trashed store).
-            ts = time.strftime("%Y%m%d-%H%M%S")
-            stem = Path(project_db_path(key)).stem
-            suffix_n = 0
-            while (td / f"{stem}.{ts}{'' if not suffix_n else f'-{suffix_n}'}.db").exists():
-                suffix_n += 1
-            tag = f"{ts}{'' if not suffix_n else f'-{suffix_n}'}"
-            moved = []
-            for f in _store_files(key):   # post-close re-glob (see hard-delete note above)
+    with _lock:
+        _close_project_conn(key)
+        # 0.44.2 (audit): uniquify the trash name - the second-resolution timestamp
+        # collided when a key was trashed, re-minted, and trashed again in the same
+        # second (POSIX rename would silently CLOBBER the first trashed store).
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        stem = Path(project_db_path(key)).stem
+        suffix_n = 0
+        while (td / f"{stem}.{ts}{'' if not suffix_n else f'-{suffix_n}'}.db").exists():
+            suffix_n += 1
+        tag = f"{ts}{'' if not suffix_n else f'-{suffix_n}'}"
+        # 0.44.3 (audit F1): MOVE-WITH-UNDO. The 0.44.2 loop could rename the .db and
+        # then fail on a sidecar (an AV/indexer pinning only the -wal) - the refusal
+        # said "nothing happened" while the board sat HALF in trash, invisible to every
+        # surface, and a retry split it across two tags. Now: any failure rolls the
+        # already-moved files BACK, so the refusal is TRUE - the store is whole in
+        # projects/ or whole in trash, never split.
+        done: list[tuple[Path, Path]] = []
+        moved = []
+        try:
+            for f in _store_files(key):   # post-close re-glob (see hard-delete note)
                 dest = td / f"{f.stem}.{tag}{f.suffix if f.suffix != '.db' else '.db'}"
                 f.rename(dest)
+                done.append((f, dest))
                 moved.append(dest.name)
-    except OSError as e:
-        return _refuse("another topics process holds this store "
-                       f"({e.__class__.__name__}) - close other topic-visualizer "
-                       "servers/sessions (or restart the main server) and retry")
+        except OSError as e:
+            undo_failed = []
+            for src_p, dest_p in reversed(done):
+                try:
+                    dest_p.rename(src_p)
+                except OSError:
+                    undo_failed.append(dest_p.name)
+            _repin()
+            if undo_failed:
+                return _refuse("trash HALF-FAILED and could not fully undo: these pieces "
+                               f"are stranded in the trash dir: {undo_failed} - move them "
+                               f"back into projects/ by hand, then retry ({e.__class__.__name__})")
+            return _refuse("another topics process holds this store "
+                           f"({e.__class__.__name__}) - nothing was moved; close other "
+                           "topic-visualizer servers/sessions and retry")
     return {"ok": True, "trashed": key, "as": moved[0] if moved else None,
             "restore_within": "~30 days (then purged)"}
 
@@ -484,8 +551,31 @@ def project_restore(trash_name: str) -> dict:
     dst = Path(project_db_path(key))
     if dst.exists():
         return _refuse(f"a live store for '{key}' already exists - delete or rename it first")
+    # 0.44.3 (audit F2): restore the SIDECARS too. Restoring only the .db silently
+    # dropped committed-but-uncheckpointed WAL data (the crashed-writer shape) and left
+    # the -wal/-shm stranded in trash until the purge destroyed them. Order: sidecars
+    # FIRST, .db LAST - a partial failure then leaves the board absent (retryable),
+    # never live-but-missing-its-WAL. Undo on failure, same contract as trash.
+    pairs = []
+    for side in (src.with_name(src.name + "-wal"), src.with_name(src.name + "-shm")):
+        if side.exists():
+            suffix = side.name[len(src.name):]        # "-wal" / "-shm"
+            pairs.append((side, dst.with_name(dst.name + suffix)))
+    pairs.append((src, dst))
     with _lock:
-        src.rename(dst)
+        done = []
+        try:
+            for s, d in pairs:
+                s.rename(d)
+                done.append((s, d))
+        except OSError as e:
+            for s, d in reversed(done):
+                try:
+                    d.rename(s)
+                except OSError:
+                    pass
+            return _refuse(f"restore failed ({e.__class__.__name__}) - nothing was "
+                           "restored; retry when no other process holds the files")
     return {"ok": True, "restored": key}
 
 

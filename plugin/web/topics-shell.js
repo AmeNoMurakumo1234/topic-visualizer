@@ -49,12 +49,15 @@
     // booted ?demo= straight into the REAL management page (live trash/delete against
     // real stores inside a session the README promises never touches a database).
     // Gate the VIEW, not just the tab, so no path reaches it in demo.
-    if (demo && name === "projects") name = "starchart";
+    // 0.44.3 (audit F6): the coercion must not PERSIST - writing 'starchart' over the
+    // stored 'projects' silently lost the user's view preference after leaving demo.
+    const coerced = demo && name === "projects";
+    if (coerced) name = "starchart";
     const next = window.TopicsRenderers[name];
     if (!next) return;
     if (active) active.unmount();
     active = next; activeName = name;
-    localStorage.setItem("topics-view", name);
+    if (!coerced) localStorage.setItem("topics-view", name);
     for (const b of document.getElementById("viewtabs").children) {
       b.classList.toggle("active", b.dataset.v === name);
     }

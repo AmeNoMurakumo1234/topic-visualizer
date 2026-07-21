@@ -1,11 +1,52 @@
 # Changelog
 
+## 0.44.3 - 2026-07-20 - Confirmation audit: the fixes verified, and the seams the fixes made
+
+Two-agent verify-the-fixes pass over 0.44.2: one adversarially re-ran every original bug
+against the new code (12/12 VERIFIED-FIXED - including that all six 0.44.2 pinning tests
+genuinely fail on 0.44.1), the other hunted what the fixes themselves broke. It found
+real seams; all fixed, 5 new tests + 1 rewritten (166 total, honest count, 9 suites).
+
+- **Trash is move-with-undo (audit F1).** A sidecar-only pinner (AV/indexer holding just
+  the -wal) let the .db rename succeed, then failed - the refusal said "nothing happened"
+  while the board sat HALF in trash, invisible to every surface, and the 0.44.2 name
+  uniquifier guaranteed a retry SPLIT it across two tags. Any failure now rolls the
+  already-moved files back: whole in projects/ or whole in trash, never split - and if
+  even the undo fails, the refusal says exactly which pieces are stranded where.
+- **Restore brings the sidecars back (audit F2, pre-existing).** Restoring only the .db
+  silently dropped committed-but-uncheckpointed WAL data (the crashed-writer shape) and
+  left -wal/-shm rotting in trash until the purge destroyed them. Restore now moves the
+  whole set - sidecars first, .db last, undo on failure - so a partial restore leaves the
+  board absent and retryable, never live-but-missing-its-WAL.
+- **The raced-identical topic is skipped, not duplicated (audit F3+F4).** 0.44.2's
+  graceful IntegrityError path had no identity check, so a second process committing an
+  IDENTICAL topic mid-copy got duplicated as -copyN (and renamed_collisions
+  double-counted). One retry loop now owns check + rename + insert: an IntegrityError
+  re-runs the SAME dedup check; renamed counts once per row; four failed attempts raise
+  an honest heavy-concurrency error instead of looping forever.
+- **Half-copy damage is healable again - and reported (audit F5).** 0.44.2's created-only
+  reparenting closed the only self-repair path for rows the pre-0.44.2 bug had landed
+  unparented. A re-run now fills a skipped-identical row's NULL parent where the source
+  carries one, reported as `healed_parents` (a skipped row with an existing parent is
+  never touched; nothing is silent).
+- **The demo gate no longer eats the stored view preference (audit F6)** - the coercion
+  to starchart stops persisting itself, so leaving demo returns you to Projects.
+- **_trash_dir survives a repointed DB_PATH (audit F7, latent)** - under the MCP
+  fallback shape it would have rooted trash INSIDE projects/; normalized.
+- **Refusals re-pin the connection (audit F8)** - a refusal that had closed the target's
+  cached conn left the module conn dangling-closed; benign but fragile, now re-pinned.
+- Hard delete unlinks the .db LAST, so a sidecar failure leaves the board intact and
+  visible instead of an invisible husk. CHANGELOG's 0.44.2 test count corrected
+  (161, not 172 - the tallies had drifted across entries; from now on the count is
+  measured, not accumulated).
+
+
 ## 0.44.2 - 2026-07-20 - Three-lens audit of the Projects page: the error paths get honest
 
 CEO-requested health check (three independent auditors) before the marketplace push.
 The happy path came back clean everywhere it was probed - path traversal, XSS, sweep
 hygiene, cross-process refusals, version skew. The ERROR paths did not. All confirmed
-findings fixed same-day; 6 new tests pin them (172 total, 9 suites green).
+findings fixed same-day; 6 new tests pin them (161 total at that commit - an earlier entry's count had drifted; 9 suites green).
 
 **HIGH (both server auditors reproduced independently)**
 - **A failed copy no longer poisons the target.** An exception mid-copy left partial

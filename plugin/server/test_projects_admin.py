@@ -268,6 +268,121 @@ class ProjectsAdminTests(unittest.TestCase):
         self.assertEqual(len(list(server._trash_dir().glob("alpha.*.db"))), 2,
                          "both trashed stores must survive")
 
+    # --- 0.44.3 confirmation-audit pins ---
+    def test_18_partial_trash_move_is_undone_and_refusal_is_true(self):
+        """Audit F1: the .db renamed, a sidecar rename failed -> the refusal said
+        'nothing happened' while the board sat HALF in trash. Move-with-undo now."""
+        self._add("alpha", [{"title": "whole or nothing", "state": "open"}])
+        server._close_project_conn("alpha")
+        db_file = Path(server.project_db_path("alpha"))
+        wal = db_file.with_name(db_file.name + "-wal")
+        wal.write_bytes(b"fake wal from another process")
+        orig_rename = Path.rename
+
+        def flaky_rename(self_p, target):
+            if str(self_p).endswith("-wal"):
+                raise PermissionError(13, "pinned by AV", str(self_p))
+            return orig_rename(self_p, target)
+
+        Path.rename = flaky_rename
+        try:
+            res = server.project_delete("alpha", "trash")
+        finally:
+            Path.rename = orig_rename
+        self.assertIn("nothing was moved", res.get("error", ""))
+        self.assertTrue(db_file.exists(), "the .db must be back in projects/ (undone)")
+        self.assertTrue(wal.exists(), "the sidecar stays in projects/")
+        self.assertEqual(list(server._trash_dir().glob("alpha.*")), [],
+                         "no residue may be stranded in trash")
+        with server._lock:   # audit F8: the pinned conn must be usable after refusal
+            server._conn.execute("SELECT 1")
+
+    def test_19_restore_brings_the_sidecars_back(self):
+        """Audit F2: restore moved only the .db - committed-but-uncheckpointed WAL data
+        was silently dropped and the sidecars rotted in trash until the purge."""
+        self._add("alpha", [{"title": "seed", "state": "open"}])
+        td = server._trash_dir()
+        td.mkdir(parents=True, exist_ok=True)
+        (td / "ghost.20260101-000000.db").write_bytes(
+            Path(server.project_db_path("alpha")).read_bytes())
+        (td / "ghost.20260101-000000.db-wal").write_bytes(b"wal payload")
+        res = server.project_restore("ghost.20260101-000000.db")
+        self.assertTrue(res.get("ok"), res)
+        base = Path(server.project_db_path("ghost"))
+        self.assertTrue(base.exists())
+        self.assertEqual(base.with_name(base.name + "-wal").read_bytes(), b"wal payload",
+                         "the WAL sidecar must come back with the .db")
+
+    def test_20_raced_identical_row_is_skipped_not_duplicated(self):
+        """Audit F3: the IntegrityError path had no identity check - a racer committing
+        an IDENTICAL topic mid-copy got silently duplicated as -copyN. The retry loop
+        now re-runs the same dedup check. Also pins F4: renamed counted once per row."""
+        self._add("alpha", [{"title": "raced twin", "state": "open"}])
+        src_slug = self._rows("alpha")[0]["slug"]
+        with server._lock:
+            server._use_project("beta")
+        orig = server._copy_dst_row
+        state = {"hidden_once": False}
+
+        def racing_probe(slug):
+            if slug == src_slug and not state["hidden_once"]:
+                state["hidden_once"] = True
+                # racer commits the IDENTICAL row right after our blind check
+                c = sqlite3.connect(str(Path(server.project_db_path("beta"))))
+                r = self._rows("alpha", "SELECT slug, title, body, state FROM topic")[0]
+                c.execute("INSERT INTO topic (slug, title, body, state, created_by, engaged_at) "
+                          "VALUES (?,?,?,?, 'racer', datetime('now'))",
+                          (r["slug"], r["title"], r["body"], r["state"]))
+                c.commit()
+                c.close()
+                return None          # our check ran before the racer's commit
+            return orig(slug)
+
+        server._copy_dst_row = racing_probe
+        try:
+            res = server.project_copy("alpha", "beta")
+        finally:
+            server._copy_dst_row = orig
+        self.assertEqual(res.get("skipped_identical"), 1,
+                         "the raced identical row must be SKIPPED, not duplicated")
+        self.assertEqual(res.get("renamed_collisions"), 0)
+        slugs = [r["slug"] for r in self._rows("beta")]
+        self.assertNotIn(f"{src_slug}-copy2", slugs, "no silent duplicate")
+
+    def test_21_rerun_heals_orphaned_halfcopy_parents_and_reports(self):
+        """Audit F5: pre-0.44.2 half-copy damage (created rows, parents never set) had
+        become permanently unhealable under created-only reparenting. A re-run now fills
+        a skipped row's NULL parent and REPORTS it; an existing parent is never touched."""
+        hub = self._add("alpha", [{"title": "the hub", "state": "open"}])[0]["slug"]
+        self._add("alpha", [{"title": "orphaned child", "parent_slug": hub, "state": "open"}])
+        child = next(r["slug"] for r in self._rows("alpha") if "orphaned-child" in r["slug"])
+        with server._lock:
+            server._use_project("beta")
+        server.project_copy("alpha", "beta")                       # clean full copy
+        with server._lock:                                         # simulate old damage
+            server._use_project("beta")
+            server._conn.execute("UPDATE topic SET parent_id=NULL WHERE slug=?", (child,))
+            server._conn.commit()
+        res = server.project_copy("alpha", "beta")                 # the healing re-run
+        self.assertEqual(res["healed_parents"], 1, res)
+        c = sqlite3.connect(f"file:{Path(server.project_db_path('beta')).as_posix()}?mode=ro",
+                            uri=True)
+        got = c.execute("SELECT parent_id FROM topic WHERE slug=?", (child,)).fetchone()[0]
+        c.close()
+        self.assertIsNotNone(got, "the orphaned child must be re-parented")
+        res2 = server.project_copy("alpha", "beta")                # already healed
+        self.assertEqual(res2["healed_parents"], 0, "an existing parent is never touched")
+
+    def test_22_trash_dir_normalizes_a_repointed_db_path(self):
+        """Audit F7: with DB_PATH repointed at projects/<key>.db (the MCP fallback
+        shape), naive parenting rooted the trash INSIDE projects/."""
+        orig = server.DB_PATH
+        try:
+            server.DB_PATH = str(Path(self.tmp.name) / "projects" / "somekey.db")
+            self.assertEqual(server._trash_dir(), Path(self.tmp.name) / "trash")
+        finally:
+            server.DB_PATH = orig
+
     def test_16_skipped_identical_rows_are_not_reparented(self):
         """Audit LOW: pass 2 mutated PRE-EXISTING dst rows (filled their NULL parent),
         contradicting the identical-topics-skip contract."""
@@ -285,14 +400,18 @@ class ProjectsAdminTests(unittest.TestCase):
             server._conn.commit()
         res = server.project_copy("alpha", "beta")
         self.assertEqual(res["skipped_identical"], 1)
-        parent = self.server._conn if False else sqlite3.connect(
+        # 0.44.3 contract update (audit F5): a skipped identical row with a NULL parent
+        # where the source carries one gets HEALED - and the heal is REPORTED, never
+        # silent. (0.44.2's created-only rule made pre-fix half-copy damage unhealable.)
+        self.assertEqual(res["healed_parents"], 1,
+                         "the fill must be reported, not silent")
+        parent = sqlite3.connect(
             f"file:{Path(server.project_db_path('beta')).as_posix()}?mode=ro", uri=True)
         parent.row_factory = sqlite3.Row
         row = parent.execute(
             "SELECT parent_id FROM topic WHERE slug=?", (src_child,)).fetchone()
         parent.close()
-        self.assertIsNone(row["parent_id"],
-                          "a skipped pre-existing row must not be silently reparented")
+        self.assertIsNotNone(row["parent_id"], "the NULL parent is healed on merge")
 
     def test_17_hard_delete_recounts_inside_the_lock(self):
         """Audit MEDIUM (TOCTOU): a topic committed between the empty-check and the
