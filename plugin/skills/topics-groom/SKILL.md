@@ -52,7 +52,10 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
 
 5. **Shape the tree - BREADTH is the alarmed axis; DEPTH is unbounded (owner call, 2026-07-20).**
    `fan_out.breadth_warning` trips when roots sprawl (> `root_warn_at`) or any hub goes over-wide
-   (`over_wide`) - that warning IS the groom trigger for this step. There is **NO max depth and no
+   (`over_wide`) - that warning IS the groom trigger for this step. (sqlite backend only, and only
+   once the server runs >= 0.43 - a still-running older server serves the old keys with no skew
+   tell, and the BOARD backend's groom has no `fan_out` block at all. If `breadth_warning` is
+   ABSENT, that is NOT a clean bill: eyeball `root_count` and `widest` yourself.) There is **NO max depth and no
    depth warning, by design**: a 5-deep chain of genuine sub-questions is a healthy tree, and the
    cure for a breadth warning is always real depth (merge twins, nest sub-questions under the
    sibling they refine) - never a flatten. The trap in the other direction still stands: don't fix

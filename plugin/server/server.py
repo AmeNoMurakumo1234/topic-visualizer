@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.43.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.43.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -45,8 +45,17 @@ STALE_WARN_COUNT = int(os.environ.get("TOPICS_STALE_WARN", "5") or 5)
 # looked at the picture - root_count sat bare and widest carried no flag while both stale-
 # ness and beacon-ratio had warnings. Thresholds tunable; the cure for breadth is real
 # depth (merge twins, nest sub-questions), never a depth cap - there is NO max depth.
-ROOT_WARN_COUNT = int(os.environ.get("TOPICS_ROOT_WARN", "10") or 10)
-FANOUT_WARN_CHILDREN = int(os.environ.get("TOPICS_FANOUT_WARN", "9") or 9)
+def _env_int(name: str, default: int) -> int:
+    # 0.43.1: a typo'd env var must not kill the autostart-launched server at import
+    # with a traceback nobody sees - fall back to the default instead.
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+ROOT_WARN_COUNT = _env_int("TOPICS_ROOT_WARN", 10)
+FANOUT_WARN_CHILDREN = _env_int("TOPICS_FANOUT_WARN", 9)
 # 0.35 calibrated against the real MiniLM embedder: a clearly-belongs title pair
 # measures ~0.45, unrelated noise ~0.0 - so 0.35 catches real cases with a wide
 # margin over noise, and the hint is advisory (the groom human ratifies).
@@ -1697,6 +1706,19 @@ def groom_report() -> dict:
             "FROM topic t JOIN topic p ON p.id = t.parent_id "
             "WHERE t.parent_id IS NOT NULL AND t.state IN ('seedling','open','discussed') "
             "GROUP BY t.parent_id HAVING children > 7 ORDER BY children DESC LIMIT 8").fetchall()
+        # 0.43.1 (audit MEDIUM+LOW): over_wide gets its OWN query - deriving it from `wide`
+        # meant (a) an env warn-threshold below `wide`'s hardcoded >7 floor was silently
+        # ineffective (a 6-child hub never entered the list to be filtered), and (b) the
+        # LIMIT 8 truncated the warned list when 9+ hubs tripped at once. No LIMIT here:
+        # the warning's list is COMPLETE, and the env value is the only floor. Parent
+        # state deliberately unfiltered: a dead hub with live children is still groom
+        # work, and the alarm pointing at it is the only surface that sees those kids.
+        over_wide_rows = _conn.execute(
+            "SELECT p.slug AS slug, p.title AS title, COUNT(*) AS children "
+            "FROM topic t JOIN topic p ON p.id = t.parent_id "
+            "WHERE t.parent_id IS NOT NULL AND t.state IN ('seedling','open','discussed') "
+            "GROUP BY t.parent_id HAVING children > ? ORDER BY children DESC",
+            (FANOUT_WARN_CHILDREN,)).fetchall()
         root_count = _conn.execute(
             "SELECT COUNT(*) c FROM topic WHERE parent_id IS NULL "
             "AND state IN ('seedling','open','discussed')").fetchone()["c"]
@@ -1780,7 +1802,7 @@ def groom_report() -> dict:
     # 0.43: breadth is the ALARMED axis (owner call 2026-07-20). Depth has no cap and no
     # warning by design; a warning here means merge-or-nest work exists, and the cure for
     # breadth is always real depth, never a depth limit.
-    over_wide = [dict(r) for r in wide if r["children"] > FANOUT_WARN_CHILDREN]
+    over_wide = [dict(r) for r in over_wide_rows]
     breadth_warning = root_count > ROOT_WARN_COUNT or bool(over_wide)
     return {"health": h,
             "fan_out": {"target": "BREADTH is the alarmed axis: roots > "
@@ -2118,6 +2140,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(data)))
+                # 0.43.1: script URLs are unversioned and this server sent NO cache
+                # headers, so browsers heuristically cached each module independently -
+                # after an upgrade a revisited tab could run a MIXED page (fresh shell
+                # mounting the hide-discussed toggle, stale core never filtering; field
+                # report 2026-07-20). no-cache = revalidate every load; for a localhost
+                # tool the refetch cost is nothing and version skew becomes impossible.
+                self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(data)
                 return

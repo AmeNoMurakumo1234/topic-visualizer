@@ -498,6 +498,59 @@ class AuditFixUnit(unittest.TestCase):
         self.assertTrue(fo["breadth_warning"], "an over-wide hub must trip the breadth warning")
         self.assertEqual([w["slug"] for w in fo["over_wide"]], [hub])
 
+    def test_breadth_boundaries_do_not_warn_at_threshold(self):
+        """Pins > (not >=): exactly-at-threshold is healthy on BOTH axes."""
+        for i in range(self.server.ROOT_WARN_COUNT):        # exactly 10 roots
+            self.server.add_topics([{"title": f"edge root {i}", "state": "open"}], "t")
+        fo = self.server.groom_report()["fan_out"]
+        self.assertFalse(fo["breadth_warning"], "exactly ROOT_WARN_COUNT roots must not warn")
+        hub = self.server.add_topics([{"title": "edge hub", "state": "open"}], "t")[0]["slug"]
+        # adding the hub makes 11 roots (> threshold) - so test the hub edge with the
+        # root axis already tripped, then assert the hub itself stays out of over_wide
+        for i in range(self.server.FANOUT_WARN_CHILDREN):   # exactly 9 children
+            self.server.add_topics([{"title": f"edge child {i}", "parent_slug": hub,
+                                     "state": "open"}], "t")
+        fo = self.server.groom_report()["fan_out"]
+        self.assertEqual(fo["over_wide"], [],
+                         "exactly FANOUT_WARN_CHILDREN children must not list the hub")
+
+    def test_env_floor_below_seven_actually_warns(self):
+        """Audit MEDIUM: a warn threshold below the widest-list's >7 floor was silently
+        ineffective because over_wide derived from that list. It has its own query now."""
+        orig = self.server.FANOUT_WARN_CHILDREN
+        self.server.FANOUT_WARN_CHILDREN = 5
+        try:
+            hub = self.server.add_topics([{"title": "small hub", "state": "open"}], "t")[0]["slug"]
+            for i in range(6):                              # 6 children > 5 threshold, <= 7 floor
+                self.server.add_topics([{"title": f"small child {i}", "parent_slug": hub,
+                                         "state": "open"}], "t")
+            fo = self.server.groom_report()["fan_out"]
+            self.assertTrue(fo["breadth_warning"], "6 kids must warn when the threshold is 5")
+            self.assertEqual([w["slug"] for w in fo["over_wide"]], [hub])
+            self.assertEqual(fo["widest"], [],
+                             "the informational widest list keeps its own >7 floor")
+        finally:
+            self.server.FANOUT_WARN_CHILDREN = orig
+
+    def test_over_wide_list_is_never_truncated(self):
+        """Audit LOW: 9+ tripping hubs used to lose entries to the widest LIMIT 8."""
+        for h in range(9):
+            hub = self.server.add_topics([{"title": f"wide hub {h}", "state": "open"}], "t")[0]["slug"]
+            for i in range(self.server.FANOUT_WARN_CHILDREN + 1):
+                self.server.add_topics([{"title": f"kid {h}-{i}", "parent_slug": hub,
+                                         "state": "open"}], "t")
+        fo = self.server.groom_report()["fan_out"]
+        self.assertEqual(len(fo["over_wide"]), 9, "every tripping hub must be listed")
+
+    def test_env_garbage_falls_back_to_default(self):
+        """Audit LOW: a typo'd env var must not kill the server at import."""
+        import os as _os
+        _os.environ["TOPICS_TEST_GARBAGE_INT"] = "abc"
+        try:
+            self.assertEqual(self.server._env_int("TOPICS_TEST_GARBAGE_INT", 10), 10)
+        finally:
+            del _os.environ["TOPICS_TEST_GARBAGE_INT"]
+
     def test_depth_never_warns(self):
         """A deep chain of genuine sub-questions is a HEALTHY tree - no cap, no flag, ever."""
         parent = None

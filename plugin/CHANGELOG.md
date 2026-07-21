@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.43.1 - 2026-07-20 - Audit fixes: env dead zone, complete over_wide, no more stale-tab mixed pages
+
+Two audit lenses over 0.43.0 plus one live field repro (the owner's hide-discussed toggle
+"not working" - which turned out to be this release's most user-visible bug all along).
+
+- **Stale-tab mixed pages fixed at the root (field repro).** Script URLs are unversioned and
+  the server sent NO cache headers, so after an upgrade a revisited browser tab could run a
+  MIXED module set - fresh shell mounting the hide-discussed toggle, stale core never
+  filtering. The server now sends `Cache-Control: no-cache` on all static files: every plain
+  reload revalidates, version skew inside a page becomes impossible, and the refetch cost on
+  localhost is nothing. (Existing stale tabs need ONE hard reload, Ctrl+F5, to pick this up -
+  after that, plain reloads suffice forever.)
+- **`over_wide` gets its own un-limited query (audit MEDIUM + LOW).** Deriving it from the
+  informational `widest` list meant a TOPICS_FANOUT_WARN below that list's hardcoded >7 floor
+  was silently ineffective (a 6-child hub never entered the list to be filtered), and 9+
+  tripping hubs truncated the warned list at 8. The env value is now the only floor and the
+  warned list is complete; `widest` keeps its own >7/LIMIT 8 as the informational lens.
+- **A typo'd env var no longer kills the server at import** - `_env_int` falls back to the
+  default instead of tracebacking inside the windowless autostart (applies to the two new
+  breadth tunables).
+- **The skill's breadth promise is now honest about scope (audit MEDIUM).** Step 5 said
+  `breadth_warning` "IS the groom trigger" unconditionally - but a still-running pre-0.43
+  server serves the old keys with no skew tell, and the board backend's groom has no fan_out
+  at all. The step now carries the caveat (absence is NOT a clean bill - eyeball root_count/
+  widest yourself), matching the skill's own board-caveat convention, and the
+  topic_groom_report tool description names breadth_warning + the backend scope.
+- NOTE: like every server change, 0.43.x is DORMANT until the topics server restarts -
+  the upgrade-aware autostart adopts it at next login, or restart by hand.
+- 4 new tests: at-threshold negatives on both axes (pins > vs >=), the env-floor-below-7
+  case, the untruncated over_wide list, env-garbage fallback. Accepted as-is (audited,
+  deliberate): a dead hub with live children still trips the alarm (that IS groom work, and
+  the alarm is the only surface that sees those stranded children); discussed roots count
+  toward sprawl (grooming includes recording conversions on embers).
+
+
 ## 0.43.0 - 2026-07-20 - Breadth is the alarmed axis; depth is unbounded by design
 
 Owner call after the first deep groom: "i don't think we should have a max depth - we have an

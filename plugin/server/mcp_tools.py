@@ -1169,10 +1169,13 @@ TOOLS = [
                     "count + served:live ratio + warning flag - the graveyard alarm), "
                     "coherence hints incl. root_orphan_hints (root topics that "
                     "semantically belong under an existing hub; semantic-only, honestly "
-                    "absent when the embedder is down), fan-out, capture calibration, "
-                    "recent_human_activity (what the human changed in the UI - check "
-                    "before suspecting a tool bug), and expiry candidates. Adjust your "
-                    "capture threshold from the evidence.",
+                    "absent when the embedder is down), fan_out with breadth_warning "
+                    "(root sprawl / over-wide hubs - BREADTH is the alarmed axis, depth "
+                    "is unbounded by design), capture calibration, recent_human_activity "
+                    "(what the human changed in the UI - check before suspecting a tool "
+                    "bug), and expiry candidates. staleness/fan_out/hints are sqlite-"
+                    "backend fields; the board groom returns state counts only. Adjust "
+                    "your capture threshold from the evidence.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "topic_doctor",
      "description": "Health check: resolved config + LIVE up/down for every piece, so you can see "
