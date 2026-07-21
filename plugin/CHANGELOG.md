@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.44.1 - 2026-07-20 - Handle hygiene: the server stops being a lock on every store
+
+Found live during the 0.44.0 real-click verification: hard-deleting the junk board was
+refused with WinError 32 - the OTHER running server held an open handle, because the
+startup/daily expiry sweep opened and CACHED a connection to EVERY store forever. Any
+second process (an upgraded temp server, an MCP session's direct fallback) therefore
+blocked projects-admin deletes.
+
+- expire_all now releases the connections IT opened (stores someone actually uses stay
+  cached; sweep-only opens close), so the server holds handles only where it is working.
+- trash/hard-delete wrap the file ops: a cross-process lock now returns a plain-language
+  refusal naming the remedy (close other topic-visualizer servers/sessions, retry)
+  instead of a raw WinError.
+- New test pins the sweep hygiene. Known residue for next cycle: the MCP direct-fallback
+  process has the same cache-forever pattern; and the E2E suite's hardcoded port (8993)
+  collides with any manually-launched server - a stray listener makes the suite hit the
+  wrong server entirely (cost 20 confusing minutes tonight; parameterize the port).
+
+
 ## 0.44.0 - 2026-07-20 - The Projects page: boards become manageable objects
 
 Owner design, verbatim need: "the user has no access" to store management - bogus boards

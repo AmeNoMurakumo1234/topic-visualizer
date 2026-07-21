@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.44.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.44.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -379,23 +379,33 @@ def project_delete(key: str, mode: str = "trash") -> dict:
         if n != 0:
             return _fail(f"hard delete refused: board holds {n} topic row(s) (or is "
                          "unreadable) - use trash, which is restorable")
-        with _lock:
-            _close_project_conn(key)
-            # re-glob AFTER the close: closing checkpoints the WAL, which REMOVES the
-            # -wal/-shm sidecars - a pre-close snapshot names files that no longer exist
-            for f in _store_files(key):
-                f.unlink()
+        try:
+            with _lock:
+                _close_project_conn(key)
+                # re-glob AFTER the close: closing checkpoints the WAL, which REMOVES the
+                # -wal/-shm sidecars - a pre-close snapshot names files that no longer exist
+                for f in _store_files(key):
+                    f.unlink()
+        except OSError as e:
+            return _fail("another topics process holds this store "
+                         f"({e.__class__.__name__}) - close other topic-visualizer "
+                         "servers/sessions (or restart the main server) and retry")
         return {"ok": True, "hard_deleted": key}
     ts = time.strftime("%Y%m%d-%H%M%S")
     td = _trash_dir()
     td.mkdir(parents=True, exist_ok=True)
-    with _lock:
-        _close_project_conn(key)
-        moved = []
-        for f in _store_files(key):   # post-close re-glob (see hard-delete note above)
-            dest = td / f"{f.stem}.{ts}{f.suffix if f.suffix != '.db' else '.db'}"
-            f.rename(dest)
-            moved.append(dest.name)
+    try:
+        with _lock:
+            _close_project_conn(key)
+            moved = []
+            for f in _store_files(key):   # post-close re-glob (see hard-delete note above)
+                dest = td / f"{f.stem}.{ts}{f.suffix if f.suffix != '.db' else '.db'}"
+                f.rename(dest)
+                moved.append(dest.name)
+    except OSError as e:
+        return _fail("another topics process holds this store "
+                     f"({e.__class__.__name__}) - close other topic-visualizer "
+                     "servers/sessions (or restart the main server) and retry")
     return {"ok": True, "trashed": key, "as": moved[0] if moved else None,
             "restore_within": "~30 days (then purged)"}
 
@@ -2478,11 +2488,21 @@ def expire_all() -> int:
     for k in keys:
         try:
             with _lock:
+                was_cached = k in _conns
                 _use_project(k)
                 total += expire_seedlings()
                 total += expire_merged()
+                # 0.44.1: close what THIS sweep opened - caching a handle to every store
+                # forever made the server a Windows file-lock on all of them, so a
+                # projects-admin delete from ANY other process (second server, MCP
+                # fallback) hit WinError 32. Stores someone actually uses stay cached;
+                # sweep-only opens are released.
+                if not was_cached and k != _safe_key(_default_project):
+                    _close_project_conn(k)
         except Exception:
             pass
+    with _lock:
+        _use_project(_default_project)   # leave _conn pinned somewhere valid
     return total
 
 

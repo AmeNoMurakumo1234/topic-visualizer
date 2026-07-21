@@ -187,6 +187,21 @@ class ProjectsAdminTests(unittest.TestCase):
         self.assertEqual(n, 1, "only the aged-out store purges")
         self.assertEqual(len(list(server._trash_dir().glob("*.db"))), 1)
 
+    def test_11_expire_sweep_releases_the_handles_it_opened(self):
+        """0.44.1: the sweep opened+cached a conn to EVERY store forever, making the
+        server a Windows file-lock on all of them - deletes from any other process hit
+        WinError 32. Sweep-only opens must be released; in-use stores stay cached."""
+        self._add("alpha", [{"title": "used", "state": "open"}])       # alpha = in use
+        with server._lock:
+            server._use_project("beta")                                # beta exists,
+            server._use_project(server._default_project)               # then released? no -
+        server._close_project_conn("beta")                             # simulate not-in-use
+        server.expire_all()
+        self.assertNotIn("beta", server._conns,
+                         "a store only the sweep touched must not stay cached")
+        self.assertIn(server._safe_key(server._default_project), server._conns,
+                      "the default store stays pinned")
+
     def test_10_overview_reads_without_minting(self):
         self._add("alpha", [{"title": "x", "state": "open"}])
         before = set(Path(server.project_db_path("alpha")).parent.glob("*.db"))
