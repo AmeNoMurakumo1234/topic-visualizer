@@ -126,5 +126,28 @@ window.TopicsAdapter = (function () {
       });
       return await r.json();   // the TOCTOU refusal must reach the human
     },
+    // 0.44 Projects management (capability-gated: the shell shows the Projects tab only
+    // when an adapter carries this - the board adapter has no sqlite stores to manage).
+    projectsAdmin: {
+      async overview() {
+        const r = await fetch("/api/projects/overview");
+        return await r.json();
+      },
+      async copy(from, to) {
+        const r = await fetch("/api/projects/copy", { method: "POST", headers: HDRS,
+          body: JSON.stringify({ from, to }) });
+        return await r.json();
+      },
+      async del(key, mode) {
+        const r = await fetch("/api/projects/delete", { method: "POST", headers: HDRS,
+          body: JSON.stringify({ key, mode: mode || "trash" }) });
+        return await r.json();
+      },
+      async restore(name) {
+        const r = await fetch("/api/projects/restore", { method: "POST", headers: HDRS,
+          body: JSON.stringify({ name }) });
+        return await r.json();
+      },
+    },
   };
 })();

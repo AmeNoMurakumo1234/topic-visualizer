@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.43.2"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.44.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -221,6 +221,213 @@ def list_projects(current: str) -> dict:
     projects = [{"key": k, "label": lbl, "current": k == cur}
                 for k, lbl in sorted(seen.items(), key=lambda kv: kv[1].lower())]
     return {"projects": projects, "current": cur}
+
+
+def _trash_dir() -> Path:
+    return Path(DEFAULT_DB).expanduser().resolve().parent / "trash"
+
+
+def _close_project_conn(key: str) -> None:
+    """Windows holds an open sqlite handle as a file lock - any move/unlink of a store
+    MUST drop the cached connection first or the filesystem op fails."""
+    c = _conns.pop(key, None)
+    if c is not None:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
+def _store_files(key: str) -> list[Path]:
+    base = Path(project_db_path(key))
+    return [p for p in (base, base.with_name(base.name + "-wal"),
+                        base.with_name(base.name + "-shm")) if p.exists()]
+
+
+def projects_overview() -> dict:
+    """The Projects management page's data (0.44): every ACTUAL store on disk with live
+    counts (read-only opens - an overview must never MINT a store), plus the trash.
+    Claude projects with no store yet are dropdown fodder, not manageable boards."""
+    labels = {p["key"]: p["label"] for p in list_projects(_default_project)["projects"]}
+    boards = []
+    pdir = _projects_dir()
+    if pdir.is_dir():
+        for f in sorted(pdir.glob("*.db")):
+            key = _safe_key(f.stem)
+            row = {"key": key, "label": labels.get(key, _label_fallback(key)),
+                   "file_kb": round(f.stat().st_size / 1024, 1),
+                   "current": key == _safe_key(_default_project)}
+            try:
+                c = sqlite3.connect(f"file:{f.as_posix()}?mode=ro", uri=True)
+                c.row_factory = sqlite3.Row
+                st = {r["state"]: r["c"] for r in c.execute(
+                    "SELECT state, COUNT(*) c FROM topic GROUP BY state")}
+                c.close()
+                live = sum(st.get(s, 0) for s in ("seedling", "open", "discussed"))
+                row.update({"live": live, "by_state": st,
+                            "total_rows": sum(st.values()),
+                            "empty": sum(st.values()) == 0})
+            except sqlite3.Error as e:
+                row.update({"error": str(e), "live": None, "empty": False})
+            boards.append(row)
+    trash = []
+    td = _trash_dir()
+    if td.is_dir():
+        for f in sorted(td.glob("*.db")):
+            trash.append({"name": f.name, "file_kb": round(f.stat().st_size / 1024, 1)})
+    return {"boards": boards, "trash": trash,
+            "note": "delete = trash (restorable ~30d); hard delete only for EMPTY boards "
+                    "(bogus-URL mints); copy = merge with dedup, source untouched"}
+
+
+def project_copy(src_key: str, dst_key: str) -> dict:
+    """Merge-copy every live topic from board src into board dst (0.44, owner-ratified):
+    titles/bodies/states/priorities/tags/role and the REAL engagement clock carry over
+    (unlike export, we hold the actual values); parent structure lands in a second pass.
+    Dedup: same slug + same title/body/state in dst -> skipped; same slug, different
+    content -> suffixed slug. Source is never written - copy, not move; re-running is
+    safe. Events/links do not copy (the audit trail belongs to the source board)."""
+    src_key, dst_key = _safe_key(src_key), _safe_key(dst_key)
+    if src_key == dst_key:
+        return _fail("source and target are the same board")
+    src_file = Path(project_db_path(src_key))
+    if not src_file.exists():
+        return _fail(f"no store for source '{src_key}'")
+    if not Path(project_db_path(dst_key)).exists():
+        return _fail(f"no store for target '{dst_key}' (copy targets an existing board)")
+    sc = sqlite3.connect(f"file:{src_file.as_posix()}?mode=ro", uri=True)
+    sc.row_factory = sqlite3.Row
+    rows = [dict(r) for r in sc.execute(
+        "SELECT * FROM topic WHERE state IN ('seedling','open','discussed')")]
+    src_extra = [dict(r) for r in sc.execute(
+        """SELECT c.slug AS child, p.slug AS parent, tp.note, tp.rel FROM topic_parent tp
+           JOIN topic c ON c.id = tp.topic_id JOIN topic p ON p.id = tp.parent_id""")]
+    sc.close()
+    by_id = {r["id"]: r for r in rows}
+    copied, skipped, renamed = 0, 0, 0
+    slug_map: dict[str, str] = {}
+    with _lock:
+        prev = _default_project
+        _use_project(dst_key)
+        try:
+            for r in rows:
+                dst_slug = r["slug"]
+                ex = _conn.execute("SELECT title, body, state FROM topic WHERE slug=?",
+                                   (dst_slug,)).fetchone()
+                if ex is not None:
+                    if (ex["title"], ex["body"], ex["state"]) == (r["title"], r["body"], r["state"]):
+                        slug_map[r["slug"]] = dst_slug
+                        skipped += 1
+                        continue
+                    n = 2
+                    while _conn.execute("SELECT 1 FROM topic WHERE slug=?",
+                                        (f"{dst_slug}-copy{n}",)).fetchone():
+                        n += 1
+                    dst_slug = f"{dst_slug}-copy{n}"
+                    renamed += 1
+                _conn.execute(
+                    """INSERT INTO topic (slug, title, body, state, priority, tags,
+                       created_by, created_at, touched_at, engaged_at, provenance, role)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (dst_slug, r["title"], r["body"], r["state"], r["priority"],
+                     r.get("tags", ""), r.get("created_by", ""), r["created_at"],
+                     r["touched_at"], r.get("engaged_at") or r["touched_at"],
+                     r.get("provenance", ""), r.get("role") or "topic"))
+                tid = _conn.execute("SELECT id FROM topic WHERE slug=?", (dst_slug,)).fetchone()["id"]
+                _event(tid, "imported", "projects-admin", f"copied from board {src_key}")
+                slug_map[r["slug"]] = dst_slug
+                copied += 1
+            # pass 2: primary parents (only where both ends landed/mapped)
+            for r in rows:
+                p = by_id.get(r.get("parent_id"))
+                if p and r["slug"] in slug_map and p["slug"] in slug_map:
+                    _conn.execute(
+                        "UPDATE topic SET parent_id = (SELECT id FROM topic WHERE slug=?) "
+                        "WHERE slug=? AND parent_id IS NULL",
+                        (slug_map[p["slug"]], slug_map[r["slug"]]))
+            # pass 3: extra avenues
+            for e in src_extra:
+                if e["child"] in slug_map and e["parent"] in slug_map:
+                    _conn.execute(
+                        """INSERT OR IGNORE INTO topic_parent (topic_id, parent_id, note, rel, added_by)
+                           SELECT c.id, p.id, ?, ?, 'projects-admin' FROM topic c, topic p
+                           WHERE c.slug=? AND p.slug=?""",
+                        (e.get("note", ""), e.get("rel") or "co_parent",
+                         slug_map[e["child"]], slug_map[e["parent"]]))
+            _conn.commit()
+        finally:
+            _use_project(prev)
+    return {"ok": True, "copied": copied, "skipped_identical": skipped,
+            "renamed_collisions": renamed, "source_untouched": True}
+
+
+def project_delete(key: str, mode: str = "trash") -> dict:
+    """trash (default): move the store into ~/.topic-visualizer/trash/ (restorable;
+    purged after ~30d). hard: unlink outright - ONLY for an EMPTY board (the
+    bogus-URL-mint cleanup case, owner-ratified 2026-07-20)."""
+    key = _safe_key(key)
+    if not _store_files(key):
+        return _fail(f"no store for '{key}'")
+    if mode == "hard":
+        try:
+            c = sqlite3.connect(
+                f"file:{Path(project_db_path(key)).as_posix()}?mode=ro", uri=True)
+            n = c.execute("SELECT COUNT(*) FROM topic").fetchone()[0]
+            c.close()
+        except sqlite3.Error:
+            n = -1   # unreadable/corrupt counts as not-provably-empty
+        if n != 0:
+            return _fail(f"hard delete refused: board holds {n} topic row(s) (or is "
+                         "unreadable) - use trash, which is restorable")
+        with _lock:
+            _close_project_conn(key)
+            # re-glob AFTER the close: closing checkpoints the WAL, which REMOVES the
+            # -wal/-shm sidecars - a pre-close snapshot names files that no longer exist
+            for f in _store_files(key):
+                f.unlink()
+        return {"ok": True, "hard_deleted": key}
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    td = _trash_dir()
+    td.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        _close_project_conn(key)
+        moved = []
+        for f in _store_files(key):   # post-close re-glob (see hard-delete note above)
+            dest = td / f"{f.stem}.{ts}{f.suffix if f.suffix != '.db' else '.db'}"
+            f.rename(dest)
+            moved.append(dest.name)
+    return {"ok": True, "trashed": key, "as": moved[0] if moved else None,
+            "restore_within": "~30 days (then purged)"}
+
+
+def project_restore(trash_name: str) -> dict:
+    src = _trash_dir() / Path(trash_name).name        # basename only - no traversal
+    if not src.exists() or src.suffix != ".db":
+        return _fail(f"no trashed store named '{trash_name}'")
+    key = _safe_key(src.name.rsplit(".", 2)[0])
+    dst = Path(project_db_path(key))
+    if dst.exists():
+        return _fail(f"a live store for '{key}' already exists - delete or rename it first")
+    with _lock:
+        src.rename(dst)
+    return {"ok": True, "restored": key}
+
+
+def purge_trash(days: int = 30) -> int:
+    """Startup sweep: trashed stores older than `days` are unlinked for good."""
+    td = _trash_dir()
+    if not td.is_dir():
+        return 0
+    cutoff = time.time() - days * 86400
+    n = 0
+    for f in td.glob("*"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                n += 1
+        except OSError:
+            pass
+    return n
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -2076,6 +2283,8 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 return self._json(200, list_projects(
                     qs.get("project", [None])[0] or _default_project))
+        if u.path == "/api/projects/overview":       # 0.44 Projects management page
+            return self._json(200, projects_overview())
         if u.path == "/api/version":                 # what version is ACTUALLY running (vs installed code)
             return self._json(200, {"version": VERSION})
         if u.path == "/api/doctor":                  # resolved config + live up/down (loud when degraded)
@@ -2170,6 +2379,17 @@ class Handler(BaseHTTPRequestHandler):
         actor = str(body.get("actor") or "unknown")
         key = (parse_qs(u.query).get("project", [None])[0]
                or body.get("project") or _default_project)
+        # 0.44 projects admin - dispatched BEFORE the project-pinning block: these act on
+        # whole stores and take _lock themselves (non-reentrant - inside the pin they'd
+        # deadlock), and pinning would also mint the very store a delete targets.
+        if u.path == "/api/projects/copy":
+            return self._json(200, project_copy(str(body.get("from") or ""),
+                                                str(body.get("to") or "")))
+        if u.path == "/api/projects/delete":
+            return self._json(200, project_delete(str(body.get("key") or ""),
+                                                  str(body.get("mode") or "trash")))
+        if u.path == "/api/projects/restore":
+            return self._json(200, project_restore(str(body.get("name") or "")))
         with _lock:                              # pin this project's connection for the request
             key = _use_project(key)
             if u.path == "/api/topics":
@@ -2237,6 +2457,7 @@ def main() -> None:
         print(json.dumps(doctor(), indent=2))
         return
     expired = expire_all()                              # the daily job, run at start too
+    purge_trash()                                       # 0.44: aged-out trashed stores go for good
     threading.Thread(target=_expiry_loop, daemon=True).start()
     Handler.web_root = Path(args.web)
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
@@ -2270,6 +2491,7 @@ def _expiry_loop():
         time.sleep(24 * 3600)
         try:
             expire_all()
+            purge_trash()   # 0.44: trashed project stores age out after ~30d
         except Exception:
             pass
 

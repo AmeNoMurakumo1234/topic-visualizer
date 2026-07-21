@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.44.0 - 2026-07-20 - The Projects page: boards become manageable objects
+
+Owner design, verbatim need: "the user has no access" to store management - bogus boards
+mint from a mangled query string (?project=quantum-concepts?demo=120 creates a junk store
+on first VIEW) and nothing in the GUI can delete a board or move topics between boards.
+
+- **A 4th view: Projects.** The boards themselves are the objects: every store on disk
+  with live counts and state chips, plus the trash. Injected as a tab ONLY when the
+  adapter carries `projectsAdmin` (capability-gated - the board-backend page never shows
+  it, and vendored host pages need no HTML change). Plain DOM, no pan stage - management
+  pages must never inherit the drag machinery (the 0.43.2 pointer-capture lesson).
+- **Copy topics between boards** (`POST /api/projects/copy {from,to}`): merge with dedup -
+  identical topics skip, colliding slugs rename, parent structure and extra avenues land,
+  and the REAL engagement clock carries (no laundering; unlike export, the actual values
+  are in hand). Source is never written; re-running is a no-op. Events/links stay with the
+  source board (the audit trail belongs where it happened).
+- **Trash, not destroy** (`POST /api/projects/delete {key}`): the store moves to
+  ~/.topic-visualizer/trash/, restorable from the page for ~30 days (then purged by the
+  daily sweep). **Hard delete exists but ONLY for an EMPTY board** - the owner's
+  bogus-URL-mint cleanup case - and refuses anything holding even one row.
+- **Restore** (`POST /api/projects/restore`): back from the trash; refuses to clobber a
+  live store under the same key.
+- Windows discipline throughout: the cached sqlite connection closes BEFORE any file
+  move (an open handle is a lock), and the file list re-globs AFTER the close (closing
+  checkpoints the WAL, which removes the -wal/-shm sidecars - a pre-close snapshot names
+  files that no longer exist; caught by the new tests). Admin routes dispatch BEFORE the
+  request's project-pinning block (they take the non-reentrant lock themselves, and
+  pinning would mint the very store a delete targets).
+- 10 new tests (test_projects_admin.py): copy structure/clock/dedup/collision/self-refuse,
+  trash-restore round-trip incl. live-connection locks, hard-delete-only-empty,
+  restore-no-clobber, purge cutoff, and overview-never-mints.
+- Known limit, deliberate: the overview manages stores that EXIST; the root cause
+  (a mere view minting a store) is a separately captured topic - this page is the
+  cleanup surface, not the prevention.
+
+
 ## 0.43.2 - 2026-07-20 - The hide-discussed toggle never worked for a real mouse
 
 Field repro (owner): clicking the toggle did nothing - no checkmark, no filtering - while

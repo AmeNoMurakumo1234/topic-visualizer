@@ -64,6 +64,18 @@
     if (b) show(b.dataset.v);
   });
 
+  // 0.44: the Projects management tab, injected ONLY when the adapter can manage stores
+  // (capability-gated, so the board page - whose adapter has no sqlite stores - never
+  // shows it and vendored host pages need no HTML change).
+  if (window.TopicsAdapter.projectsAdmin && window.TopicsRenderers.projects && !demo) {
+    const pb = document.createElement("button");
+    pb.dataset.v = "projects";
+    pb.textContent = "Projects";
+    pb.title = "manage the project boards: copy topics between boards, trash/restore, " +
+               "hard-delete empty bogus boards";
+    document.getElementById("viewtabs").appendChild(pb);
+  }
+
   // search bar: filters every view live (Esc clears); debounced
   const searchEl = document.getElementById("search");
   if (searchEl) {
