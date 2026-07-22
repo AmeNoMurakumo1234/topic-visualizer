@@ -9,11 +9,14 @@ atomic conversion, prune cascade verification (TOCTOU guard), health + groom.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -832,6 +835,159 @@ class SeamTests(unittest.TestCase):
         self.assertTrue(m, "the redundant-ancestor-parent case is detected")
         self.assertEqual(m[0]["redundant_parent"], hub, "the hub (ancestor) is the redundant edge")
         self.assertEqual(m[0]["keep_parent"], skip, "the nearer parent (skip) is kept")
+
+
+class DegenerateAddTests(unittest.TestCase):
+    """0653: POST /api/topics answered an ok-shaped 200 {"results": []} for a write that
+    stored NOTHING (missing/empty/mis-shaped topics), teaching the capturing agent the
+    seedling was safe while it died. An add that stores nothing must be a loud 400, and
+    a mis-typed batch must never 500 out of char-iteration."""
+
+    PORT2 = 8996
+    BASE2 = f"http://127.0.0.1:{PORT2}"
+    proc: subprocess.Popen | None = None
+    tmp: tempfile.TemporaryDirectory | None = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls.proc = subprocess.Popen(
+            [sys.executable, str(HERE / "server.py"),
+             "--db", str(Path(cls.tmp.name) / "topics.db"), "--port", str(cls.PORT2)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for _ in range(50):
+            try:
+                cls._get("/api/topics")
+                break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("server did not start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(timeout=5)
+        cls.tmp.cleanup()
+
+    @classmethod
+    def _get(cls, path):
+        with urllib.request.urlopen(cls.BASE2 + path, timeout=5) as r:
+            return json.loads(r.read())
+
+    @classmethod
+    def _post(cls, path, payload):
+        """(status, body) - urlopen raises on 4xx/5xx, so catch and decode both shapes."""
+        req = urllib.request.Request(
+            cls.BASE2 + path, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except Exception:
+                return e.code, {}
+
+    def _count(self):
+        return len(self._get("/api/topics")["topics"])
+
+    def test_01_missing_topics_is_a_loud_400(self):
+        before = self._count()
+        status, body = self._post("/api/topics", {"actor": "ai"})
+        self.assertEqual(status, 400, body)
+        self.assertIn("error", body)
+        self.assertIn("topics", body["error"])          # the refusal names what was missing
+        self.assertEqual(self._count(), before)
+
+    def test_02_empty_topics_list_is_a_loud_400(self):
+        before = self._count()
+        status, body = self._post("/api/topics", {"actor": "ai", "topics": []})
+        self.assertEqual(status, 400, body)
+        self.assertIn("error", body)
+        self.assertEqual(self._count(), before)
+
+    def test_03_stringly_topics_is_a_loud_400_not_char_iteration(self):
+        # a JSON-ENCODED list (the classic serialization slip) is truthy and used to
+        # char-iterate into an AttributeError 500 - it must 400 naming the shape
+        before = self._count()
+        status, body = self._post(
+            "/api/topics", {"actor": "ai", "topics": '[{"title": "stringly"}]'})
+        self.assertEqual(status, 400, body)
+        self.assertIn("error", body)
+        self.assertEqual(self._count(), before)
+
+    def test_04_non_dict_item_gets_a_per_item_error(self):
+        before = self._count()
+        status, body = self._post(
+            "/api/topics", {"actor": "ai", "topics": ["a bare string item"]})
+        self.assertEqual(status, 200, body)             # the batch shape is valid...
+        self.assertIn("error", body["results"][0])       # ...the item is refused by name
+        self.assertEqual(self._count(), before)
+
+    def test_05_single_form_title_body_still_lands(self):
+        # the server has always accepted a single {title,...} body - lock it, since the
+        # MCP face now leans on it for the no-items rescue
+        before = self._count()
+        status, body = self._post(
+            "/api/topics", {"actor": "ai", "title": "single form capture",
+                            "body": "no topics wrapper"})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["results"][0].get("slug"), body)
+        self.assertEqual(self._count(), before + 1)
+
+
+class ResolveDefaultProjectTests(unittest.TestCase):
+    """0653 root cause: the login autostart launches the server from the Startup .vbs cwd
+    (C:/Windows/System32), and the cwd-keyed default MINTED a phantom store no session
+    would ever use (C--WINDOWS-system32.db) - the web UI's bare open showed an empty sky.
+    A NON-repo cwd with no explicit project must fall back to the newest EXISTING store,
+    never mint a phantom; explicit --project / TOPICS_PROJECT and repo cwds are unchanged."""
+
+    def setUp(self):
+        import server as srv
+        self.srv = srv
+        self._env = os.environ.pop("TOPICS_PROJECT", None)
+
+    def tearDown(self):
+        if self._env is not None:
+            os.environ["TOPICS_PROJECT"] = self._env
+
+    def test_explicit_project_wins(self):
+        self.assertEqual(self.srv.resolve_default_project("my-key"), "my-key")
+
+    def test_env_project_wins_when_no_arg(self):
+        os.environ["TOPICS_PROJECT"] = "env-key"
+        try:
+            self.assertEqual(self.srv.resolve_default_project(None), "env-key")
+        finally:
+            os.environ.pop("TOPICS_PROJECT", None)
+
+    def test_repo_cwd_keys_to_repo_root_unchanged(self):
+        with unittest.mock.patch.object(self.srv, "_repo_root", return_value="X:/repos/mine"):
+            self.assertEqual(self.srv.resolve_default_project(None),
+                             self.srv.encode_project_path("X:/repos/mine"))
+
+    def test_non_repo_cwd_prefers_newest_existing_store(self):
+        with tempfile.TemporaryDirectory() as td:
+            pdir = Path(td) / "projects"
+            pdir.mkdir()
+            old = pdir / "A--old-repo.db"
+            new = pdir / "B--new-repo.db"
+            old.write_bytes(b"")
+            new.write_bytes(b"")
+            os.utime(old, (1000000, 1000000))          # force old to be older
+            with unittest.mock.patch.object(self.srv, "DB_PATH", str(Path(td) / "topics.db")), \
+                 unittest.mock.patch.object(self.srv, "_repo_root", return_value=None):
+                self.assertEqual(self.srv.resolve_default_project(None), "B--new-repo")
+
+    def test_non_repo_cwd_with_no_stores_falls_back_to_cwd_key(self):
+        with tempfile.TemporaryDirectory() as td:
+            with unittest.mock.patch.object(self.srv, "DB_PATH", str(Path(td) / "topics.db")), \
+                 unittest.mock.patch.object(self.srv, "_repo_root", return_value=None):
+                self.assertEqual(self.srv.resolve_default_project(None),
+                                 self.srv.project_key_from_cwd())
 
 
 class VersionCoherenceTests(unittest.TestCase):

@@ -100,6 +100,65 @@ class McpPersistenceVerdict(unittest.TestCase):
         self.assertFalse(any("session-bound" in msg for msg in d["degraded"]), d["degraded"])
 
 
+class McpStoreMismatchTests(unittest.TestCase):
+    """0653: a login-autostarted server inherits the Startup launcher's cwd
+    (C:/Windows/System32) and mints a phantom default store (C--WINDOWS-system32.db, 0
+    topics) - and the doctor reported project=<session> beside store.project=<phantom>
+    with verdict ok, calling the split healthy. The doctor must CLASSIFY the mismatch:
+    an EMPTY/absent mismatched default is the phantom signature (degraded, RED); a
+    mismatched default with real content is a legitimate other project (note, not RED)."""
+
+    @staticmethod
+    def _fake_http(store):
+        def fake(method, url, body=None, headers=None):
+            if "/api/doctor" in url:
+                return {"launched_by": "autostart", "version": mcp_tools.VERSION,
+                        "store": store}
+            raise mcp_tools.Unreachable("no board here")
+        return fake
+
+    def _doctor_with_store(self, store):
+        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_launcher_stamps", return_value=True), \
+             patch.object(mcp_tools, "_http", side_effect=self._fake_http(store)):
+            return mcp_tools.ServerBackend().doctor()
+
+    def test_phantom_empty_mismatched_default_is_degraded(self):
+        with TemporaryDirectory() as td:
+            db = Path(td) / "C--WINDOWS-system32.db"
+            server.open_db(str(db)).close()                      # a real, EMPTY store
+            d = self._doctor_with_store(
+                {"project": "C--WINDOWS-system32", "db_path": str(db), "exists": True})
+        self.assertEqual(d["verdict"], "degraded")
+        self.assertTrue(any("default store" in m.lower() for m in d["degraded"]),
+                        d["degraded"])
+
+    def test_mismatched_default_with_content_is_a_note_not_red(self):
+        with TemporaryDirectory() as td:
+            db = Path(td) / "X--some-other-repo.db"
+            c = server.open_db(str(db))
+            c.execute("INSERT INTO topic (slug, title, body, state, priority, tags, "
+                      "created_by, provenance, role) VALUES "
+                      "('t1','a real topic','','open','normal','','x','','topic')")
+            c.commit()
+            c.close()
+            d = self._doctor_with_store(
+                {"project": "X--some-other-repo", "db_path": str(db), "exists": True})
+        self.assertEqual(d["verdict"], "ok", d.get("degraded"))
+        self.assertIn("store_note", d)
+        self.assertIn("X--some-other-repo", d["store_note"])
+
+    def test_matching_default_is_silent(self):
+        b = mcp_tools.ServerBackend()
+        with TemporaryDirectory() as td:
+            db = Path(td) / "match.db"
+            server.open_db(str(db)).close()
+            d = self._doctor_with_store(
+                {"project": b.project, "db_path": str(db), "exists": True})
+        self.assertEqual(d["verdict"], "ok", d.get("degraded"))
+        self.assertNotIn("store_note", d)
+
+
 class LauncherStampsTests(unittest.TestCase):
     """_launcher_stamps() reads the DEPLOYED login launcher (~/.topic-visualizer/tv-autostart.py) and
     reports whether ITS source is new enough to carry the TOPICS_LAUNCHED_BY stamp - the doctor uses

@@ -233,6 +233,58 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         g, _ = self.mcp.tool("topic_get", {"slug": b})
         self.assertEqual(g["topic"]["state"], "pruned", "the folded topic is no longer live")
 
+    def test_08_add_refuses_degenerate_batches_loudly(self):
+        """0653: a topic_add whose items never arrived (missing/empty/stringly) used to
+        answer an ok-shaped {"results": []} - the capturing agent believed the seedling
+        was safe and let it die. Every degenerate shape must be a LOUD error, storing
+        nothing."""
+        before = self.mcp.tool("topic_list", {})[0]["total"]
+        for args in ({},                                            # items missing entirely
+                     {"items": []},                                 # empty batch
+                     {"items": '[{"title": "stringly"}]'}):         # JSON-encoded string slip
+            out, err = self.mcp.tool("topic_add", args)
+            self.assertIn("error", out, f"args={args!r} must refuse, got {out!r}")
+            self.assertTrue(err, f"args={args!r} must set isError")
+            self.assertIn("NOTHING", out["error"],
+                          "the refusal must say the capture did not land")
+        after = self.mcp.tool("topic_list", {})[0]["total"]
+        self.assertEqual(before, after, "a refused add must store nothing")
+
+    def test_09_add_accepts_single_form_title(self):
+        """The server has always accepted a single {title,...} body; the MCP face used to
+        DROP that shape silently (it only read `items`). Now it wraps it - the capture
+        lands instead of dying on a shape technicality."""
+        out, err = self.mcp.tool("topic_add", {
+            "title": "single form rescue", "body": "no items wrapper", "state": "open"})
+        self.assertFalse(err, out)
+        self.assertTrue(out["results"][0].get("slug"), out)
+        g, _ = self.mcp.tool("topic_get", {"slug": out["results"][0]["slug"]})
+        self.assertEqual(g["topic"]["title"], "single form rescue")
+
+
+class McpOpenVisualizerScoping(unittest.TestCase):
+    """0653: open_visualizer handed back a BARE url, so the web UI opened on the SERVER's
+    default store - which a login-autostarted server keys off its meaningless launcher cwd
+    (the empty C--WINDOWS-system32 sky). The URL must scope to the session's project."""
+
+    def test_url_carries_the_session_project(self):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+
+        def fake_http(method, url, body=None, headers=None):
+            if "/api/version" in url:
+                return {"version": mcp_tools.VERSION}
+            raise mcp_tools.Unreachable("nothing else")
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            b = mcp_tools.ServerBackend()
+            r = b.open_visualizer()
+        self.assertTrue(r["running"])
+        self.assertIn("project=", r["url"])
+        self.assertIn(b.project, r["url"])
+
 
 class TestMCPServerBackendDirect(unittest.TestCase):
     """Shape 2: no HTTP server -> the in-process sqlite fallback must carry it."""

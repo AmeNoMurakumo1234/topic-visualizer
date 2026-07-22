@@ -61,6 +61,22 @@ def _http(method: str, url: str, body: dict | None = None,
         raise Unreachable(str(e)) from e
 
 
+def _store_topic_count(db_path) -> int:
+    """Read-only topic count of a store file (0653: lets the doctor tell a phantom empty
+    default from a legitimate other-project default). Best-effort: unreadable/absent = 0."""
+    if not db_path:
+        return 0
+    try:
+        import sqlite3
+        c = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+        try:
+            return int(c.execute("SELECT COUNT(*) FROM topic").fetchone()[0])
+        finally:
+            c.close()
+    except Exception:
+        return 0
+
+
 def _autostart_installed() -> bool:
     """Is a login autostart actually installed (not merely a hand-started server)? Checks the launcher
     config + its artifact (the Startup .vbs), so persistence is not false-greened when someone ran the
@@ -210,6 +226,34 @@ class ServerBackend:
             if k in data:
                 out[k] = data[k]
         degraded += data.get("degraded", [])
+        # 0653: the server's DEFAULT store (what a bare web-UI open shows; what the
+        # projects admin marks current) can disagree with THIS session's project - a
+        # login-autostarted server inherits the Startup launcher's cwd (C:/Windows/
+        # System32) and mints a phantom store. MCP writes stamp the session project so
+        # they land correctly either way, but the split must be VISIBLE and CLASSIFIED:
+        # an EMPTY mismatched default is the phantom signature (degraded); a mismatched
+        # default with real content is just another legitimate project (note, not an
+        # alarm - alarm fatigue is a correctness bug).
+        st_proj = (out.get("store") or {}).get("project")
+        if running and st_proj and st_proj != self.project:
+            n = _store_topic_count((out.get("store") or {}).get("db_path"))
+            if n:
+                out["store_note"] = (
+                    f"The server's default store is '{st_proj}' ({n} topics), not this "
+                    f"session's '{self.project}'. Captures from this session still land "
+                    f"in '{self.project}' (every MCP call stamps its project) and "
+                    "topic_open scopes the web UI to it; only a hand-typed bare URL "
+                    "shows the server default.")
+            else:
+                degraded.append(
+                    f"The server's DEFAULT store '{st_proj}' is EMPTY and is not this "
+                    f"session's project ('{self.project}') - the phantom-default "
+                    "signature: a login-autostarted server inherited a meaningless "
+                    "launcher cwd (e.g. C:/Windows/System32) and minted a store no "
+                    "session uses. Captures still land in the session store, but a bare "
+                    "web-UI open shows the empty phantom. Fix: restart the server on "
+                    "0.44.4+ (its non-repo default falls back to the newest real store), "
+                    "then delete the phantom via the Projects page.")
         # version coherence: the MCP face runs the INSTALLED code (VERSION); the HTTP server reports the
         # code IT was started with. A mismatch means the running server is stale - the "different upgrade
         # clocks" bug (restart Claude refreshes the MCP face but not a long-lived server process).
@@ -265,8 +309,12 @@ class ServerBackend:
         tree is viewable NOW, and point at /topics-setup to make it PERSIST across restarts."""
         import subprocess
         import time
+        from urllib.parse import quote
         base = self.base.rstrip("/")
-        url = base + "/"
+        # 0653: a BARE url opened the web UI on the SERVER's default store - which a
+        # login-autostarted server keys off its meaningless launcher cwd (the empty
+        # C--WINDOWS-system32 sky). Scope the open to THIS session's project.
+        url = base + "/?project=" + quote(self.project, safe="")
         port = base.rsplit(":", 1)[-1]
 
         def _up():
@@ -1291,7 +1339,23 @@ def _single_or_batch(b, args, one):
 def _call(name: str, args: dict) -> dict:
     b = _backend()
     if name == "topic_add":
-        return b.add(args.get("items") or [], args.get("actor"))
+        # 0653: `items or []` used to turn a missing/empty/stringly batch into a silent
+        # no-op the server acked with {"results": []} - the agent believed the seedling
+        # was safe while it died. Rescue the single {title,...} form (the server side
+        # has always accepted it); refuse everything else LOUDLY, storing nothing.
+        items = args.get("items")
+        if items is None and args.get("title"):
+            items = [{k: args[k] for k in
+                      ("title", "body", "parent_slug", "priority", "state", "role")
+                      if k in args}]
+        if not isinstance(items, list) or not items:
+            got = ("nothing" if items in (None, []) else
+                   f"{type(items).__name__} {str(items)[:80]!r}")
+            return {"error": "topic_add stored NOTHING - it needs items:[{title,...}] "
+                             "(a real array, not a JSON-encoded string) or a single "
+                             f"top-level {{title,...}}; got {got}. Re-send the capture; "
+                             "do not assume it landed."}
+        return b.add(items, args.get("actor"))
     if name == "topic_get":
         return b.get(str(args.get("slug") or ""))
     if name == "topic_list":

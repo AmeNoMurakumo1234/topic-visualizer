@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.44.4 - 2026-07-22 - The silent-drop capture and the phantom default store (0653)
+
+Field report (Plumb, from a scheduled-task session): topic_add answered an ok-shaped
+`{"results": []}` for a write that stored NOTHING, and the doctor reported the session's
+project beside a server default store of `C--WINDOWS-system32` with verdict ok. Root
+causes: three layers each passed an empty batch through silently, and the login
+autostart launches the server from the Startup launcher's cwd (C:/Windows/System32),
+minting a phantom cwd-keyed store. The capture tool itself had the ok:true disease.
+
+- **An add that stores nothing is now a loud error at every layer.** The MCP face
+  refuses a missing/empty/JSON-encoded-string `items` with an error that says NOTHING
+  was stored and to re-send ("do not assume it landed"); the server 400s a degenerate
+  batch instead of acking it; a non-dict item inside a valid batch gets a per-item
+  refusal instead of char-iterating into an AttributeError 500.
+- **The single `{title,...}` form is rescued, not dropped.** The server has always
+  accepted it; the MCP face silently discarded it (it only read `items`). Now it wraps
+  it into a one-item batch - the capture lands instead of dying on a shape technicality.
+- **A non-repo server cwd no longer mints a phantom default store.**
+  `resolve_default_project()`: explicit `--project`/`TOPICS_PROJECT` win; a repo cwd
+  keys to the repo root (unchanged); a NON-repo cwd (the autostart case) falls back to
+  the most recently touched EXISTING store, and to the raw cwd key only on a fresh
+  install with no stores at all.
+- **The doctor classifies a store/project split instead of calling it healthy.** An
+  EMPTY mismatched default is the phantom signature - degraded, with the remedy named.
+  A mismatched default with real content is a legitimate other project - an honest
+  `store_note`, not an alarm (a permanent false positive trains agents to skim the
+  panel a real alarm lives in).
+- **topic_open scopes the web UI to the session's project** (`/?project=<key>`) - a
+  bare open used to show the server default, i.e. the empty phantom sky.
+
 ## 0.44.3 - 2026-07-20 - Confirmation audit: the fixes verified, and the seams the fixes made
 
 Two-agent verify-the-fixes pass over 0.44.2: one adversarially re-ran every original bug

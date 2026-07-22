@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.44.3"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.44.4"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -130,6 +130,30 @@ def _safe_key(k: str) -> str:
     """A filesystem-safe, machine-agnostic project key (never trust a raw query value)."""
     k = re.sub(r"[^A-Za-z0-9._-]", "-", (k or "").strip()).strip("-")
     return (k or "default")[:120]
+
+
+def resolve_default_project(explicit: str | None) -> str:
+    """The server's DEFAULT project key (what a bare web-UI open shows; what the projects
+    admin marks current). Explicit --project / TOPICS_PROJECT win; a git-repo cwd keys to
+    the repo root (unchanged). A NON-repo cwd is the 0653 phantom trap: the login
+    autostart runs from the Startup launcher's cwd (C:/Windows/System32), and keying off
+    that MINTED a phantom store no session would ever use - so with no repo underfoot,
+    serve the most recently touched EXISTING store instead, and fall back to the raw-cwd
+    key only when no store exists yet (fresh install)."""
+    key = explicit or os.environ.get("TOPICS_PROJECT")
+    if key:
+        return key
+    if _repo_root() is not None:
+        return project_key_from_cwd()
+    pdir = _projects_dir()
+    try:
+        dbs = sorted(pdir.glob("*.db"), key=lambda f: f.stat().st_mtime,
+                     reverse=True) if pdir.is_dir() else []
+    except OSError:
+        dbs = []
+    if dbs:
+        return _safe_key(dbs[0].stem)
+    return project_key_from_cwd()
 
 
 def _fold_worktree(name: str) -> str:
@@ -1519,6 +1543,12 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
     provenance?, state?}. Returns per-item {slug, near_duplicates}."""
     results = []
     for it in items:
+        if not isinstance(it, dict):
+            # 0653: a str item used to char-iterate into an AttributeError 500 (a
+            # JSON-encoded item is the classic serialization slip) - refuse it by name
+            results.append({"error": "item must be an object with a title, "
+                                     f"got {type(it).__name__}"})
+            continue
         title = str(it.get("title") or "").strip()
         if not title:
             results.append({"error": "title required"})
@@ -2571,7 +2601,23 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:                              # pin this project's connection for the request
             key = _use_project(key)
             if u.path == "/api/topics":
-                items = body.get("topics") or ([body] if body.get("title") else [])
+                # 0653: an add that stores NOTHING must never answer an ok-shape. A
+                # missing/empty/mis-typed batch used to fall through to add_topics([])
+                # -> 200 {"results": []} - the capturing agent believed the seedling was
+                # safe while it silently died. Refuse degenerate shapes by name.
+                items = body.get("topics")
+                if items is None and body.get("title"):
+                    items = [body]                       # single {title,...} form
+                if not isinstance(items, list):
+                    got = "nothing" if items is None else type(items).__name__
+                    return self._json(400, {
+                        "error": "no topics to add - NOTHING was stored. Send "
+                                 "topics:[{title,...}] (a real JSON array, not a "
+                                 f"string) or a single {{title,...}} body; got {got}."})
+                if not items:
+                    return self._json(400, {
+                        "error": "topics is an empty list - NOTHING was stored. "
+                                 "Send at least one {title,...} item."})
                 return self._json(200, {"results": add_topics(items, actor)})
             if u.path == "/api/topics/export":
                 return self._json(200, export_topics(
@@ -2622,10 +2668,11 @@ def main() -> None:
                     help="print resolved config + live up/down status (loud when degraded) and exit")
     args = ap.parse_args()
     DB_PATH = args.db
-    # The default project: explicit --project / TOPICS_PROJECT, else auto from the loaded
-    # session's cwd. An explicit non-standard --db (tests, custom store) pins 'default' to
-    # that file so existing single-store setups keep working unchanged.
-    _default_project = args.project or os.environ.get("TOPICS_PROJECT") or project_key_from_cwd()
+    # The default project: explicit --project / TOPICS_PROJECT, else auto - repo cwd keys
+    # to the repo root; a NON-repo cwd (login autostart) falls back to the newest existing
+    # store instead of minting a phantom (0653). An explicit non-standard --db (tests,
+    # custom store) pins 'default' to that file so single-store setups keep working.
+    _default_project = resolve_default_project(args.project)
     if args.db != DEFAULT_DB:
         _conns["default"] = open_db(args.db)
         _default_project = args.project or "default"
