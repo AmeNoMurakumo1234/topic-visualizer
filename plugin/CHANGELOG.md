@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.45.1 - 2026-07-24 - The doctor names the stale side
+
+Live repro minutes after the 0.45.0 cycle: a session whose MCP face was still 0.44.3
+read the freshly-restarted 0.45.0 server and reported "the RUNNING server is on an old
+upgrade clock - restart it to pick up the update" - blaming the one component that was
+already newest, with a remedy that would have accomplished nothing. The skew detector
+assumed the server is always the stale side; classify on cause, not state.
+
+- **The version-skew message now compares DIRECTIONS.** Server older than the face ->
+  the existing "restart the topics server" remedy. Server NEWER than the face -> the
+  message blames the session ("a freshly spawned session picks up the newer face; do
+  NOT restart the server") and names the real cost: this session lacks newly added
+  tools/params until it respawns. Unparseable versions fall back to the server-restart
+  message (a restart re-syncs either way).
+
 ## 0.45.0 - 2026-07-24 - Grouped triage + the field-groom upgrade brief
 
 Two field reports from a full-lifecycle groom (159 topics reshaped, 51 closed) and an

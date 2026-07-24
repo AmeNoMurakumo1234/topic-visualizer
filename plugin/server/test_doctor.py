@@ -159,6 +159,46 @@ class McpStoreMismatchTests(unittest.TestCase):
         self.assertNotIn("store_note", d)
 
 
+class VersionSkewDirectionTests(unittest.TestCase):
+    """0.45.x: the skew message names the STALE SIDE instead of assuming the server is it.
+    Live repro (2026-07-24): a session whose MCP face was 0.44.3 read a freshly-cycled
+    0.45.0 server and told the operator 'restart the server to pick up the update' - a
+    wrong bucket carrying a useless remedy (must-know: classify on cause, not state)."""
+
+    @staticmethod
+    def _fake_http(server_version):
+        def fake(method, url, body=None, headers=None):
+            if "/api/doctor" in url:
+                return {"launched_by": "autostart", "version": server_version}
+            raise mcp_tools.Unreachable("no board here")
+        return fake
+
+    def _doctor_against(self, server_version):
+        with patch.object(mcp_tools, "_autostart_installed", return_value=True), \
+             patch.object(mcp_tools, "_launcher_stamps", return_value=True), \
+             patch.object(mcp_tools, "_http", side_effect=self._fake_http(server_version)):
+            return mcp_tools.ServerBackend().doctor()
+
+    def test_newer_server_blames_the_session_not_the_server(self):
+        d = self._doctor_against("999.0.0")
+        msgs = [m for m in d["degraded"] if "999.0.0" in m]
+        self.assertTrue(msgs, d["degraded"])
+        self.assertIn("SESSION is the stale side", msgs[0])
+        self.assertNotIn("Restart the topics server", msgs[0],
+                         "a newest server must never be told to restart")
+
+    def test_older_server_still_says_restart_the_server(self):
+        d = self._doctor_against("0.0.1")
+        msgs = [m for m in d["degraded"] if "0.0.1" in m]
+        self.assertTrue(msgs, d["degraded"])
+        self.assertIn("Restart the topics server", msgs[0])
+
+    def test_matching_versions_raise_no_skew_message(self):
+        d = self._doctor_against(mcp_tools.VERSION)
+        self.assertFalse(any("upgrade clock" in m or "stale side" in m
+                             for m in d["degraded"]), d["degraded"])
+
+
 class LauncherStampsTests(unittest.TestCase):
     """_launcher_stamps() reads the DEPLOYED login launcher (~/.topic-visualizer/tv-autostart.py) and
     reports whether ITS source is new enough to carry the TOPICS_LAUNCHED_BY stamp - the doctor uses

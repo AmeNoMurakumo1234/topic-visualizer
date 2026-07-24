@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -254,15 +255,31 @@ class ServerBackend:
                     "web-UI open shows the empty phantom. Fix: restart the server on "
                     "0.44.4+ (its non-repo default falls back to the newest real store), "
                     "then delete the phantom via the Projects page.")
-        # version coherence: the MCP face runs the INSTALLED code (VERSION); the HTTP server reports the
-        # code IT was started with. A mismatch means the running server is stale - the "different upgrade
-        # clocks" bug (restart Claude refreshes the MCP face but not a long-lived server process).
+        # version coherence: the MCP face runs the code IT was spawned with (VERSION); the HTTP server
+        # reports the code IT was started with. A mismatch means the two are on different upgrade
+        # clocks - and 0.45.x fixes the DIRECTION: the old message assumed the server was always the
+        # stale side, so a session whose FACE was old told the operator to restart a server that was
+        # already newest (a wrong bucket carrying a useless remedy). Compare, then name the stale side.
         running_ver = (http_doctor or {}).get("version")
         out["installed_version"] = VERSION
         if running and running_ver and running_ver != VERSION:
-            degraded.append(
-                f"The RUNNING server is v{running_ver} but the installed code is v{VERSION} - the "
-                "server is on an old upgrade clock. Restart it to pick up the update.")
+            def _vt(v):
+                try:
+                    parts = [int(x) for x in re.split(r"[^0-9]+", str(v)) if x]
+                    return tuple(parts[:3]) if parts else None
+                except Exception:
+                    return None
+            rv, iv = _vt(running_ver), _vt(VERSION)
+            if rv is not None and iv is not None and rv > iv:
+                degraded.append(
+                    f"THIS SESSION's plugin face is v{VERSION} but the running server is "
+                    f"v{running_ver} - the SESSION is the stale side, not the server. Do NOT "
+                    "restart the server; a freshly spawned session picks up the newer face "
+                    "(until then this session lacks any newly added tools/params).")
+            else:
+                degraded.append(
+                    f"The RUNNING server is v{running_ver} but the installed code is v{VERSION} - the "
+                    "server is on an old upgrade clock. Restart the topics server to pick up the update.")
         # ROUTING HINT (not a failure): if a message board is running and this session isn't pointed
         # at it, the user may have MEANT the board backend - the team's topics live on the board, not a
         # local cwd-keyed sqlite store. Surfacing it here saves the "why did it plant locally?" round-trip.
