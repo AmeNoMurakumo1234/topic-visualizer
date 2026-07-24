@@ -447,16 +447,21 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().edit_topic(slug, ACTOR, title=title, body=body)
 
-    def groom(self):
+    def groom(self, verbose=True):
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/groom"))
+            url = self._q(f"{self.base}/api/topics/groom")
+            if not verbose:
+                url += "&verbose=0"
+            return _http("GET", url)
         except Unreachable:
-            return self._fallback().groom_report()
+            return self._fallback().groom_report(verbose=verbose)
 
-    def reconcile(self, items):
+    def reconcile(self, items, decision=None):
         try:
-            res = _http("POST", f"{self.base}/api/topics/reconcile",
-                        self._p({"items": items, "actor": ACTOR}))
+            payload = {"items": items, "actor": ACTOR}
+            if decision:
+                payload["decision"] = decision
+            res = _http("POST", f"{self.base}/api/topics/reconcile", self._p(payload))
             # 0.42.1 (audit): a pre-0.42 RUNNING server has no /reconcile route and answers
             # 404, which reads like a routing bug. Name the actual fix (version skew).
             if isinstance(res, dict) and res.get("error") == "HTTP 404":
@@ -464,7 +469,18 @@ class ServerBackend:
                                "code still in memory) - restart the topics server, then retry")
             return res
         except Unreachable:
-            return self._fallback().reconcile(items, ACTOR)
+            return self._fallback().reconcile(items, ACTOR, decision=decision)
+
+    def buckets(self, max_buckets=8):
+        try:
+            res = _http("GET", self._q(f"{self.base}/api/topics/buckets") +
+                        f"&max={int(max_buckets or 8)}")
+            if isinstance(res, dict) and res.get("error") == "HTTP 404":
+                res["hint"] = ("the running topics server predates topic_buckets (pre-0.45 "
+                               "code still in memory) - restart the topics server, then retry")
+            return res
+        except Unreachable:
+            return self._fallback().topic_buckets(max_buckets=max_buckets)
 
     def checkpoint(self, label=""):
         try:
@@ -775,7 +791,7 @@ class BoardBackend:
         return {"ok": True, "kind": kind, "ref": ref, "created": created,
                 "resolve": res}
 
-    def reconcile(self, items):
+    def reconcile(self, items, decision=None):
         """Board leg of the bulk reconcile: same per-item contract as the server verb.
         converted REQUIRES ref here too - the board's mint-an-issue path stays behind
         topic_convert's explicit human-confirmed act, never a bulk side effect.
@@ -783,7 +799,9 @@ class BoardBackend:
         description promises - childless-only prune and topic-identity - which it
         previously dropped: a bulk prune could silently orphan a hub's subtree, and a
         board ISSUE slug passed by mistake (easy in a tracker join, both are board
-        slugs) would resolve a non-topic post. One _load() serves both guards."""
+        slugs) would resolve a non-topic post. One _load() serves both guards.
+        0.45: `decision` stamps every applied item's note; `leave_open` records the
+        ruling as a note-only state re-assert (board has no separate event stream)."""
         if items is not None and not isinstance(items, list):
             return {"error": "items must be a list of {slug, disposition, ref?, note?} objects"}
         board_topics = self._load()   # board down -> Unreachable propagates, same as every verb
@@ -801,10 +819,12 @@ class BoardBackend:
             disp = str(it.get("disposition") or "")
             ref = str(it.get("ref") or "")
             note = str(it.get("note") or "")
-            if disp not in ("discussed", "pruned", "converted"):
+            if decision:
+                note = str(decision) + (f" | {note}" if note else "")
+            if disp not in ("discussed", "pruned", "converted", "leave_open"):
                 results.append({"slug": slug,
                                 "error": f"bad disposition {disp!r} "
-                                         "(discussed | pruned | converted)"})
+                                         "(discussed | pruned | converted | leave_open)"})
                 errors += 1
                 continue
             if slug in seen_slugs:
@@ -835,7 +855,12 @@ class BoardBackend:
                 errors += 1
                 continue
             try:
-                if disp == "converted":
+                if disp == "leave_open":
+                    # record the ruling without changing anything: re-assert the current
+                    # state with the decision note (the board keeps notes on state posts)
+                    res = self.state(slug, by_slug[slug].get("state") or "open",
+                                     note or "ruling recorded; deliberately left open")
+                elif disp == "converted":
                     res = self.convert(slug, "work_item", ref,
                                        note or "reconciled against tracker")
                 else:
@@ -852,7 +877,12 @@ class BoardBackend:
                 applied += 1
         return {"results": results, "applied": applied, "errors": errors}
 
-    def groom(self):
+    def buckets(self, max_buckets=8):
+        return {"error": "topic_buckets is a sqlite-backend feature - the board backend "
+                         "has no hub-subtree machinery; run the grouped triage from the "
+                         "sqlite store, or bucket by hand from topic_list"}
+
+    def groom(self, verbose=True):   # verbose is a sqlite-report knob; state counts have no prose
         topics = self._load()
         by_state: dict = {}
         for t in topics:
@@ -1092,23 +1122,48 @@ TOOLS = [
          "Bulk close topics AGAINST A WORK TRACKER after the human ratifies the mapping "
          "(workflow: skill topics-tracker-reconcile - the MATCHING of topics to shipped tracker "
          "items is your job with your own tools; this verb is the one-call apply step). "
-         "items: [{slug, disposition: discussed|pruned|converted, ref?, note?}] applied "
-         "PER-ITEM (one bad item never fails the batch); duplicate slugs in one batch "
-         "error rather than double-apply. On the sqlite backend each applied item leaves "
-         "a 'reconciled' audit event (the board leg records the note on the resolve "
+         "items: [{slug, disposition: discussed|pruned|converted|leave_open, ref?, note?}] "
+         "applied PER-ITEM (one bad item never fails the batch); duplicate slugs in one "
+         "batch error rather than double-apply. On the sqlite backend each applied item "
+         "leaves a 'reconciled' audit event (the board leg records the note on the resolve "
          "instead). converted REQUIRES ref (an existing tracker item - "
          "minting a new one stays topic_convert's human-confirmed act). pruned refuses a "
-         "topic with live children (bulk must never cascade a subtree unseen). Use "
+         "topic with live children (bulk must never cascade a subtree unseen). leave_open "
+         "records the ruling and touches NOTHING else (the first-class survive-the-pass "
+         "outcome for grouped triage - skill topics-triage). `decision` is a bucket-level "
+         "ruling stamped uniformly on every applied member's note (write the human's "
+         "actual words once, land them everywhere). Closing seedlings is surfaced "
+         "(seedlings_closed + per-item was_seedling) - read it back to the human. Use "
          "topic_state for ad-hoc changes; use THIS when closing topics because tracker "
-         "work shipped."),
+         "work shipped or a bucket ruling landed."),
      "inputSchema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "object", "properties": {
              "slug": {"type": "string"},
              "disposition": {"type": "string",
-                             "enum": ["discussed", "pruned", "converted"]},
+                             "enum": ["discussed", "pruned", "converted", "leave_open"]},
              "ref": {"type": "string"}, "note": {"type": "string"}},
-             "required": ["slug", "disposition"]}}},
+             "required": ["slug", "disposition"]}},
+         "decision": {"type": "string", "description":
+                      "bucket-level ruling stamped on every applied member (the human's "
+                      "actual words, e.g. 'owner ruling 2026-07-24: park all except the "
+                      "beacon')"}},
          "required": ["items"]}},
+    {"name": "topic_buckets",
+     "description": (
+         "GROUPED-TRIAGE scaffold: clusters the live undecided topics (open + seedling) "
+         "into a small set of coherent buckets so the human answers ONE broad question "
+         "per bucket instead of a card per topic (field result: 5 questions cleared 51 "
+         "of ~115 topics). Buckets seed from the tree's OWN hub structure (groom FIRST - "
+         "a flat tree yields poor buckets); the embedder assigns homeless leaf roots "
+         "(semantic-only; a top-level alert means it was down and unbucketed is "
+         "inflated). Members carry state/stale/links so the question can fold in "
+         "work-tracker overlap. READ-ONLY packaging: YOU frame the one question per "
+         "bucket, the human rules, then topic_reconcile (decision + leave_open) "
+         "bulk-applies. Workflow: skill topics-triage. sqlite backend only."),
+     "inputSchema": {"type": "object", "properties": {
+         "max_buckets": {"type": "integer", "description":
+                         "bucket cap 2-20 (default 8); the smallest clusters pool "
+                         "into an 'other' bucket"}}}},
     {"name": "topic_convert",
      "description": (
          "The atomic crossing out of EXPLORING: record what a discussed topic became - "
@@ -1222,9 +1277,15 @@ TOOLS = [
                     "is unbounded by design), capture calibration, recent_human_activity "
                     "(what the human changed in the UI - check before suspecting a tool "
                     "bug), and expiry candidates. staleness/fan_out/hints are sqlite-"
-                    "backend fields; the board groom returns state counts only. Adjust "
+                    "backend fields; the board groom returns state counts only. "
+                    "breadth_warning is COMPOSITION-aware: it counts un-nested LEAF roots "
+                    "(hub roots are healthy structure); a top-level 'alert' key means the "
+                    "embedder is down and the semantic hints are absent, NOT clean. Adjust "
                     "your capture threshold from the evidence.",
-     "inputSchema": {"type": "object", "properties": {}}},
+     "inputSchema": {"type": "object", "properties": {
+         "verbose": {"type": "boolean", "description":
+                     "false drops the fixed guidance prose (fan_out.target / "
+                     "coherence.note) on repeat calls in the same groom; default true"}}}},
     {"name": "topic_doctor",
      "description": "Health check: resolved config + LIVE up/down for every piece, so you can see "
                     "whether the plugin runs at full value or is SILENTLY degraded. Surfaces both "
@@ -1382,7 +1443,7 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_restore":
         return b.restore(args.get("id"))
     if name == "topic_groom_report":
-        return b.groom()
+        return b.groom(verbose=args.get("verbose") is not False)
     if name == "topic_doctor":
         return b.doctor()
     if name == "topic_open":
@@ -1396,7 +1457,10 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_duplicates":
         return b.duplicates(str(args.get("band") or "kin"))
     if name == "topic_reconcile":
-        return b.reconcile(args.get("items") or [])
+        return b.reconcile(args.get("items") or [],
+                           decision=str(args.get("decision") or "") or None)
+    if name == "topic_buckets":
+        return b.buckets(max_buckets=args.get("max_buckets") or 8)
     return {"error": f"unknown tool {name!r}"}
 
 

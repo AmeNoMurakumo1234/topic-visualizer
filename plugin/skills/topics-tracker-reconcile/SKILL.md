@@ -26,9 +26,10 @@ workflow, with `topic_reconcile` as the one-call apply step.
 `expiry_candidates_full_topics` a 3-item sample) - the full stale list you assemble
 yourself from `topic_list`. This is YOUR read - the tool does not fetch tracker state.
 
-**2. Match with your own tools, then present the mapping.** Grep the tracker the human
-actually uses (gh CLI, board `mb issues`, etc.) for each candidate's territory. Build a
-table: topic -> disposition -> evidence:
+**2. Match with your own tools, then present the mapping.** Search the work tracker the
+human actually uses - whatever system that is: GitHub Issues via `gh`, Jira/Linear/Asana
+search, a team board's CLI, plain grep over a TASKS file - for each candidate's
+territory. Build a table: topic -> disposition -> evidence:
 
 - **discussed** - the tracker shows the question got answered/absorbed (link the evidence
   in `note`).
@@ -44,7 +45,10 @@ table: topic -> disposition -> evidence:
 Present the table and WAIT for the human's ratification. Adjust what they push back on.
 
 **3. Apply in one call.** `topic_reconcile` with the ratified items (each slug at most
-once - duplicates in a batch error rather than double-apply). Read the per-item results -
+once - duplicates in a batch error rather than double-apply). When one human ruling
+covers many items, pass it as `decision` - it stamps every applied member - and use
+`leave_open` for members the ruling deliberately spares (the grouped form of this pass
+is its own skill: `topics-triage`). Read the per-item results -
 one bad item fails alone, never the batch - and report `applied`/`errors` honestly. On
 the sqlite backend every applied item leaves a `reconciled` audit event; the board leg
 records the note on the resolve instead.
@@ -54,6 +58,10 @@ records the note on the resolve instead.
 - The matching is judgment, not string-equality: a topic can be answered by work that
   never mentions its words. When unsure, propose `leave open` - a false close costs a
   real question; a false open costs one more serve.
-- Do not reconcile seedlings; they are the capture layer, and the expiry valve owns them.
+- Seedlings are the capture layer and the expiry valve owns them - do not sweep them into
+  a reconcile by DEFAULT. The carve-out: a deliberate human decision may close a seedling
+  that the tracker already covers (the human says "that one's covered - close it"). The
+  tool surfaces every such close (`seedlings_closed` + a per-item `was_seedling` flag in
+  the result) - read that back to the human so a batch never eats seedlings silently.
 - After the pass, run `topic_groom_report` once: the reconcile usually reveals hubs whose
   children all closed - candidates for the next groom, not for silent pruning.

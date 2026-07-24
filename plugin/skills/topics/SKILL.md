@@ -29,6 +29,9 @@ health signal lie.
   curate an imported/duplicated pile into one tree -> `topics-reconcile`;
   close topics against the WORK TRACKER when shipped work answered them (the staleness
   alarm's cure) -> `topics-tracker-reconcile`
+- **triage in bulk** when the live count has outgrown card-at-a-time (cluster into buckets, ONE
+  ratifiable question per bucket, bulk-apply the ruling) -> `topics-triage` (groom first - the
+  buckets are the hubs)
 
 ## Health (if the tree, visualizer, or search looks off)
 

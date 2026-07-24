@@ -51,11 +51,18 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    dying in a notebook - the exact disease this system exists to cure. Fix on sight.
 
 5. **Shape the tree - BREADTH is the alarmed axis; DEPTH is unbounded (owner call, 2026-07-20).**
-   `fan_out.breadth_warning` trips when roots sprawl (> `root_warn_at`) or any hub goes over-wide
-   (`over_wide`) - that warning IS the groom trigger for this step. (sqlite backend only, and only
-   once the server runs >= 0.43 - a still-running older server serves the old keys with no skew
-   tell, and the BOARD backend's groom has no `fan_out` block at all. If `breadth_warning` is
-   ABSENT, that is NOT a clean bill: eyeball `root_count` and `widest` yourself.) There is **NO max depth and no
+   `fan_out.breadth_warning` trips when UN-NESTED LEAF roots sprawl (`leaf_root_count` >
+   `root_warn_at`) or any hub goes over-wide (`over_wide`) - that warning IS the groom trigger for
+   this step. It is COMPOSITION-aware (>= 0.45): a root that is itself a hub counts as healthy
+   structure (`hub_root_count`), never toward the alarm - so a well-nested tree of 10 domain hubs
+   reads GREEN, and a warning that survives your groom means real leaf sprawl remains. (sqlite
+   backend only, and only once the server runs >= 0.43 - a still-running older server serves the
+   old keys with no skew tell (0.43-0.44 servers warn on RAW root count), and the BOARD backend's
+   groom has no `fan_out` block at all. If `breadth_warning` is ABSENT, that is NOT a clean bill:
+   eyeball `root_count` and `widest` yourself.) A top-level `alert` key on the report means the
+   EMBEDDER is down: the semantic hints are absent-not-clean - fix that before trusting hint
+   emptiness. On repeat report pulls in the same sitting, pass `verbose: false` to drop the fixed
+   guidance prose. There is **NO max depth and no
    depth warning, by design**: a 5-deep chain of genuine sub-questions is a healthy tree, and the
    cure for a breadth warning is always real depth (merge twins, nest sub-questions under the
    sibling they refine) - never a flatten. The trap in the other direction still stands: don't fix
@@ -115,9 +122,14 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    - **root orphans near a hub** (`coherence.root_orphan_hints`, 0.42 - the most common real
      grooming action): a topic captured at ROOT (chronological capture, not meaning) that
      semantically belongs under an existing hub. Each hint is {orphan, hub, score}; propose the
-     move, the human ratifies, then `topic_reparent`. SEMANTIC-ONLY: when the embedder is down
-     the list is honestly absent (`root_orphan_note` says so) - absence of hints is then NOT
-     evidence the roots are fine; eyeball `fan_out.root_count` yourself.
+     move, the human ratifies, then `topic_reparent`. Roots that are themselves hubs (>= 2 live
+     children) are NEVER offered as orphans (>= 0.45): once a tree is nested, similarity between
+     two meta-flavored domain hubs used to read as "bury one under the other" - that hint class
+     was noise, and it is gone. SEMANTIC-ONLY: when the embedder is down the list is honestly
+     absent (`root_orphan_note` + a top-level `alert` say so) - absence of hints is then NOT
+     evidence the roots are fine; eyeball `fan_out.leaf_root_count` yourself. A `topic_reparent`
+     result that says `over_wide` means that move just pushed the hub past the fan band - re-split
+     in the same motion instead of discovering it on the next report.
    - **mixed-altitude / mixed-voice siblings** (judgment - the report can't compute it): children at
      different levels of abstraction, or in different phrasings, under one parent -> re-level them
      (`topic_edit` to rename/rephrase a title, `topic_reparent` to re-nest).

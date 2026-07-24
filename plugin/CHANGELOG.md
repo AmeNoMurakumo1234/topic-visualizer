@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.45.0 - 2026-07-24 - Grouped triage + the field-groom upgrade brief
+
+Two field reports from a full-lifecycle groom (159 topics reshaped, 51 closed) and an
+owner-ratified triage pattern (5 bucket questions cleared 51 of ~115 live topics),
+turned into machinery.
+
+**Grouped triage is first-class** (the owner-ratified pattern):
+- **New `topic_buckets`** - clusters the live undecided topics (open + seedling) into
+  ~5-8 coherent buckets seeded from the tree's OWN hub structure; the embedder assigns
+  only homeless leaf roots (semantic-only, honestly absent when down - a top-level
+  `alert` says so). Members carry state/staleness/tracker-links; smallest clusters pool
+  into `other` under the cap. Read-only packaging: the agent frames one question per
+  bucket, the human rules, reconcile applies.
+- **`topic_reconcile` gains `decision`** - a bucket-level ruling stamped uniformly on
+  every applied member (the human's actual words, written once, landed everywhere), and
+  **`leave_open`** - the first-class survive-the-pass disposition: records the ruling as
+  an audit event, changes no state, never resets the staleness clock.
+- **New skill `topics-triage`** - the ritual (groom -> buckets -> one question per
+  bucket -> ruling -> bulk-apply), with leave-open-is-normal and groom-pairing
+  disciplines. Tracker-agnostic throughout.
+
+**The groom upgrade brief** (protecting what worked, fixing what fell short):
+- **`breadth_warning` is composition-aware** - it now counts UN-NESTED LEAF roots
+  (`leaf_root_count`), not raw root count: 10 healthy domain hubs at root reads GREEN;
+  a warning that survives your groom means real sprawl remains. `hub_root_count` rides
+  along.
+- **Hubs are never offered as orphans** - `root_orphan_hints` excludes roots with >=2
+  live children, killing the hub-under-hub noise class (similarity can't tell "same
+  topic" from "both meta-flavored").
+- **Embedder-down is loud** - `topic_groom_report` leads with a top-level `alert` when
+  semantic hints are absent-not-clean (same guarantee on `topic_buckets`).
+- **`topic_reparent` echoes an over-wide push** in its result (`over_wide`: parent,
+  children, warn_at) so a batch reshape self-reports instead of waiting for the next
+  report; **`topic_list` rows carry `children` + `state_note`** so wide-hub hunting and
+  decision-note reading are one call.
+- **Seedling closes are surfaced, not silent** - reconcile returns `seedlings_closed` +
+  per-item `was_seedling` (a deliberate ruling MAY close a board-covered seedling; the
+  skill carve-out now says so and the tool reads it back).
+- **`topic_groom_report` accepts `verbose:false`** - drops the fixed guidance prose on
+  repeat pulls in the same sitting.
+- **Tracker-agnostic sweep** (hard requirement): skill prose now says "the work tracker
+  the human actually uses" with generic examples everywhere; no tool-specific tracker
+  wording remains in any topics skill.
+
 ## 0.44.4 - 2026-07-22 - The silent-drop capture and the phantom default store (0653)
 
 Field report (Plumb, from a scheduled-task session): topic_add answered an ok-shaped

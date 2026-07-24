@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.44.4"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.45.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -778,7 +778,12 @@ def list_topics(include_archive=False, limit=500, offset=0) -> dict:
         limit = max(1, min(int(limit), 2000)); offset = max(0, int(offset))
     except Exception:
         limit, offset = 500, 0
-    q = ("SELECT t.slug, t.title, t.state, t.priority, p.slug AS parent "
+    # 0.45 (Polaris): children (live count) + state_note ride the compact row so a groom
+    # finds wide hubs and reads decision-notes in ONE call instead of report+get per item.
+    q = ("SELECT t.slug, t.title, t.state, t.priority, p.slug AS parent, "
+         "t.state_note, "
+         "(SELECT COUNT(*) FROM topic k WHERE k.parent_id = t.id "
+         " AND k.state IN ('seedling','open','discussed')) AS children "
          "FROM topic t LEFT JOIN topic p ON p.id=t.parent_id")
     if not include_archive:
         q += " WHERE t.state IN ('seedling','open','discussed')"
@@ -1709,6 +1714,7 @@ def convert(slug: str, links: list[dict], actor: str, note: str = "") -> dict:
 def edit_topic(slug: str, actor: str, title: str | None = None,
                body: str | None = None, parent_slug: str | None = None,
                critical: bool | None = None) -> dict:
+    over_wide_echo = None   # 0.45: set when a reparent pushes the new parent over-wide
     with _lock:
         row = _conn.execute("SELECT id, parent_id FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
@@ -1757,6 +1763,17 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                 _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
                               (tid, p["id"]))
                 _event(tid, "reparented", actor, f"-> {parent_slug}")
+                # 0.45 (Polaris): echo an over-wide push IN the result - a batch reparent
+                # silently built a 15-child hub and the groom only learned from a follow-up
+                # report. Say it in the same motion so the re-split happens now.
+                kids_now = _conn.execute(
+                    "SELECT COUNT(*) c FROM topic WHERE parent_id=? AND "
+                    "state IN ('seedling','open','discussed')", (p["id"],)).fetchone()["c"]
+                if kids_now > FANOUT_WARN_CHILDREN:
+                    over_wide_echo = {"parent": parent_slug, "children": kids_now,
+                                      "warn_at": FANOUT_WARN_CHILDREN,
+                                      "note": "this reparent pushed the hub over-wide - "
+                                              "consider splitting it while you're here"}
         if critical is not None:
             _conn.execute("UPDATE topic SET priority=? WHERE id=?",
                           ("critical" if critical else "normal", tid))
@@ -1771,6 +1788,8 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
         else:
             _touch(tid, actor)
         _conn.commit()
+    if over_wide_echo:
+        return {"ok": True, "over_wide": over_wide_echo}
     return {"ok": True}
 
 
@@ -2093,9 +2112,11 @@ def health() -> dict:
         "converted": converted, "pruned": pruned, "expired": expired}
 
 
-def groom_report() -> dict:
+def groom_report(verbose: bool = True) -> dict:
     """What the topics-groom skill needs, including the calibration feedback that
-    teaches the AI from the human's actual behavior."""
+    teaches the AI from the human's actual behavior. verbose=False drops the fixed
+    guidance prose (fan_out.target / coherence.note) - the numbers stay; a groom
+    calls this several times per sitting and the paragraphs never change."""
     h = health()
     with _lock:
         by_actor = _conn.execute(
@@ -2136,6 +2157,15 @@ def groom_report() -> dict:
         root_count = _conn.execute(
             "SELECT COUNT(*) c FROM topic WHERE parent_id IS NULL "
             "AND state IN ('seedling','open','discussed')").fetchone()["c"]
+        # 0.45 (field groom, Polaris): breadth is COMPOSITION-aware. A root that is itself
+        # a hub (has live children) is healthy structure - 10 domain hubs at root is a
+        # GOOD tree, and a warning that stays red after a genuinely good groom trains the
+        # operator to ignore it. The sprawl signal is the UN-NESTED LEAF root.
+        leaf_root_count = _conn.execute(
+            "SELECT COUNT(*) c FROM topic r WHERE r.parent_id IS NULL "
+            "AND r.state IN ('seedling','open','discussed') "
+            "AND NOT EXISTS (SELECT 1 FROM topic k WHERE k.parent_id = r.id "
+            "                AND k.state IN ('seedling','open','discussed'))").fetchone()["c"]
         # COHERENCE lens (width is necessary, not sufficient). The strongest depth signal is
         # already in the graph: an AVENUE between two SIBLINGS. The extra edge usually means one
         # topic is a sub-question/complement of the other - so it belongs UNDER its sibling, not
@@ -2217,15 +2247,19 @@ def groom_report() -> dict:
     # warning by design; a warning here means merge-or-nest work exists, and the cure for
     # breadth is always real depth, never a depth limit.
     over_wide = [dict(r) for r in over_wide_rows]
-    breadth_warning = root_count > ROOT_WARN_COUNT or bool(over_wide)
-    return {"health": h,
-            "fan_out": {"target": "BREADTH is the alarmed axis: roots > "
+    # 0.45: warn on LEAF-root sprawl, not raw root count (hub roots are healthy structure).
+    breadth_warning = leaf_root_count > ROOT_WARN_COUNT or bool(over_wide)
+    report = {"health": h,
+            "fan_out": {"target": "BREADTH is the alarmed axis: UN-NESTED LEAF roots > "
                                   f"{ROOT_WARN_COUNT} or a hub > {FANOUT_WARN_CHILDREN} children "
-                                  "trips breadth_warning. DEPTH is unbounded by design - never "
-                                  "flatten to fix a warning; merge twins and nest sub-questions "
-                                  "(see coherence.reparent_hints / root_orphan_hints). 3-7 "
-                                  "children stays a soft band, not a goal.",
+                                  "trips breadth_warning (hub roots are healthy structure and "
+                                  "do NOT count toward the alarm). DEPTH is unbounded by design "
+                                  "- never flatten to fix a warning; merge twins and nest "
+                                  "sub-questions (see coherence.reparent_hints / "
+                                  "root_orphan_hints). 3-7 children stays a soft band, not a goal.",
                         "root_count": root_count,
+                        "leaf_root_count": leaf_root_count,
+                        "hub_root_count": root_count - leaf_root_count,
                         "root_warn_at": ROOT_WARN_COUNT,
                         "breadth_warning": breadth_warning,
                         "over_wide": over_wide,
@@ -2247,6 +2281,18 @@ def groom_report() -> dict:
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_count": stale_total,
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
+    if not verbose:   # 0.45: the guidance paragraphs never change - drop them on request
+        report["fan_out"].pop("target", None)
+        report["coherence"].pop("note", None)
+    # 0.45 (Polaris): an absent hint set because the EMBEDDER is down must be loud at the
+    # TOP, not discovered by reading root_orphan_note - "a negative result is only as good
+    # as its scope". Alert leads the dict so it is the first thing a groom reads.
+    if "embedder" in (orphan_note or ""):
+        return {"alert": "EMBEDDER DOWN: semantic hints (root_orphan_hints, duplicate "
+                         "ranking) are ABSENT this report, not clean - do not read their "
+                         "emptiness as tree health. Run topic_doctor / restart the "
+                         "embedder, then re-pull the report.", **report}
+    return report
 
 
 def _root_orphan_hints() -> tuple[list[dict], str]:
@@ -2260,9 +2306,15 @@ def _root_orphan_hints() -> tuple[list[dict], str]:
     round-trip (8s timeout) does serialize other API requests; acceptable for a
     human-cadence groom, called out here so nobody trusts the old 'never blocks' claim."""
     LIVE = "('seedling','open','discussed')"
+    # 0.45 (Polaris): a root that is ITSELF a hub (>=2 live children) is never an "orphan" -
+    # once a tree is nested, semantic similarity between two meta-flavored domain hubs reads
+    # as "nest one under the other", i.e. a hint to bury a top-level domain. Similarity can't
+    # tell "same topic" from "both meta"; only childless-or-single-child roots are candidates.
     roots = [dict(r) for r in _conn.execute(
-        f"SELECT id, slug, title, body FROM topic WHERE parent_id IS NULL "
-        f"AND state IN {LIVE}")]
+        f"SELECT r.id, r.slug, r.title, r.body FROM topic r WHERE r.parent_id IS NULL "
+        f"AND r.state IN {LIVE} "
+        f"AND (SELECT COUNT(*) FROM topic k WHERE k.parent_id = r.id "
+        f"     AND k.state IN {LIVE}) < 2")]
     hubs = [dict(r) for r in _conn.execute(
         f"SELECT p.id AS id, p.slug AS slug, p.title AS title, p.body AS body, "
         f"COUNT(*) AS children FROM topic t JOIN topic p ON p.id = t.parent_id "
@@ -2321,19 +2373,149 @@ def _root_orphan_hints() -> tuple[list[dict], str]:
     return hints[:10], "up"
 
 
-def reconcile(items: list[dict], actor: str) -> dict:
+def topic_buckets(max_buckets: int = 8) -> dict:
+    """0.45 grouped-triage scaffold (owner-ratified pattern): cluster the LIVE UNDECIDED
+    topics (open + seedling; discussed is already answered) into a small set of coherent
+    buckets so the human can ratify ONE broad question per bucket instead of a card per
+    topic. Buckets are seeded from the tree's OWN hub structure (each root subtree with
+    live members is a bucket - a groomed tree already encodes the buckets); the embedder
+    is used ONLY for homeless leaf roots (childless roots with no hub home), matching
+    _root_orphan_hints semantics: semantic-only, honestly absent when the embedder is
+    down. The tool packages; the AGENT frames the question; the HUMAN rules; reconcile
+    (with its `decision` stamp) bulk-applies. Division of labor by design - this call
+    never writes anything."""
+    try:
+        max_buckets = max(2, min(int(max_buckets), 20))
+    except Exception:
+        max_buckets = 8
+    with _lock:
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT id, slug, title, body, state, parent_id, "
+            "(state='open' AND julianday('now') - "
+            " julianday(COALESCE(engaged_at, created_at)) > ?) AS stale "
+            "FROM topic WHERE state IN ('seedling','open','discussed')", (STALE_DAYS,))]
+        link_rows = _conn.execute(
+            "SELECT topic_id, kind, ref FROM topic_link").fetchall()
+    links_of: dict = {}
+    for lr in link_rows:
+        links_of.setdefault(lr["topic_id"], []).append({"kind": lr["kind"], "ref": lr["ref"]})
+    by_id = {r["id"]: r for r in rows}
+    kids_of: dict = {}
+    for r in rows:
+        if r["parent_id"] in by_id:
+            kids_of.setdefault(r["parent_id"], []).append(r["id"])
+
+    def _root(t):   # primary-parent walk, cycle-safe
+        seen = set()
+        while t["parent_id"] in by_id and t["id"] not in seen:
+            seen.add(t["id"])
+            t = by_id[t["parent_id"]]
+        return t
+
+    def _member(t, **extra):
+        m = {"slug": t["slug"], "title": t["title"], "state": t["state"],
+             "stale": bool(t["stale"]), "links": links_of.get(t["id"], [])}
+        m.update(extra)
+        return m
+
+    members_by_root: dict = {}
+    for t in rows:
+        if t["state"] not in ("open", "seedling"):
+            continue
+        members_by_root.setdefault(_root(t)["id"], []).append(t)
+    # split structural buckets from HOMELESS leaf roots (a bucket that is only the
+    # childless root itself has no hub home - semantic assignment territory)
+    structural, homeless = {}, []
+    for rid, ms in members_by_root.items():
+        if len(ms) == 1 and ms[0]["id"] == rid and not kids_of.get(rid):
+            homeless.append(ms[0])
+        else:
+            structural[rid] = ms
+    unbucketed, note = [], "up"
+    if homeless and structural:
+        texts = [(t["title"] + " " + (t["body"] or "")[:400]).strip() for t in homeless] \
+              + [(by_id[rid]["title"] + " " + (by_id[rid]["body"] or "")[:400]).strip()
+                 for rid in structural]
+        vecs = _embed(texts)
+        if vecs is None:
+            unbucketed, note = homeless, ("semantic assignment unavailable (embedder "
+                                          "down) - homeless leaf roots left unbucketed, "
+                                          "no keyword guess")
+        else:
+            hvecs = vecs[len(homeless):]
+            rids = list(structural)
+            for t, tv in zip(homeless, vecs[:len(homeless)]):
+                best, best_score = None, 0.0
+                for rid, hv in zip(rids, hvecs):
+                    s = max(0.0, _cosine(tv, hv))
+                    if s > best_score:
+                        best, best_score = rid, s
+                if best is not None and best_score >= HINT_THRESHOLD:
+                    structural[best].append(dict(t, _via="semantic", _score=round(best_score, 3)))
+                else:
+                    unbucketed.append(t)
+    elif homeless:
+        unbucketed, note = homeless, "no structural buckets to assign into"
+    buckets = []
+    for rid, ms in structural.items():
+        members = [_member(t, **({"via": t["_via"], "score": t["_score"]}
+                                 if t.get("_via") else {})) for t in ms]
+        live = len(members)
+        stale_n = sum(1 for m in members if m["stale"])
+        linked_n = sum(1 for m in members if m["links"])
+        sug = None
+        if live and stale_n >= max(1, live // 2):
+            sug = "mostly stale - frame a discuss-or-expire question"
+        elif linked_n:
+            sug = (f"{linked_n} member(s) already carry tracker links - check your work "
+                   "tracker for shipped/covered overlap before framing the question")
+        buckets.append({"key": by_id[rid]["slug"], "title": by_id[rid]["title"],
+                        "members": members, "live_count": live,
+                        "stale_count": stale_n, "linked_count": linked_n,
+                        "suggestion": sug})
+    buckets.sort(key=lambda b: -b["live_count"])
+    if len(buckets) > max_buckets:   # pool the tail; pooled members remember their root
+        keep, tail = buckets[:max_buckets - 1], buckets[max_buckets - 1:]
+        pooled = [dict(m, root=b["key"]) for b in tail for m in b["members"]]
+        keep.append({"key": "other", "title": "other (pooled small buckets)",
+                     "members": pooled, "live_count": len(pooled),
+                     "stale_count": sum(1 for m in pooled if m["stale"]),
+                     "linked_count": sum(1 for m in pooled if m["links"]),
+                     "suggestion": "small clusters pooled under the bucket cap - if one "
+                                   "deserves its own question, raise max_buckets"})
+        buckets = keep
+    out = {"buckets": buckets, "unbucketed": [_member(t) for t in unbucketed],
+           "note": note,
+           "discipline": "buckets are seeded from the tree's hub structure - GROOM FIRST "
+                         "(a flat tree yields poor buckets). Leave-open is a first-class "
+                         "outcome: most topics should survive a triage."}
+    if "embedder" in note:
+        return {"alert": "EMBEDDER DOWN: homeless leaf roots could not be assigned to "
+                         "buckets semantically - unbucketed is larger than the tree "
+                         "deserves, not dirtier.", **out}
+    return out
+
+
+def reconcile(items: list[dict], actor: str, decision: str | None = None) -> dict:
     """0.42 bulk reconcile-against-a-work-tracker: apply {slug, disposition, ref?, note?}
     batches with PER-ITEM results (a bad item fails alone, never the batch). The MATCHING
     of topics to tracker items stays the agent's job (skill: topics-tracker-reconcile) - this verb
     is the one-call apply step after the human ratifies the mapping. Dispositions ride the
     existing state machinery; each applied item leaves a 'reconciled' audit event.
     Safety: pruning through reconcile is CHILDLESS-ONLY - a bulk call must never silently
-    cascade a subtree the human did not see (topic_state has the confirm-cascade path)."""
+    cascade a subtree the human did not see (topic_state has the confirm-cascade path).
+    0.45 grouped-triage additions (owner-ratified): `decision` is a BUCKET-LEVEL ruling
+    stamped uniformly on every applied member ("closed by owner ruling X" written once,
+    landed everywhere - previously hand-copied per item); disposition `leave_open` is the
+    first-class survive-the-pass outcome - it records the ruling as an event and changes
+    NOTHING else (no state move, no engagement-clock reset - a bulk ruling is not
+    engagement with the topic's content)."""
     # 0.42.1 (audit): items must be a real list - a bare string is iterable and would
     # produce one error entry PER CHARACTER (unbounded response amplification via HTTP).
     if items is not None and not isinstance(items, list):
         return _fail("items must be a list of {slug, disposition, ref?, note?} objects")
     results, applied, errors = [], 0, 0
+    seedlings_closed = 0
     seen_slugs: set = set()
     for it in (items or []):
         it = it if isinstance(it, dict) else {}
@@ -2341,12 +2523,14 @@ def reconcile(items: list[dict], actor: str) -> dict:
         disp = str(it.get("disposition") or "")
         ref = str(it.get("ref") or "")
         note = str(it.get("note") or "")
+        if decision:   # 0.45: the bucket-level ruling stamps every member uniformly
+            note = str(decision) + (f" | {note}" if note else "")
 
         def fail(msg):
             results.append({"slug": slug, "error": msg})
 
-        if disp not in ("discussed", "pruned", "converted"):
-            fail(f"bad disposition {disp!r} (discussed | pruned | converted)")
+        if disp not in ("discussed", "pruned", "converted", "leave_open"):
+            fail(f"bad disposition {disp!r} (discussed | pruned | converted | leave_open)")
             errors += 1
             continue
         # 0.42.1 (audit): a tracker-join batch can accidentally carry the same slug twice
@@ -2359,12 +2543,13 @@ def reconcile(items: list[dict], actor: str) -> dict:
             continue
         seen_slugs.add(slug)
         with _lock:
-            row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
+            row = _conn.execute("SELECT id, state FROM topic WHERE slug=?", (slug,)).fetchone()
         if not row:
             fail("not found")
             errors += 1
             continue
         tid = row["id"]
+        was_seedling = row["state"] == "seedling"
         if disp == "converted" and not ref:
             fail("converted requires ref (the existing tracker item this topic became); "
                  "to MINT a new item use topic_convert after the human confirms")
@@ -2381,7 +2566,11 @@ def reconcile(items: list[dict], actor: str) -> dict:
                      "children first (discussed children still count as live here)")
                 errors += 1
                 continue
-        if disp == "converted":
+        if disp == "leave_open":
+            res = None   # first-class survive-the-pass: the ruling is RECORDED (the
+            #              shared _event below), the topic itself is untouched - no
+            #              state move, no engagement-clock reset.
+        elif disp == "converted":
             res = convert(slug, [{"kind": "work_item", "ref": ref, "note": note}],
                           actor, note or "reconciled against tracker")
         elif disp == "pruned":
@@ -2400,9 +2589,22 @@ def reconcile(items: list[dict], actor: str) -> dict:
             _event(tid, "reconciled", actor,
                    disp + (f" -> {ref}" if ref else "") + (f" | {note}" if note else ""))
             _conn.commit()
-        results.append({"slug": slug, "ok": True, "disposition": disp})
+        # 0.45 (Polaris): closing a seedling via reconcile is LEGAL (a deliberate decision
+        # legitimately closes a board-covered seedling) but must be surfaced, never silent -
+        # the skill says "don't reconcile seedlings" and the tool used to quietly disagree.
+        item_res = {"slug": slug, "ok": True, "disposition": disp}
+        if was_seedling and disp != "leave_open":   # leave_open closes nothing
+            item_res["was_seedling"] = True
+            seedlings_closed += 1
+        results.append(item_res)
         applied += 1
-    return {"results": results, "applied": applied, "errors": errors}
+    out = {"results": results, "applied": applied, "errors": errors,
+           "seedlings_closed": seedlings_closed}
+    if seedlings_closed:
+        out["seedling_note"] = (f"closed {seedlings_closed} seedling(s) - fine if this was "
+                                "a deliberate decision (board/tracker-covered), but a "
+                                "seedling never earned engagement, so double-check intent")
+    return out
 
 
 def _store_path(key) -> str:
@@ -2516,7 +2718,11 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/topics/duplicates":
                     return self._json(200, find_duplicates(qs.get("band", ["kin"])[0]))
                 if u.path == "/api/topics/groom":
-                    return self._json(200, groom_report())
+                    return self._json(200, groom_report(
+                        verbose=qs.get("verbose", ["1"])[0] not in ("0", "false", "no")))
+                if u.path == "/api/topics/buckets":   # 0.45 grouped-triage scaffold
+                    return self._json(200, topic_buckets(
+                        max_buckets=qs.get("max", ["8"])[0]))
                 if u.path == "/api/topics/checkpoints":   # BEFORE the slug regex below
                     return self._json(200, list_checkpoints())
                 mget = re.match(r"^/api/topics/([a-z0-9][a-z0-9._-]*)$", u.path)
@@ -2630,7 +2836,9 @@ class Handler(BaseHTTPRequestHandler):
                     str(body.get("into") or ""), str(body.get("from") or ""), actor,
                     body.get("body")))
             if u.path == "/api/topics/reconcile":        # 0.42 bulk tracker reconcile
-                return self._json(200, reconcile(body.get("items") or [], actor))
+                return self._json(200, reconcile(
+                    body.get("items") or [], actor,
+                    decision=str(body.get("decision") or "") or None))
             if u.path == "/api/topics/checkpoint":       # groom undo: drop a restore point
                 return self._json(200, create_checkpoint(actor, str(body.get("label") or "")))
             if u.path == "/api/topics/restore":          # groom undo: roll back (id omitted = latest)
