@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.45.2 - 2026-07-27 - Hiding discussed topics actually re-lays out the tree
+
+Owner-reported: collapsing a branch in Lineage repositions the board so the view stays
+clean, but hiding discussed topics did not. Measured on a real 27-card tree, the miss was
+bigger than a missing animation - the cards were dropped from the DOM while their ROWS
+stayed reserved: hiding two discussed roots left **243px of dead space** at the top, moved
+**zero** surviving cards, and did not change the canvas height at all.
+
+Root cause: Lineage is the only view that splits visibility (pass 1, which builds and
+measures cards) from geometry (pass 2, which stacks the rows). The hide-discussed filter
+had only ever been added to pass 1, so pass 2 - the pass that owns positions - still laid
+out cards that were no longer there. Star Chart does both in one pass and was never
+affected.
+
+- **One visibility rule, shared by both passes** (`kidsOf` / `shownRoots`). Hiding or
+  showing discussed topics now re-stacks the tree on what is actually visible: dead space
+  0, every survivor repositioned, and the canvas shrinks and grows with the content.
+- **Latent NaN removed.** Pass 2 read `n.lh`, a height only pass 1 sets, so laying out a
+  card pass 1 had skipped used a stale-or-undefined height that could poison a whole
+  column's positions.
+- **The view now holds still across the relayout**, the way collapsing a node already did.
+  It anchors on the deepest node that survives both states - your selection when it is on
+  screen, otherwise the topmost card - so the branch you were reading does not jump by
+  however many rows vanished above it. Verified: 0px drift hiding and un-hiding, with a
+  card selected deep in a panned view. If the anchor is itself the discussed card that
+  vanishes, it falls back to the nearest surviving ancestor rather than throwing the view
+  to the top.
+- `core.discussedToggle(container, view, around?)` takes an optional renderer-supplied
+  wrapper, so geometry stays with the renderer instead of core guessing at anchors. Views
+  that omit it keep the previous behavior.
+
 ## 0.45.1 - 2026-07-24 - The doctor names the stale side
 
 Live repro minutes after the 0.45.0 cycle: a session whose MCP face was still 0.44.3

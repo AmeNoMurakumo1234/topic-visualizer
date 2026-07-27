@@ -436,13 +436,21 @@ window.TopicsCore = (function () {
       if (!core.hideDiscussed[view]) return false;
       return n.state === "discussed" && !liveBelow(n);
     };
-    core.discussedToggle = function (container, view) {
+    /* `around` (optional): a renderer-supplied wrapper handed the commit, so the view can hold its
+       own place still across the relayout - hiding cards removes whole ROWS, and a bare re-render
+       leaves the human's spot jumping by however much vanished above it. Geometry belongs to the
+       renderer, so core passes the commit out rather than guessing at anchors here. A view with no
+       meaningful anchor simply omits it and gets the old behavior. */
+    core.discussedToggle = function (container, view, around) {
       const tgl = document.createElement("label");
       tgl.className = "hide-discussed-tgl";
       tgl.innerHTML = '<input type="checkbox"> hide discussed';
       const box = tgl.querySelector("input");
       box.checked = core.hideDiscussed[view];
-      box.addEventListener("change", () => core.setHideDiscussed(view, box.checked));
+      box.addEventListener("change", () => {
+        const commit = () => core.setHideDiscussed(view, box.checked);
+        if (typeof around === "function") around(commit); else commit();
+      });
       // The toggle mounts INSIDE the renderer's drag-to-pan stage, whose pointerdown
       // handler takes setPointerCapture - capture retargets the whole pointer sequence
       // to the stage, so the browser never synthesizes a click on the checkbox and a

@@ -17,7 +17,9 @@ window.TopicsRenderers.lineage = (function () {
     ac = new AbortController();
     critsRevealed = false;
     stage.innerHTML = `<div class="tv-world"><svg class="tv-wires"></svg><div class="tv-cards"></div></div>`;
-    core.discussedToggle(stage, "lineage");   // AFTER the innerHTML reset, or it is wiped
+    // AFTER the innerHTML reset, or it is wiped. anchoredRelayout keeps the view still across the
+    // row add/remove, the way toggleOpen does for a collapse.
+    core.discussedToggle(stage, "lineage", anchoredRelayout);
     world = stage.querySelector(".tv-world");
     wires = stage.querySelector(".tv-wires");
     cards = stage.querySelector(".tv-cards");
@@ -101,6 +103,50 @@ window.TopicsRenderers.lineage = (function () {
     core.select(n, btns.length ? btns : undefined);
   }
 
+  /* ONE visibility rule, shared by BOTH layout passes.
+   *
+   * PARTIAL expand: when a node is not fully open, still show any children individually revealed (by
+   * navigating to them) - a thin thread to the node you asked for, not its whole fan. Then drop
+   * hidden-discussed cards.
+   *
+   * This used to live only inside collect() (pass 1), so pass 2 - which owns the geometry - still
+   * stacked rows for cards pass 1 had dropped. Hiding discussed topics therefore left their rows
+   * RESERVED: measured on the real tree, hiding two discussed roots left 243px of dead space at the
+   * top and moved ZERO surviving cards, while the canvas height did not change at all. A filter that
+   * pass 2 does not know about cannot affect the layout, so it has to be one rule, not two.
+   *
+   * It also removes a latent NaN: place() read n.lh, which only pass 1 sets, so laying out a card
+   * that pass 1 had skipped used a STALE-or-undefined height and could poison a whole column. */
+  const kidsOf = n => (n.open ? n.children : n.children.filter(c => c.revealed))
+    .filter(c => !core.hiddenDiscussed(c, "lineage"));
+  const shownRoots = () => core.roots.filter(r => !core.hiddenDiscussed(r, "lineage"));
+
+  /* Hiding or showing discussed cards adds or removes whole rows, so every card below the change
+   * moves. Expanding a node already compensates for that (toggleOpen holds the clicked node still);
+   * the discussed toggle went through a bare re-render and did not, so the branch you were reading
+   * jumped by however many rows vanished above it. Anchor on the deepest node that survives BOTH
+   * states: the selection when it is on screen, else the topmost card. */
+  let shownSlugs = new Set();          // what render() actually laid out, for anchor survival checks
+  function anchorChain() {
+    const laid = [...shownSlugs].map(s => core.bySlug[s]).filter(Boolean);
+    const start = (core.selected && shownSlugs.has(core.selected.slug))
+      ? core.selected
+      : laid.reduce((top, n) => (top === null || n.ly < top.ly ? n : top), null);
+    const chain = [];
+    for (let n = start; n; n = n.parent ? core.bySlug[n.parent] : null) {
+      if (shownSlugs.has(n.slug)) chain.push({ node: n, ly: n.ly });
+    }
+    return chain;
+  }
+  function anchoredRelayout(commit) {
+    const chain = anchorChain();
+    commit();                          // flips the flag; core re-renders us through onChange
+    // Deepest survivor first: if the anchor was itself the discussed card that just vanished, fall
+    // back to its nearest surviving ancestor rather than throwing the view to the top of the tree.
+    const keep = chain.find(e => shownSlugs.has(e.node.slug));
+    if (keep) { ty += (keep.ly - keep.node.ly) * scale; apply(); }
+  }
+
   /* Two-pass layout: cards are VARIABLE height (wrapped titles, multi-line chips),
    * so first build + MEASURE the real card heights, then stack rows on the measured
    * heights - a fixed row slot is exactly the overlap bug we shipped once. */
@@ -127,14 +173,10 @@ window.TopicsRenderers.lineage = (function () {
       if (n.open === undefined) n.open = small || (depth < 1 && n.children.length <= FANCAP);
       n.lx = 40 + depth * (W + GX);
       visible.push(n);
-      // PARTIAL expand: when a node is not fully open, still show any children individually revealed
-      // (by navigating to them) - a thin thread to the node you asked for, not its whole fan.
-      const kids = (n.open ? n.children : n.children.filter(c => c.revealed))
-        .filter(c => !core.hiddenDiscussed(c, "lineage"));
-      kids.forEach(c => collect(c, depth + 1));
+      kidsOf(n).forEach(c => collect(c, depth + 1));
     };
-    core.roots.filter(r => !core.hiddenDiscussed(r, "lineage"))
-      .forEach(r => collect(r, 0));
+    shownRoots().forEach(r => collect(r, 0));
+    shownSlugs = new Set(visible.map(n => n.slug));
 
     // pass 1: build every card (position set later), measure real heights
     const domOf = {};
@@ -194,7 +236,7 @@ window.TopicsRenderers.lineage = (function () {
       colBottom[n.lx] = n.ly + n.lh;
     };
     const place = n => {
-      const kids = n.open ? n.children : n.children.filter(c => c.revealed);  // match collect (partial)
+      const kids = kidsOf(n);            // SAME rule as collect - see kidsOf
       if (!kids.length) {
         n.ly = cursor; settle(n); cursor = Math.max(cursor, n.ly + n.lh + GY);
         return;
@@ -205,7 +247,7 @@ window.TopicsRenderers.lineage = (function () {
       settle(n);
       cursor = Math.max(cursor, n.ly + n.lh + GY);
     };
-    core.roots.forEach(place);
+    shownRoots().forEach(place);
 
     let maxX = 0, maxY = 0;
     for (const n of visible) {
@@ -232,7 +274,7 @@ window.TopicsRenderers.lineage = (function () {
     // (looping backward when the child sits left of the parent) - nearest-edge
     // anchoring made an outgoing link read as a second parent. Arrowheads point
     // at the child. Drawn only when both cards are visible.
-    const shown = new Set(visible.map(n => n.slug));
+    const shown = shownSlugs;   // also the anchor-survival record for anchoredRelayout
     for (const n of visible) {
       for (const x of (n.extraParents || [])) {
         const p = core.bySlug[x.slug];
