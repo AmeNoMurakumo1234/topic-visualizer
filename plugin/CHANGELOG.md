@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.47.0 - 2026-07-27 - Log the declines, because 0.46 shipped inert and nothing recorded why
+
+**0.46's auto-file never fired.** Checked on real data hours after shipping it: zero
+`auto_filed` events, eight of another agent's captures sitting at root. The feature was
+armed, tested, documented and doing nothing - the exact failure the 0.46 notes claim
+measurement had prevented. It prevented the wrong version of it.
+
+The cause is a biased sample. I calibrated the 0.40 threshold on six captures **I wrote
+myself** (median ~0.47). Real captures, written by another agent about her own work in her
+own vocabulary, score **median 0.353** - about twelve points lower, because writing a test
+capture I unconsciously reach for the hub's own words. I thought I had escaped taste by
+measuring; I had measured my own echo.
+
+**And the deeper finding kills threshold-tuning as the fix: the score does not RANK
+correctness.**
+
+```
+0.225  "Should a guarded door be forbidden from reading its payload key through a variable?"
+          -> Guard correctness: refusing for the RIGHT reason     <- obviously right, LOWEST of 8
+0.279  "What does an unattended loop pass LOSE, and is that the right trade?"
+          -> Coercion edge cases at the write boundary            <- plainly wrong, scores HIGHER
+```
+
+The best match on the board sits at the bottom, beaten by a nonsense one. No bar separates
+them, so lowering it only chooses which errors to make. Cosine similarity answers *do these
+use similar words*; the question is *is this about that*. The QC team had already captured
+exactly this - "Proposition-level dedup needs an NLI/LLM-judge, not an embedder" - before I
+built on the embedder anyway.
+
+So this release does not re-tune the number. It makes the number **knowable**:
+
+- **Every suggestion is logged, including the declines** (`hub_suggested` event with the hub,
+  the score and FILED/declined). A below-threshold match used to vanish without trace, which
+  is precisely why the next person to set the bar would have guessed exactly as I did.
+- **`suggestion_scoreboard()`** joins each logged guess against **where a human later put the
+  topic** - the placement is ground truth, so every hand-filed topic scores a guess for free.
+  Surfaced in the groom report. It accumulates a real precision curve by score bucket.
+- **The accounting refuses the flattering version.** Only topics a human has actually
+  reparented count as labelled; an auto-filed topic nobody has moved is **not** evidence the
+  guess was right, because silence is not assent. Buckets report raw counts, never a bare
+  percentage over n=3.
+
+Auto-file stays armed at 0.40 (firing ~1 in 8, every placement stamped, `TOPICS_AUTOFILE=off`
+to disable) - it is not harmful, it is just not yet doing its job, and **the refill problem it
+was built for remains unsolved.** Do not read the 0.46 entry as evidence that captures file
+themselves. Board item 0781 carries the analysis and the proposed direction: the agent who
+just captured the topic is the better filer, because they were in the conversation.
+
+16 tests; mutation control at 13 mutants, **all 13 killed** - including three aimed squarely
+at the new accounting (drop the decline log, count unmoved auto-files as correct, ignore what
+the human chose). Full suite 221 green.
+
 ## 0.46.0 - 2026-07-27 - Capture files itself, because grooming cannot outrun capture
 
 The owner's report was "every time I look there's a HUGE cloud of ungroomed topics, even

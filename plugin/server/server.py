@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.46.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.47.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -1699,6 +1699,19 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
             if slug is None:
                 continue
             _event(cur.lastrowid, "created", actor, f"as {state}")
+            # RECORD THE SUGGESTION, INCLUDING WHEN IT DECLINES (0.47). A below-threshold match used
+            # to leave no trace at all, so the distribution was invisible and the next person to tune
+            # the threshold would guess exactly as I did - I calibrated 0.46's bar on six captures I
+            # WROTE MYSELF (median 0.47) and real captures by another agent came in at median 0.353,
+            # firing 1 in 8. Logging the decline is what makes this measurable instead of a taste
+            # argument. The payoff is the JOIN: whatever a human later reparents this topic to is the
+            # ground-truth label, so every filed-by-hand topic turns a logged guess into a scored one
+            # for free (see suggestion_scoreboard).
+            if suggested:
+                _event(cur.lastrowid, "hub_suggested", "similarity",
+                       f"{suggested['slug']} @ {suggested['score']} "
+                       f"(threshold {suggested['threshold']}) - "
+                       f"{'FILED' if suggested['filed'] else 'declined'}")
             if auto_filed:
                 # STAMPED, not silent: a groom must be able to tell a machine's guess from a person's
                 # decision, and the threshold can only be re-tuned later if the placements are counted.
@@ -2402,6 +2415,10 @@ def groom_report(verbose: bool = True) -> dict:
                 # settled decision - this is the verify queue that keeps it honest, and the number
                 # that lets AUTOFILE_THRESHOLD be re-tuned on evidence instead of taste.
                 "auto_filed_unverified": _auto_filed_unverified(),
+                # 0.47: the evidence base for the auto-file threshold. Declines are logged too, so
+                # this accumulates a real precision curve instead of anyone re-deriving the bar from
+                # captures they wrote themselves (which is exactly how 0.46 shipped inert).
+                "suggestion_scoreboard": suggestion_scoreboard(),
                 "possible_buckets": buckets},
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_count": stale_total,
@@ -2418,6 +2435,68 @@ def groom_report(verbose: bool = True) -> dict:
                          "emptiness as tree health. Run topic_doctor / restart the "
                          "embedder, then re-pull the report.", **report}
     return report
+
+
+_SUGG_RE = re.compile(r"^(?P<hub>[a-z0-9-]+) @ (?P<score>[0-9.]+) .*- (?P<verdict>FILED|declined)$")
+
+
+def suggestion_scoreboard() -> dict:
+    """Was the hub suggestion RIGHT? Scored against where a human actually put the topic.
+
+    The whole point of logging declines: a suggestion on its own is an opinion, but the placement a
+    human later chooses is ground truth, so the join gives a real precision curve instead of a taste
+    argument about the threshold.
+
+    Honest accounting, because the easy version of this lies:
+      - only topics a HUMAN has since parented are LABELLED; anything still where the machine left it
+        (or still at root) proves nothing and is counted separately as `unlabelled`,
+      - an auto-FILED topic nobody has moved is NOT evidence the guess was right - silence is not
+        assent, so it stays unlabelled until a person actually rules,
+      - buckets are reported with raw counts, never a bare percentage, because n is small and a
+        percentage over n=3 is a way of lying with arithmetic."""
+    rows = _conn.execute(
+        "SELECT e.topic_id AS tid, e.note AS note, t.slug AS slug, t.title AS title, "
+        "       t.parent_id AS parent_id, p.slug AS parent_slug "
+        "FROM topic_event e JOIN topic t ON t.id = e.topic_id "
+        "LEFT JOIN topic p ON p.id = t.parent_id "
+        "WHERE e.event = 'hub_suggested'").fetchall()
+    buckets: dict = {}
+    labelled = unlabelled = hits = 0
+    misses: list = []
+    for r in rows:
+        m = _SUGG_RE.match(r["note"] or "")
+        if not m:
+            continue
+        score = float(m.group("score"))
+        filed = m.group("verdict") == "FILED"
+        # did a HUMAN move it after the machine spoke? that reparent is the label
+        human = _conn.execute(
+            "SELECT 1 FROM topic_event r WHERE r.topic_id=? AND r.event='reparented' "
+            "AND r.actor NOT IN ('similarity','ai') LIMIT 1", (r["tid"],)).fetchone()
+        key = f"{int(score * 20) / 20:.2f}"          # 0.05-wide buckets
+        b = buckets.setdefault(key, {"n": 0, "labelled": 0, "correct": 0})
+        b["n"] += 1
+        if not human:
+            unlabelled += 1
+            continue
+        labelled += 1
+        b["labelled"] += 1
+        if r["parent_slug"] == m.group("hub"):
+            hits += 1
+            b["correct"] += 1
+        else:
+            misses.append({"topic": r["title"][:70], "guessed": m.group("hub"),
+                           "human_chose": r["parent_slug"], "score": score, "filed": filed})
+    return {
+        "note": "score buckets vs where a HUMAN actually filed it. Unlabelled = nobody has ruled yet; "
+                "an unmoved auto-file is NOT a correct one. Counts, not percentages - n is small.",
+        "suggestions_logged": len(rows),
+        "labelled_by_a_human": labelled,
+        "unlabelled": unlabelled,
+        "correct": hits,
+        "buckets": dict(sorted(buckets.items())),
+        "misses": misses[:12],
+    }
 
 
 def _auto_filed_unverified() -> list[dict]:

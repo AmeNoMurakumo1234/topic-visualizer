@@ -221,6 +221,56 @@ class AutoFile(Base):
             server.urllib.request.urlopen = real_urlopen
             server._embed_cache.clear()
 
+    def test_08c_a_DECLINED_suggestion_is_logged_too(self):
+        """0.47, and the whole reason it exists: a below-threshold match used to vanish without trace,
+        so nobody could ever see the distribution and the next person to set the bar would guess from
+        captures they wrote themselves - which is exactly how 0.46 shipped inert (my synthetic median
+        0.47, real captures 0.353, firing 1 in 8)."""
+        self._hub("Guards and gates")
+        self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "middling": (0.3, 0.954, 0.0)})
+        r = server.add_topics([{"title": "middling relevance capture", "autofile": True}], "Vera")[0]
+        self.assertIsNone(self._parent_of(r["slug"]), "still declines to place it")
+        self.assertIn("hub_suggested", self._events(r["slug"]), "but the DECLINE is on the record")
+        note = server._conn.execute(
+            "SELECT e.note FROM topic_event e JOIN topic t ON t.id=e.topic_id "
+            "WHERE t.slug=? AND e.event='hub_suggested'", (r["slug"],)).fetchone()["note"]
+        self.assertIn("declined", note)
+        self.assertIn("0.3", note, "the SCORE is what makes it tunable later")
+
+    def test_08d_the_scoreboard_scores_guesses_against_the_HUMAN_placement(self):
+        """The payoff of logging: whatever a person later reparents to is ground truth, so a hand-filed
+        topic turns a logged guess into a scored one for free."""
+        right = self._hub("Guards and gates")
+        wrong = self._hub("Somewhere else entirely")
+        self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "alpha": (0.3, 0.954, 0.0),
+                          "beta": (0.3, 0.954, 0.0)})
+        a = server.add_topics([{"title": "alpha capture", "autofile": True}], "Vera")[0]
+        b = server.add_topics([{"title": "beta capture", "autofile": True}], "Vera")[0]
+
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["suggestions_logged"], 2)
+        self.assertEqual(board["labelled_by_a_human"], 0, "nobody has ruled yet - nothing is scored")
+        self.assertEqual(board["unlabelled"], 2)
+
+        server.edit_topic(a["slug"], "Murakumo", None, None, right, None)   # human agrees
+        server.edit_topic(b["slug"], "Murakumo", None, None, wrong, None)   # human disagrees
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["labelled_by_a_human"], 2)
+        self.assertEqual(board["correct"], 1, "one guess matched the human, one did not")
+        self.assertEqual(len(board["misses"]), 1)
+        self.assertEqual(board["misses"][0]["human_chose"], wrong)
+
+    def test_08e_an_unmoved_auto_file_is_NOT_counted_as_correct(self):
+        """Silence is not assent. The tempting version of this metric marks every unchallenged
+        placement a win, which would report near-perfect accuracy for a system nobody checks."""
+        self._hub("Guards and gates")
+        self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
+        server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["correct"], 0, "an unreviewed auto-file proves nothing")
+        self.assertEqual(board["labelled_by_a_human"], 0)
+        self.assertEqual(board["unlabelled"], 1)
+
     def test_09_every_placement_is_stamped_and_shows_up_as_unverified(self):
         """A machine guess must never read as a settled human decision."""
         hub = self._hub("Guards and gates")
