@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
 """Topic Visualizer MCP face - the AI-side half of the seam, as first-class tools.
 
-One stdio MCP server (newline-delimited JSON-RPC 2.0), TWO storage backends behind
-the same six tools - the adapter law, server-side:
+One stdio MCP server (newline-delimited JSON-RPC 2.0). Storage backends behind the
+same six tools - the adapter law, server-side:
 
   TOPICS_BACKEND=server  (default)  -> HTTP passthrough to the plugin's own
-                                       server.py (TOPICS_SERVER_URL, :8991)
-  TOPICS_BACKEND=board               -> topics live as message-board posts with the
-                                       "OPEN THREAD" title convention
-                                       (TOPICS_BOARD_URL, :9772 + TOPICS_BOARD_PROJECT)
+                                       server.py (TOPICS_SERVER_URL, :8991).
+                                       THIS IS THE ONE YOU WANT. Self-contained,
+                                       no external service, no account.
+  TOPICS_BACKEND=board               -> a niche adapter for one specific in-house
+                                       message board, kept because the author runs
+                                       it. It is NOT a general tracker integration
+                                       and almost certainly does not apply to you.
 
-The board backend imports the store-agnostic ranking brains (near_duplicates_in,
-search_in, rank_candidates) from server.py, so BOTH stores get identical dedup,
-semantic search, and serve ranking. Board topic_convert(kind=work_item) creates a
-REAL board issue and resolves the thread with a pointer - the EXPLORING -> ACTING
-crossing made atomic (the hard ontological line, CHARTER discipline 6).
+WHERE YOUR REAL TRACKER FITS - and it is deliberately NOT a backend. This plugin does
+not integrate with Jira, Asana, Linear, GitHub Issues, TRAC or anything else, and that
+is a design choice rather than a gap: every such integration is an API, an auth story
+and a breakage surface, and there are dozens. Instead the seam is a plain STRING.
+
+  topic_convert(kind="work_item", ref="PROJ-123" | "#456" | any tracker's identifier)
+
+stores that reference on the topic. The AI you are working with already has your
+tracker's CLI or MCP server, so it does the querying and the minting; the topic tree
+only has to remember WHICH item answered a question, in whatever dialect your tracker
+speaks. See the topics-tracker-reconcile skill for the reconcile pass built on that.
+
+The board adapter imports the store-agnostic ranking brains (near_duplicates_in,
+search_in, rank_candidates) from server.py, so both stores get identical dedup,
+semantic search and serve ranking. Its topic_convert(kind=work_item) additionally
+MINTS an item, which is the one behaviour genuinely specific to it - everywhere else
+minting stays the human's act and the plugin only records the ref.
 
 Zero heavy deps: stdlib only. Register via the plugin's .mcp.json.
 """
@@ -280,19 +295,23 @@ class ServerBackend:
                 degraded.append(
                     f"The RUNNING server is v{running_ver} but the installed code is v{VERSION} - the "
                     "server is on an old upgrade clock. Restart the topics server to pick up the update.")
-        # ROUTING HINT (not a failure): if a message board is running and this session isn't pointed
-        # at it, the user may have MEANT the board backend - the team's topics live on the board, not a
-        # local cwd-keyed sqlite store. Surfacing it here saves the "why did it plant locally?" round-trip.
-        board_url = os.environ.get("TOPICS_BOARD_URL",
-                                   os.environ.get("MESSAGEBOARD_URL", "http://127.0.0.1:9772")).rstrip("/")
+        # ROUTING HINT (not a failure, and NOT advice for most people): the optional board adapter
+        # targets one specific in-house message board. Only probe for it when the user has actually
+        # opted in by setting an address - otherwise a plugin installed by a stranger goes hunting on
+        # a common localhost port and, if anything answers, recommends a backend they have never heard
+        # of. Default behaviour is the local store, and that is the correct answer for almost everyone.
+        board_url = os.environ.get("TOPICS_BOARD_URL") or os.environ.get("MESSAGEBOARD_URL")
         try:
+            if not board_url:
+                raise Unreachable("board adapter not configured (TOPICS_BOARD_URL unset)")
+            board_url = board_url.rstrip("/")
             _http("GET", board_url + "/api/whoami")
             out["board_detected"] = board_url
             out["routing_hint"] = (
-                f"A message board is running at {board_url}, but this backend is the LOCAL sqlite store "
-                f"(project '{self.project}', keyed from your cwd). If your topics belong on the shared "
-                "board, set TOPICS_BACKEND=board (+ TOPICS_BOARD_PROJECT for your lane, "
-                "TOPICS_BOARD_AUTHOR for your name) so capture routes there instead.")
+                f"The board adapter you configured is reachable at {board_url}, but this session is "
+                f"using the LOCAL sqlite store (project '{self.project}', keyed from your cwd). Set "
+                "TOPICS_BACKEND=board (+ TOPICS_BOARD_PROJECT, TOPICS_BOARD_AUTHOR) to route capture "
+                "there instead.")
         except Unreachable:
             pass
         # log-tail: when a component is down, surface the last lines of its autostart log so

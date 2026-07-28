@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.48.1 - 2026-07-28 - Your tracker is not this plugin's business, and it stops pretending otherwise
+
+Nobody else has the in-house message board this plugin could optionally target. Everyone
+else uses Jira, Asana, Linear, GitHub Issues, TRAC or something like them. The docs
+presented that board as one of two co-equal backends, and `topic_doctor` probed a common
+localhost port for it unprompted - so a stranger's install could detect *something* on
+:9772 and recommend a backend they have never heard of.
+
+- The board adapter is documented as what it is: **niche, optional, almost certainly not
+  yours.** The default local store is named as the one you want.
+- `topic_doctor` now only probes for it when you have opted in by setting `TOPICS_BOARD_URL`
+  (or `MESSAGEBOARD_URL`). No configuration, no probe, no hint.
+- Documented the seam that DOES serve everyone, because it was never written down: this
+  plugin deliberately does not integrate with any tracker. `topic_convert(kind="work_item",
+  ref=...)` takes a plain string - `PROJ-123`, `#456`, whatever your tracker speaks. Your
+  assistant already has your tracker's CLI or MCP server and does the querying and minting;
+  the tree only remembers WHICH item answered a question. Dozens of trackers, each an API and
+  an auth story, is not a dependency a topic tree should carry.
+
+KNOWN GAP, not fixed here: a stored `ref` is never surfaced in any view. The one place this
+tool touches your real tracker is currently invisible after you write it.
+
 ## 0.48.0 - 2026-07-28 - It was never the threshold: file only when the winner is clearly ahead
 
 **0.46 shipped inert. 0.47 shipped the decline log so the bar could be measured instead of
