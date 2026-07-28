@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.45.2"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.46.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -60,6 +60,35 @@ FANOUT_WARN_CHILDREN = _env_int("TOPICS_FANOUT_WARN", 9)
 # measures ~0.45, unrelated noise ~0.0 - so 0.35 catches real cases with a wide
 # margin over noise, and the hint is advisory (the groom human ratifies).
 HINT_THRESHOLD = float(os.environ.get("TOPICS_HINT_THRESHOLD", "0.35") or 0.35)
+
+# 0.46 AUTO-FILE AT CAPTURE. Measured on the QC store 2026-07-27: 238 captures in 14 days (17/day,
+# peaks of 38), roughly HALF landing at root - so root grew ~8-9 leaf topics a day and a groom to zero
+# was back to 40+ within a week. No bug: the reparent log showed ZERO cases of a filed topic returning
+# to root. It is pure arithmetic, and no manual groom cadence beats it when one human is the bottleneck.
+# So the hub match that _root_orphan_hints already computes at GROOM time now also runs at CAPTURE.
+#
+# The bar is higher than HINT_THRESHOLD, because a hint is a proposal a human reads and an auto-file is
+# a placement nobody may ever look at. CALIBRATED ON MEASUREMENT - and the first guess was wrong. I set
+# 0.60 reasoning from a single observed miss (a 0.457 hint that wanted a continuity topic under
+# board-integrity when the right home was Covenant), then ran six realistic captures against QC's real
+# hubs and the live MiniLM embedder:
+#
+#     0.557  "sweep the remaining guards for checks that cannot go red"  -> Can a guard actually fail?
+#     0.471  "pre-register sample size before the next prose A/B"        -> Measurement rigor
+#     0.465  "reviewer emitted malformed JSON on a dense scene"          -> Reviewer reliability
+#     0.414  "Alisha's childhood home should appear in the dossier"      -> Dossier & reveal seam
+#     0.334  "nightly runner reports green when a leg was skipped"       -> Can a guard actually fail?
+#     0.049  "what should we eat for lunch on Thursday"                  -> (nonsense, no real home)
+#
+# Every obviously-correct match sits at 0.41-0.56, so 0.60 would have made this INERT: shipped, armed,
+# and never once firing. Nonsense lands at 0.05, so the real signal is a WIDE CLEAN MARGIN rather than a
+# sharp cut. 0.40 takes the good matches and accepts that a 0.457-shaped miss lands too. That trade is
+# deliberate: root refills at ~8-9/day, and a mostly-right placement that is STAMPED unverified beats an
+# honest pile nobody has time to file. Re-tune from the auto_filed_unverified queue's real hit rate -
+# which is exactly why every placement is counted rather than assumed correct.
+AUTOFILE_THRESHOLD = float(os.environ.get("TOPICS_AUTOFILE_THRESHOLD", "0.40") or 0.40)
+# Kill switch: TOPICS_AUTOFILE=off returns the suggestion WITHOUT placing anything (suggest-only).
+AUTOFILE_ON = str(os.environ.get("TOPICS_AUTOFILE", "on")).strip().lower() not in ("0", "off", "false", "no")
 
 
 # ---------------------------------------------------------------- store ----
@@ -1438,6 +1467,15 @@ def _embed(texts):
             _embed_up = False
             globals()["_embed_failed_at"] = time.time()
             return None
+    # A PARTIAL response used to be worse than a failed one: zip() truncates silently, the tail never
+    # reaches the cache, and the comprehension below then raised KeyError straight out of _embed - into
+    # callers (near_duplicates, and so CAPTURE) that correctly handle None but never expected a throw.
+    # Treat short-count as unavailable, which is what it is.
+    missing = [x for x in texts if x not in _embed_cache]
+    if missing:
+        _embed_up = False
+        globals()["_embed_failed_at"] = time.time()
+        return None
     return [_embed_cache[x] for x in texts]
 
 
@@ -1543,9 +1581,49 @@ def _near_duplicates(title: str, body: str, limit: int = 3) -> list[dict]:
 
 
 # ------------------------------------------------------------ actions ----
+def _suggest_hub(title: str, body: str) -> tuple[dict | None, str]:
+    """Best existing hub for a NEW capture: (hub_row_or_None, note).
+
+    Same semantics as _root_orphan_hints deliberately - a hub is a live topic with >= 2 live children,
+    and the match is SEMANTIC-ONLY. When the embedder is down there is no suggestion at all rather than
+    a keyword guess, because a bad auto-file is worse than an honest root landing: the root pile is
+    visible and a mis-filed topic is not.
+
+    Caller holds _lock (it reads _conn)."""
+    LIVE = "('seedling','open','discussed')"
+    hubs = [dict(r) for r in _conn.execute(
+        f"SELECT p.id AS id, p.slug AS slug, p.title AS title, p.body AS body, COUNT(*) AS children "
+        f"FROM topic t JOIN topic p ON p.id = t.parent_id "
+        f"WHERE t.state IN {LIVE} AND p.state IN {LIVE} "
+        f"GROUP BY t.parent_id HAVING children >= 2")]
+    if not hubs:
+        return None, "no hubs (>=2 live children) to file under yet"
+    texts = [(title + " " + (body or "")[:400]).strip()] \
+        + [(h["title"] + " " + (h["body"] or "")[:400]).strip() for h in hubs]
+    vecs = _embed(texts)
+    if vecs is None:
+        return None, "embedder down - no suggestion (a keyword guess would mis-file silently)"
+    tv, hvecs = vecs[0], vecs[1:]
+    best, best_score = None, 0.0
+    for h, hv in zip(hubs, hvecs):
+        s = max(0.0, _cosine(tv, hv))
+        if s > best_score:
+            best, best_score = h, s
+    if best is None:
+        return None, "no match"
+    best = dict(best, score=round(best_score, 3))
+    return best, "ok"
+
+
 def add_topics(items: list[dict], actor: str) -> list[dict]:
     """Batch capture. Each item: {title, body?, parent_slug?, priority?, tags?,
-    provenance?, state?}. Returns per-item {slug, near_duplicates}."""
+    provenance?, state?}. Returns per-item {slug, near_duplicates, suggested_parent?, auto_filed?}.
+
+    0.46: a capture with NO parent_slug gets a semantic hub suggestion, and is FILED under it when the
+    match clears AUTOFILE_THRESHOLD. An explicit parent_slug always wins - the caller's judgment is
+    never overridden. See the AUTOFILE_THRESHOLD comment for why capture-time filing exists at all.
+    Every automatic placement is stamped (event 'auto_filed', provenance marker) so a groom can tell a
+    machine's guess from a human's decision and the hit rate stays MEASURABLE."""
     results = []
     for it in items:
         if not isinstance(it, dict):
@@ -1558,13 +1636,44 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
         if not title:
             results.append({"error": "title required"})
             continue
-        dups = _near_duplicates(title, str(it.get("body") or ""))
+        # Capture is the one path that must not fail - a lost idea is unrecoverable, an unfiled or
+        # un-deduped one is merely untidy. Neither the duplicate check nor the hub suggester may take
+        # a capture down with them.
+        try:
+            dups = _near_duplicates(title, str(it.get("body") or ""))
+        except Exception:
+            dups = []
         with _lock:
             parent_id = None
+            suggested = None
+            auto_filed = False
             if it.get("parent_slug"):
                 row = _conn.execute("SELECT id FROM topic WHERE slug=?",
                                     (it["parent_slug"],)).fetchone()
                 parent_id = row["id"] if row else None
+            # WHO ASKS MATTERS, and the API must be TOLD rather than guess. add_topics serves two
+            # different jobs: CAPTURING an idea (wants a home) and CONSTRUCTING structure - minting
+            # hubs, importing, building fixtures (must land exactly where the caller said). Inferring
+            # which from the shape of the item is the same mistake as parsing intent out of commit
+            # prose: it works until it silently doesn't. So auto-file is OPT-IN per request, the
+            # capture door sets it, and every structural caller keeps its existing contract untouched.
+            # The SUGGESTION is still computed and returned either way - proposing costs nobody
+            # anything; only placing does.
+            want_file = bool(it.get("autofile"))
+            if parent_id is None and it.get("role") != "hub":
+                try:
+                    hub, _why = _suggest_hub(title, str(it.get("body") or ""))
+                except Exception:
+                    hub = None                      # a capture must NEVER fail on the suggester
+                if hub:
+                    suggested = {"slug": hub["slug"], "title": hub["title"],
+                                 "score": hub["score"],
+                                 "threshold": AUTOFILE_THRESHOLD,
+                                 "filed": bool(want_file and AUTOFILE_ON
+                                               and hub["score"] >= AUTOFILE_THRESHOLD)}
+                    if suggested["filed"]:
+                        parent_id = hub["id"]
+                        auto_filed = True
             state = it.get("state") or "seedling"
             if state not in ("seedling", "open"):
                 state = "seedling"
@@ -1590,8 +1699,19 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
             if slug is None:
                 continue
             _event(cur.lastrowid, "created", actor, f"as {state}")
+            if auto_filed:
+                # STAMPED, not silent: a groom must be able to tell a machine's guess from a person's
+                # decision, and the threshold can only be re-tuned later if the placements are counted.
+                _event(cur.lastrowid, "auto_filed", "similarity",
+                       f"filed under {suggested['slug']} at {suggested['score']} "
+                       f"(threshold {AUTOFILE_THRESHOLD}) - UNVERIFIED, a groom should confirm or move it")
             _conn.commit()
-        results.append({"slug": slug, "near_duplicates": dups})
+        out = {"slug": slug, "near_duplicates": dups}
+        if suggested:
+            out["suggested_parent"] = suggested
+            if auto_filed:
+                out["auto_filed"] = suggested["slug"]
+        results.append(out)
     return results
 
 
@@ -2277,6 +2397,11 @@ def groom_report(verbose: bool = True) -> dict:
                 # construction (reparent_hints requires a parent; buckets is title-regex).
                 "root_orphan_hints": orphan_hints,
                 "root_orphan_note": orphan_note,
+                # 0.46: placements the SIMILARITY made at capture that no human has moved since.
+                # Auto-file keeps root from refilling, but a machine's guess must not read as a
+                # settled decision - this is the verify queue that keeps it honest, and the number
+                # that lets AUTOFILE_THRESHOLD be re-tuned on evidence instead of taste.
+                "auto_filed_unverified": _auto_filed_unverified(),
                 "possible_buckets": buckets},
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_count": stale_total,
@@ -2293,6 +2418,25 @@ def groom_report(verbose: bool = True) -> dict:
                          "emptiness as tree health. Run topic_doctor / restart the "
                          "embedder, then re-pull the report.", **report}
     return report
+
+
+def _auto_filed_unverified() -> list[dict]:
+    """Live topics the similarity FILED at capture that no human has reparented since.
+
+    'Verified' is deliberately defined as a later human reparent - moving it, or moving it back - not
+    as anyone having merely looked. A groom that confirms a placement in place still leaves it here,
+    which over-reports rather than under-reports; that is the safe direction for a queue whose whole
+    job is to stop machine guesses from setting like concrete."""
+    LIVE = "('seedling','open','discussed')"
+    rows = _conn.execute(
+        f"SELECT t.slug, t.title, e.note, e.at, p.slug AS parent "
+        f"FROM topic_event e JOIN topic t ON t.id = e.topic_id "
+        f"LEFT JOIN topic p ON p.id = t.parent_id "
+        f"WHERE e.event = 'auto_filed' AND t.state IN {LIVE} "
+        f"AND NOT EXISTS (SELECT 1 FROM topic_event r WHERE r.topic_id = e.topic_id "
+        f"                AND r.event = 'reparented' AND r.id > e.id) "
+        f"ORDER BY e.id DESC").fetchall()
+    return [dict(r) for r in rows]
 
 
 def _root_orphan_hints() -> tuple[list[dict], str]:

@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.46.0 - 2026-07-27 - Capture files itself, because grooming cannot outrun capture
+
+The owner's report was "every time I look there's a HUGE cloud of ungroomed topics, even
+though I just groomed it - is something un-grooming the tree?" There is no bug. The
+reparent log shows ZERO topics that were filed under a hub and later returned to root.
+
+It is arithmetic. Measured on the QC store: **238 captures in 14 days - 17/day, peaks of
+38** - with roughly half landing at root. Root therefore grows ~8-9 un-nested topics a
+day, so a groom to zero is back over forty within a week. When one human is the only one
+spending cards, no grooming cadence wins that race.
+
+So the hub match `_root_orphan_hints` already computed at GROOM time now also runs at
+CAPTURE.
+
+- **A capture with no `parent_slug` gets a semantic hub suggestion, and is FILED under it
+  when the match clears the threshold.** Root stops refilling; grooming becomes
+  verification instead of filing.
+- **Opt-in per request (`autofile`), and the capture door sets it.** `add_topics` serves
+  two different jobs - capturing an idea, and CONSTRUCTING structure (minting hubs during
+  a groom, importing, building fixtures). Inferring which from the item's shape is the
+  same mistake as parsing intent out of commit prose, so the API is told rather than left
+  to guess. Two existing suites caught this: a server-side default silently re-parented
+  the trees their fixtures were building.
+- **Threshold calibrated on measurement, and the first guess was wrong.** 0.60, reasoned
+  from a single observed miss, would have made the feature INERT - shipped, armed, never
+  firing. Six realistic captures against real hubs and the live embedder put every
+  obviously-correct match at 0.41-0.56 and nonsense at 0.05. Default is now **0.40**:
+  a wide clean margin, and it accepts that a 0.457-shaped miss lands too.
+- **Every placement is STAMPED** (`auto_filed` event) and surfaces in the groom report as
+  `coherence.auto_filed_unverified` - the verify queue, which drains when a human
+  reparents. A machine's guess must never read as a settled decision, and the hit rate has
+  to be countable for the threshold to be re-tunable on evidence.
+- Bounded by design: never over an explicit `parent_slug`, never for `role: hub`, nothing
+  at all when the embedder is down (an invisible mis-file is worse than a visible pile),
+  and `TOPICS_AUTOFILE=off` makes it suggest-only.
+
+**Two robustness bugs found by writing the tests**, both on the path a capture takes:
+
+- A **partial embedder response** (fewer vectors than inputs) used to be worse than a dead
+  one: `zip()` truncated, the tail never reached the cache, and the final comprehension
+  raised `KeyError` straight out of `_embed` into callers that correctly handle `None` and
+  never expected a throw. A short count now reads as unavailable.
+- **The duplicate check could take a capture down with it.** Capture is the one path that
+  must not fail - a lost idea is unrecoverable, an un-deduped one is merely untidy.
+
+13 new tests; mutation control run at 10 mutants with **all 10 killed** (two survived the
+first pass and both were real gaps - no test covered the opt-in contract itself, and the
+end-to-end embedder-down case was masked by the very catch-all that protects capture).
+Full suite 218 tests green.
+
 ## 0.45.2 - 2026-07-27 - Hiding discussed topics actually re-lays out the tree
 
 Owner-reported: collapsing a branch in Lineage repositions the board so the view stays

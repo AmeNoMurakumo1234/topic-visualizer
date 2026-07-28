@@ -1433,6 +1433,12 @@ def _call(name: str, args: dict) -> dict:
                              "(a real array, not a JSON-encoded string) or a single "
                              f"top-level {{title,...}}; got {got}. Re-send the capture; "
                              "do not assume it landed."}
+        # 0.46: THIS is the capture door, so it opts into capture-time auto-file. Structural
+        # callers (hub minting during a groom, import, fixtures) go through the same server verb
+        # and must keep landing exactly where they said - so the server never guesses, it is told
+        # here. An explicit parent_slug still wins, and role='hub' is never auto-filed.
+        items = [dict(it, autofile=it.get("autofile", True)) if isinstance(it, dict) else it
+                 for it in items]
         return b.add(items, args.get("actor"))
     if name == "topic_get":
         return b.get(str(args.get("slug") or ""))
