@@ -30,6 +30,20 @@ dim, and auto-expiring in ~3 weeks if never touched - so the cost of a wrong cap
 near zero and the human prunes nothing by hand. Check the near_duplicates the server
 returns and merge instead of double-planting.
 
+**The server may FILE your capture for you (0.46) - read what it did.** If you pass no
+`parent_slug`, the server matches the capture against existing hubs and, on a strong
+match, places it there. The result carries `suggested_parent` (with the score and whether
+it filed) and `auto_filed`. This exists because capture outruns grooming: measured at
+~17 captures/day with half landing at root, a tree groomed to zero is back over forty
+un-nested topics within a week, and the human is the bottleneck - not the ritual.
+Two things follow for you. **Pass `parent_slug` yourself whenever you know the home** -
+your judgment always wins over the similarity, and a capture made while you are reading
+the relevant branch is the best-informed filing anyone will ever do. And **glance at
+`auto_filed` in the result**: if the machine put it somewhere obviously wrong, one
+`topic_reparent` now costs a second, whereas an unnoticed mis-file quietly becomes
+furniture. Every automatic placement is stamped and surfaces in the groom report as
+`auto_filed_unverified`, so it stays a visible guess rather than a settled decision.
+
 **THE SAME TOPIC VIA A SECOND ROAD -> topic_attach, never a twin.** Topics form a DAG,
 not a strict tree: two different conversations can legitimately lead to the SAME
 semantic topic. When near_duplicates (or your own memory) says the topic already
