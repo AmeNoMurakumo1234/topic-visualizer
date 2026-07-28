@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.47.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.48.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -87,6 +87,24 @@ HINT_THRESHOLD = float(os.environ.get("TOPICS_HINT_THRESHOLD", "0.35") or 0.35)
 # honest pile nobody has time to file. Re-tune from the auto_filed_unverified queue's real hit rate -
 # which is exactly why every placement is counted rather than assumed correct.
 AUTOFILE_THRESHOLD = float(os.environ.get("TOPICS_AUTOFILE_THRESHOLD", "0.40") or 0.40)
+# 0.48 MARGIN. 0.47 shipped the decline log so this could be MEASURED instead of guessed again.
+# Measured, and it was never the threshold. Scored 159 real captures whose home a human later chose
+# BY HAND (the 2026-07-28 groom, in which six of the embedder's own hints were rejected - so the
+# labels are not its own opinion fed back to it):
+#
+#     score >= 0.40 alone             fires 101, correct 48  =  48% precision
+#     score >= 0.40 AND margin >= 0.08  fires  48, correct 37  =  77% precision
+#
+# The separating signal is not how high the winner scores; it is HOW FAR AHEAD OF THE RUNNER-UP it
+# sits. Correct picks beat second place by a median of 0.109, wrong picks by 0.028 - 4x apart, while
+# their raw scores overlap almost entirely (that overlap is why three rounds of threshold-tuning
+# could not fix this). A capture that resembles four hubs equally belongs to none of them: it is
+# written in generic project vocabulary, and the winner is a coin-flip between neighbours.
+#
+# Trading 48 correct placements down to 37 is the right direction on this system's OWN principle
+# (see _suggest_hub): a bad auto-file is worse than an honest root landing, because the root pile is
+# VISIBLE and a mis-filed topic is not. Misfiles drop from 53 to 11.
+AUTOFILE_MARGIN = float(os.environ.get("TOPICS_AUTOFILE_MARGIN", "0.08") or 0.08)
 # Kill switch: TOPICS_AUTOFILE=off returns the suggestion WITHOUT placing anything (suggest-only).
 AUTOFILE_ON = str(os.environ.get("TOPICS_AUTOFILE", "on")).strip().lower() not in ("0", "off", "false", "no")
 
@@ -1604,14 +1622,21 @@ def _suggest_hub(title: str, body: str) -> tuple[dict | None, str]:
     if vecs is None:
         return None, "embedder down - no suggestion (a keyword guess would mis-file silently)"
     tv, hvecs = vecs[0], vecs[1:]
-    best, best_score = None, 0.0
+    best, best_score, runner_up = None, 0.0, 0.0
     for h, hv in zip(hubs, hvecs):
         s = max(0.0, _cosine(tv, hv))
         if s > best_score:
-            best, best_score = h, s
+            best, best_score, runner_up = h, s, best_score
+        elif s > runner_up:
+            runner_up = s
     if best is None:
         return None, "no match"
-    best = dict(best, score=round(best_score, 3))
+    # 0.48: the GAP to second place is the signal that actually separates a right pick from a wrong
+    # one (see AUTOFILE_MARGIN). Always reported, so a suggestion a human reads carries its own
+    # confidence and a decline can be explained by the number that caused it. With a single hub
+    # there is no runner-up, and margin is the score itself - nothing to be ambiguous with.
+    best = dict(best, score=round(best_score, 3),
+                runner_up=round(runner_up, 3), margin=round(best_score - runner_up, 3))
     return best, "ok"
 
 
@@ -1668,9 +1693,15 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                 if hub:
                     suggested = {"slug": hub["slug"], "title": hub["title"],
                                  "score": hub["score"],
+                                 "runner_up": hub.get("runner_up"),
+                                 "margin": hub.get("margin"),
                                  "threshold": AUTOFILE_THRESHOLD,
+                                 "margin_threshold": AUTOFILE_MARGIN,
+                                 # 0.48: BOTH bars. A high score with a close runner-up is a
+                                 # coin-flip between neighbours, and that is where the misfiles were.
                                  "filed": bool(want_file and AUTOFILE_ON
-                                               and hub["score"] >= AUTOFILE_THRESHOLD)}
+                                               and hub["score"] >= AUTOFILE_THRESHOLD
+                                               and (hub.get("margin") or 0.0) >= AUTOFILE_MARGIN)}
                     if suggested["filed"]:
                         parent_id = hub["id"]
                         auto_filed = True
@@ -1710,14 +1741,17 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
             if suggested:
                 _event(cur.lastrowid, "hub_suggested", "similarity",
                        f"{suggested['slug']} @ {suggested['score']} "
-                       f"(threshold {suggested['threshold']}) - "
+                       f"margin {suggested.get('margin')} over {suggested.get('runner_up')} "
+                       f"(bars {suggested['threshold']}/{suggested.get('margin_threshold')}) - "
                        f"{'FILED' if suggested['filed'] else 'declined'}")
             if auto_filed:
                 # STAMPED, not silent: a groom must be able to tell a machine's guess from a person's
                 # decision, and the threshold can only be re-tuned later if the placements are counted.
                 _event(cur.lastrowid, "auto_filed", "similarity",
                        f"filed under {suggested['slug']} at {suggested['score']} "
-                       f"(threshold {AUTOFILE_THRESHOLD}) - UNVERIFIED, a groom should confirm or move it")
+                       f"margin {suggested.get('margin')} over {suggested.get('runner_up')} "
+                       f"(bars {AUTOFILE_THRESHOLD}/{AUTOFILE_MARGIN}) - "
+                       f"UNVERIFIED, a groom should confirm or move it")
             _conn.commit()
         out = {"slug": slug, "near_duplicates": dups}
         if suggested:

@@ -108,6 +108,47 @@ class AutoFile(Base):
         self.assertNotIn("auto_filed", self._events(r["slug"]), "no placement means no stamp")
         self.assertNotIn("auto_filed", r)
 
+    def test_02c_a_HIGH_score_with_a_close_runner_up_is_declined(self):
+        """0.48, and the defect it fixes: score ALONE was 48% precise across 159 real captures whose
+        home a human later chose by hand. A capture that resembles two hubs almost equally is written
+        in generic project vocabulary - the winner is a coin-flip between neighbours, and that is
+        where the misfiles lived. Both hubs here clear the 0.40 score bar comfortably; the GAP between
+        them is what has to stop the placement."""
+        # Orthogonal hub vectors keep the arithmetic checkable by eye: |topic| ~ 1.0, so the two
+        # cosines are just its first two components - 0.70 and 0.68, both over the 0.40 score bar
+        # and 0.02 apart, well inside the 0.08 margin bar.
+        self._hub("Guards and gates")
+        self._hub("Prose and voice")
+        self._fake_embed({"guards and gates": (1.0, 0.0, 0.0),
+                          "prose and voice": (0.0, 1.0, 0.0),
+                          "ambiguous": (0.70, 0.68, 0.22)})
+        r = server.add_topics([{"title": "ambiguous capture", "autofile": True}], "Vera")[0]
+        sug = r["suggested_parent"]
+        self.assertGreaterEqual(sug["score"], server.AUTOFILE_THRESHOLD,
+                                "precondition: score bar cleared, so score ALONE would have filed it")
+        self.assertLess(sug["margin"], server.AUTOFILE_MARGIN, "but the runner-up is too close")
+        self.assertFalse(sug["filed"])
+        self.assertIsNone(self._parent_of(r["slug"]),
+                          "an ambiguous capture lands at root, where it is VISIBLE")
+
+    def test_02d_a_clear_winner_still_files(self):
+        """The margin must not make the feature inert AGAIN - that was 0.46's exact failure. An
+        unambiguous capture, far ahead of everything else, must still be placed with no human."""
+        self._hub("Guards and gates")
+        self._hub("Prose and voice")
+        self._fake_embed({"guards and gates": (1.0, 0.0, 0.0),
+                          "prose and voice": (0.0, 1.0, 0.0),
+                          "clear guard": (0.95, 0.1, 0.0)})
+        r = server.add_topics([{"title": "clear guard capture", "autofile": True}], "Vera")[0]
+        sug = r["suggested_parent"]
+        self.assertGreaterEqual(sug["margin"], server.AUTOFILE_MARGIN)
+        self.assertTrue(sug["filed"])
+        self.assertIsNotNone(self._parent_of(r["slug"]))
+        note = server._conn.execute(
+            "SELECT e.note FROM topic_event e JOIN topic t ON t.id=e.topic_id "
+            "WHERE t.slug=? AND e.event='auto_filed'", (r["slug"],)).fetchone()["note"]
+        self.assertIn("margin", note, "the margin that decided it is on the record, for re-tuning")
+
     def test_02b_a_caller_that_did_NOT_opt_in_is_never_filed(self):
         """The opt-in contract itself, and the gap mutation control found: every other test passes
         autofile=True, so 'want_file = True' survived every one of them. add_topics is also how hubs

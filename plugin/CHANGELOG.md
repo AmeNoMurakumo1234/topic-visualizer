@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.48.0 - 2026-07-28 - It was never the threshold: file only when the winner is clearly ahead
+
+**0.46 shipped inert. 0.47 shipped the decline log so the bar could be measured instead of
+guessed a fourth time. Measured now, on real data, the answer is that the bar was never the
+problem.**
+
+Scored 159 real captures whose home a human later chose BY HAND, using the ground-truth join
+0.47 added. Those labels come from a groom in which six of the embedder's own hints were
+rejected, so they are not its opinion fed back to it:
+
+| rule | fires | correct | precision |
+|---|---|---|---|
+| `score >= 0.40` (0.46/0.47 behaviour) | 101 | 48 | **48%** |
+| `score >= 0.40` **and** `margin >= 0.08` | 48 | 37 | **77%** |
+
+The separating signal is not how high the winner scores. It is **how far ahead of the runner-up
+it sits.** Correct picks beat second place by a median of 0.109; wrong picks by 0.028 - 4x apart,
+while their raw scores overlap almost entirely. That overlap is precisely why three rounds of
+threshold-tuning could not fix this, and why raising the bar only ever traded misfiles for
+inertness.
+
+The reason is legible once you see it: a capture that resembles four hubs equally belongs to none
+of them. It is written in generic project vocabulary, and the top score is a coin-flip between
+neighbours.
+
+Misfiles drop from 53 to 11. Correct placements drop from 48 to 37, and that trade is the right
+direction on this system's own principle - **a bad auto-file is worse than an honest root landing,
+because the root pile is VISIBLE and a mis-filed topic is not.**
+
+- `AUTOFILE_MARGIN` (default 0.08, `TOPICS_AUTOFILE_MARGIN`). Both bars must clear to place.
+- `suggested_parent` now always reports `runner_up` and `margin`, so a suggestion a human reads
+  carries its own confidence and a decline can be explained by the number that caused it.
+- Both the `hub_suggested` and `auto_filed` events record the margin, so the next re-tune has the
+  number that decided each placement rather than inferring it.
+- Two tests, mutation-controlled: an ambiguous capture (0.70 vs 0.68, both over the score bar) is
+  declined and lands visibly at root; an unambiguous one still files with no human. Deleting the
+  margin check turns the first one red - the guard has been watched failing.
+
 ## 0.47.0 - 2026-07-27 - Log the declines, because 0.46 shipped inert and nothing recorded why
 
 **0.46's auto-file never fired.** Checked on real data hours after shipping it: zero
