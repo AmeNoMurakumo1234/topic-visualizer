@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.48.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.49.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -103,6 +103,24 @@ AUTOFILE_THRESHOLD = float(os.environ.get("TOPICS_AUTOFILE_THRESHOLD", "0.40") o
 # on this system's own principle (see _suggest_hub): a bad auto-file is worse than an honest root
 # landing, because the root pile is VISIBLE and a mis-filed topic is not.
 AUTOFILE_MARGIN = float(os.environ.get("TOPICS_AUTOFILE_MARGIN", "0.08") or 0.08)
+# TRACKER LINK TEMPLATE. This plugin does not integrate with any work tracker - see mcp_tools' module
+# docstring for why that is a design choice and not a gap. But `topic_convert(kind="work_item",
+# ref=...)` records a reference in YOUR tracker's dialect, and a reference nobody can act on is barely
+# worth storing. One template turns every such ref into a link, for any tracker, with no API and no
+# auth:
+#
+#     TOPICS_TRACKER_URL="https://acme.atlassian.net/browse/{ref}"        Jira
+#     TOPICS_TRACKER_URL="https://github.com/acme/widget/issues/{ref}"    GitHub (ref = the number)
+#     TOPICS_TRACKER_URL="https://app.asana.com/0/0/{ref}"                Asana
+#     TOPICS_TRACKER_URL="https://linear.app/acme/issue/{ref}"            Linear
+#
+# Unset (the default) is fully supported: refs still display, just as plain text. {ref} is substituted
+# URL-ENCODED, and the result is only offered to the UI when it is http(s) - a template that resolves
+# to anything else is dropped rather than rendered, so a hostile or fat-fingered value cannot turn a
+# stored ref into a javascript:/data: link in the browser.
+TRACKER_URL = (os.environ.get("TOPICS_TRACKER_URL") or "").strip()
+if TRACKER_URL and not TRACKER_URL.lower().startswith(("http://", "https://")):
+    TRACKER_URL = ""
 # Kill switch: TOPICS_AUTOFILE=off returns the suggestion WITHOUT placing anything (suggest-only).
 AUTOFILE_ON = str(os.environ.get("TOPICS_AUTOFILE", "on")).strip().lower() not in ("0", "off", "false", "no")
 
@@ -2958,8 +2976,12 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:                          # pin this project's connection for the request
                 _use_project(key)
                 if u.path == "/api/topics":
+                    # tracker_url rides the payload the UI already fetches, rather than costing a
+                    # second endpoint and round-trip. "" = no template configured, which the UI
+                    # renders as plain text - a supported state, not a degraded one.
                     return self._json(200, {"topics": _load_topics(
-                        include_archive=qs.get("include", [""])[0] == "archive")})
+                        include_archive=qs.get("include", [""])[0] == "archive"),
+                        "tracker_url": TRACKER_URL})
                 if u.path == "/api/topics/list":
                     return self._json(200, list_topics(
                         include_archive=qs.get("include", [""])[0] == "archive",

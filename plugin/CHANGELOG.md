@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.49.0 - 2026-07-28 - What came of it: converted refs are visible, and clickable for any tracker
+
+`topic_convert(kind="work_item", ref=...)` has always recorded which item in YOUR tracker
+answered a topic. It was stored and then shown **nowhere** - no view rendered it. So the
+"converted to work" exit door only half-closed: you could not look at a topic and see what
+it became, which is the first thing a groom asks.
+
+- **The panel now has a "what came of it" section**, listing each recorded reference with its
+  kind and note. No configuration needed; this alone fixes the honesty problem.
+- **`TOPICS_TRACKER_URL` makes those refs clickable, for any tracker**, with no integration
+  and no auth:
+
+  ```
+  TOPICS_TRACKER_URL="https://acme.atlassian.net/browse/{ref}"       Jira
+  TOPICS_TRACKER_URL="https://github.com/acme/widget/issues/{ref}"   GitHub
+  TOPICS_TRACKER_URL="https://app.asana.com/0/0/{ref}"               Asana
+  TOPICS_TRACKER_URL="https://linear.app/acme/issue/{ref}"           Linear
+  ```
+
+  One template, every tracker, because the plugin never has to understand any of them - your
+  assistant already has your tracker's CLI or MCP server and does the querying and minting.
+  This only makes the reference reachable.
+
+**Unset is fully supported, not degraded:** refs render as plain readable text. A topic with
+no refs shows no section at all.
+
+`{ref}` is substituted URL-encoded, and only `http`/`https` survives - checked at BOTH ends,
+so neither a hostile template nor a compromised server can turn a stored ref into a
+`javascript:`/`data:` link in your browser. Links open with `rel="noopener noreferrer"`.
+
+Verified in a real browser against a live server, not just unit-tested: with a template the
+panel renders an anchor resolving to `https://acme.atlassian.net/browse/PROJ-123`; with none
+it renders plain text and zero anchors; with no refs the section is absent; and
+`javascript:`/`data:` templates produce no anchor while a valid https one does.
+
 ## 0.48.1 - 2026-07-28 - Your tracker is not this plugin's business, and it stops pretending otherwise
 
 Nobody else has the in-house message board this plugin could optionally target. Everyone

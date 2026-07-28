@@ -15,8 +15,11 @@ window.TopicsAdapter = (function () {
   if (PROJECT) { try { localStorage.setItem("topics-project", PROJECT); } catch (e) {} }
   const q = u => PROJECT ? u + (u.indexOf("?") >= 0 ? "&" : "?") + "project=" + encodeURIComponent(PROJECT) : u;
 
-  return {
+  const api = {
     name: "sqlite",
+    // per-install work-tracker URL template, filled from the /api/topics payload on each load.
+    // "" = not configured; refs then render as plain text rather than links.
+    trackerUrl: "",
     // resolved config + live up/down for the degraded-state banner (semantic off / store issues).
     // A non-empty doctor().degraded raises the banner. Returns null on error -> no banner.
     async doctor() {
@@ -47,11 +50,18 @@ window.TopicsAdapter = (function () {
     },
     async load(includeArchive) {
       const r = await fetch(q("/api/topics" + (includeArchive ? "?include=archive" : "")));
-      const items = (await r.json()).topics || [];
+      const payload = await r.json();
+      const items = payload.topics || [];
+      // The per-install tracker URL template rides this same payload. Stashed on the adapter so
+      // the panel can build a link without a second fetch; "" = none configured, refs stay plain.
+      api.trackerUrl = payload.tracker_url || "";
       return items.map(t => ({
         slug: t.slug, title: t.title, body: t.body, author: t.created_by,
         created: t.created_at, parentSlug: t.parent_slug || null,
         extraParents: t.extra_parents || [],   // multi-parent DAG edges
+        // work-tracker refs recorded by topic_convert: [{kind, ref, note}]. The tree does not
+        // own these items - it only remembers WHICH one answered this question.
+        links: t.links || [],
         state: t.state,   // seedling | open | discussed | pruned | expired pass through
         critical: t.priority === "critical",
       }));
@@ -150,4 +160,5 @@ window.TopicsAdapter = (function () {
       },
     },
   };
+  return api;
 })();

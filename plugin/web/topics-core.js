@@ -626,6 +626,38 @@ window.TopicsCore = (function () {
           + (t.state === "discussed" ? `<span class="avpill done">discussed</span>` : "")
           + (arch ? `<span class="avpill arch">${t.state}</span>` : "");
       };
+      // WHAT CAME OF IT. topic_convert records a reference into the user's OWN work tracker -
+      // "PROJ-123", "#456", whatever their tracker speaks - and until now that reference was
+      // stored and never shown, so the "converted to work" exit door only half-closed: you could
+      // not look at a topic and see what it became, which is the first thing a groom asks.
+      //
+      // The tree does not own those items and never fetches them; it only remembers which one
+      // answered this question. If the install configured TOPICS_TRACKER_URL, each ref becomes a
+      // click-through; otherwise it is plain text, which is a fully supported state and not a
+      // degraded one.
+      const trackerRefs = (node) => {
+        const links = (node.links || []).filter(l => l && l.ref);
+        if (!links.length) return "";
+        const tpl = (adapter && adapter.trackerUrl) || "";
+        const href = ref => {
+          if (!tpl || tpl.indexOf("{ref}") < 0) return "";
+          try {
+            // Same posture as the shell's return-link: http/https only, so a bad template can
+            // never turn a stored ref into a javascript:/data: URL.
+            const u = new URL(tpl.replace("{ref}", encodeURIComponent(ref)), location.href);
+            return (u.protocol === "http:" || u.protocol === "https:") ? u.href : "";
+          } catch (e) { return ""; }
+        };
+        const rows = links.map(l => {
+          const h = href(l.ref);
+          const label = esc(l.ref);
+          const body = h ? `<a class="trackref" href="${esc(h)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+                         : `<span class="trackref plain">${label}</span>`;
+          return `<div class="tracklink"><span class="tkind">${esc(l.kind || "link")}</span>${body}`
+               + `${l.note ? `<span class="tnote">${esc(l.note)}</span>` : ""}</div>`;
+        }).join("");
+        return `<div class="avhead">what came of it</div>${rows}`;
+      };
       const avenue = (slug, note, extra, arrow, removable) => {
         const p2 = core.bySlug[slug];
         const handled = p2 && (p2.state === "discussed" || p2.state === "pruned"
@@ -679,6 +711,7 @@ window.TopicsCore = (function () {
         <div class="body"></div>
         ${avenuesIn ? `<div class="avhead">avenues in</div>${avenuesIn}` : ""}
         ${avenuesOut ? `<div class="avhead">avenues out</div>${avenuesOut}` : ""}
+        ${trackerRefs(n)}
         ${adapter.attach && !core.demo ? `
         <div class="avadd">
           <input class="av-in" type="text" list="tvSlugsAv" placeholder="+ add avenue (parent slug)"/>

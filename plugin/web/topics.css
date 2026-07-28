@@ -214,6 +214,19 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 #panel .avenue { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px;
                  border-radius: 8px; font-size: 12.5px; }
 #panel .avenue:hover { background: #ffffff08; }
+/* WHAT CAME OF IT - references into the user's OWN work tracker, recorded by topic_convert.
+   Deliberately quieter than an avenue: an avenue is a road inside the tree, while this points
+   OUT of it at something the tree does not own. */
+#panel .tracklink { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+                    padding: 5px 8px; border-radius: 8px; font-size: 12.5px; }
+#panel .tracklink:hover { background: #ffffff08; }
+#panel .tkind { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+                color: #6a77a3; flex-shrink: 0; }
+#panel a.trackref { color: #8fb7ff; text-decoration: none; border-bottom: 1px dotted #8fb7ff66; }
+#panel a.trackref:hover { border-bottom-color: #8fb7ff; }
+/* No template configured is a SUPPORTED state, not a broken one - the ref still reads clearly. */
+#panel .trackref.plain { color: #c8d2ee; }
+#panel .tnote { color: #8d97b8; font-size: 11.5px; }
 #panel .avtop { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 #panel .avmain { display: flex; align-items: baseline; gap: 8px; }
 #panel .ava { color: #8fb7ff; flex-shrink: 0; }
