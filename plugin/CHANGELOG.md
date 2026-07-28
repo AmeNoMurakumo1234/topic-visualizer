@@ -7,13 +7,19 @@ guessed a fourth time. Measured now, on real data, the answer is that the bar wa
 problem.**
 
 Scored 159 real captures whose home a human later chose BY HAND, using the ground-truth join
-0.47 added. Those labels come from a groom in which six of the embedder's own hints were
-rejected, so they are not its opinion fed back to it:
+0.47 added. Those labels come from a grooming pass in which six of the embedder's own hints were
+rejected, so they are not its opinion fed back to it. On that tree (~40 hubs):
 
 | rule | fires | correct | precision |
 |---|---|---|---|
 | `score >= 0.40` (0.46/0.47 behaviour) | 101 | 48 | **48%** |
 | `score >= 0.40` **and** `margin >= 0.08` | 48 | 37 | **77%** |
+
+**These are ONE tree's numbers, not a universal constant** - and that distinction is the point of
+the release rather than a caveat on it. Cosine scores are not comparable across trees: they move
+with how your hub titles are written, how long your bodies are, and how much in-house vocabulary
+your captures share. Both bars are env-overridable, and `suggestion_scoreboard` exists so you can
+measure your own instead of inheriting someone else's.
 
 The separating signal is not how high the winner scores. It is **how far ahead of the runner-up
 it sits.** Correct picks beat second place by a median of 0.109; wrong picks by 0.028 - 4x apart,
@@ -96,7 +102,7 @@ The owner's report was "every time I look there's a HUGE cloud of ungroomed topi
 though I just groomed it - is something un-grooming the tree?" There is no bug. The
 reparent log shows ZERO topics that were filed under a hub and later returned to root.
 
-It is arithmetic. Measured on the QC store: **238 captures in 14 days - 17/day, peaks of
+It is arithmetic. Measured on an active tree: **238 captures in 14 days - 17/day, peaks of
 38** - with roughly half landing at root. Root therefore grows ~8-9 un-nested topics a
 day, so a groom to zero is back over forty within a week. When one human is the only one
 spending cards, no grooming cadence wins that race.
@@ -232,7 +238,7 @@ turned into machinery.
 
 ## 0.44.4 - 2026-07-22 - The silent-drop capture and the phantom default store (0653)
 
-Field report (Plumb, from a scheduled-task session): topic_add answered an ok-shaped
+Field report (from a scheduled-task session): topic_add answered an ok-shaped
 `{"results": []}` for a write that stored NOTHING, and the doctor reported the session's
 project beside a server default store of `C--WINDOWS-system32` with verdict ok. Root
 causes: three layers each passed an empty batch through silently, and the login
@@ -377,7 +383,7 @@ blocked projects-admin deletes.
 ## 0.44.0 - 2026-07-20 - The Projects page: boards become manageable objects
 
 Owner design, verbatim need: "the user has no access" to store management - bogus boards
-mint from a mangled query string (?project=quantum-concepts?demo=120 creates a junk store
+mint from a mangled query string (?project=my-project?demo=120 creates a junk store
 on first VIEW) and nothing in the GUI can delete a board or move topics between boards.
 
 - **A 4th view: Projects.** The boards themselves are the objects: every store on disk

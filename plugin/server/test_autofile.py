@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Capture-time auto-file (0.46).
+"""Capture-time auto-file.
 
-WHY THIS EXISTS. Measured on the real QC store 2026-07-27: 238 captures in 14 days (17/day, peaks of
-38) with roughly half landing at ROOT, so the tree grew ~8-9 un-nested leaf topics a day and a groom
-to zero was back over 40 within a week. The owner's read was "something is un-grooming the tree"; the
-reparent log said otherwise - ZERO topics had been filed and then returned to root. It is arithmetic,
-not a bug, and no manual cadence beats it when one human is the bottleneck. So the hub match that
-_root_orphan_hints already ran at GROOM time now also runs at CAPTURE.
+WHY THIS EXISTS. On an actively-used tree capture outruns grooming: a store measured over two weeks
+took ~17 captures a day with roughly half landing at ROOT, so it grew ~8-9 un-nested leaf topics a
+day and a groom to zero was back over 40 within a week. The intuition was "something is un-grooming
+the tree"; the reparent log said otherwise - ZERO topics had been filed and then returned to root. It
+is arithmetic, not a bug, and no manual cadence beats it when one human is the bottleneck. So the hub
+match that _root_orphan_hints already ran at GROOM time now also runs at CAPTURE.
 
 The risk being managed: the topics skill is explicit that similarity PROPOSES and judgment DECIDES,
 and an autonomous similarity-only regroup is worse than no grooming. Auto-file is therefore bounded -
@@ -33,6 +33,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._db, self._conn, self._embed = server.DB_PATH, server._conn, server._embed
         self._on, self._thr = server.AUTOFILE_ON, server.AUTOFILE_THRESHOLD
+        self._mrg = server.AUTOFILE_MARGIN
         server.DB_PATH = str(Path(self.tmp.name) / "t.db")
         server._conn = server.open_db(server.DB_PATH)
         server.AUTOFILE_ON = True
@@ -40,6 +41,7 @@ class Base(unittest.TestCase):
         # calibrated against a live embedder and WILL be re-tuned from the verify queue's hit rate;
         # a suite that moves with it would silently stop testing the boundary it claims to test.
         server.AUTOFILE_THRESHOLD = 0.60
+        server.AUTOFILE_MARGIN = 0.08
 
     def tearDown(self):
         try:
@@ -48,6 +50,7 @@ class Base(unittest.TestCase):
             pass
         server.DB_PATH, server._conn, server._embed = self._db, self._conn, self._embed
         server.AUTOFILE_ON, server.AUTOFILE_THRESHOLD = self._on, self._thr
+        server.AUTOFILE_MARGIN = self._mrg
         self.tmp.cleanup()
 
     # A FAKE embedder, so the tests assert the PLACEMENT LOGIC and never the model's taste.
@@ -90,18 +93,18 @@ class AutoFile(Base):
         """The whole point: a capture that clearly belongs somewhere stops landing at root."""
         hub = self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (0.98, 0.2, 0.0)})
-        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")[0]
         self.assertEqual(self._parent_of(r["slug"]), hub, "a strong match must be FILED, not rooted")
         self.assertEqual(r.get("auto_filed"), hub)
         self.assertTrue(r["suggested_parent"]["filed"])
         self.assertGreaterEqual(r["suggested_parent"]["score"], server.AUTOFILE_THRESHOLD)
 
     def test_02_a_weak_match_is_suggested_but_NOT_filed(self):
-        """The calibration case. On the real store the only 0.457 hint was WRONG, so a middling score
-        must surface as a proposal and leave the topic at root rather than mis-file it silently."""
+        """The calibration case: a middling score must surface as a proposal and leave the topic at
+        root rather than mis-file it silently."""
         self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "middling": (0.5, 0.87, 0.0)})
-        r = server.add_topics([{"title": "middling relevance capture", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "middling relevance capture", "autofile": True}], "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]), "a weak match must stay at ROOT")
         self.assertFalse(r["suggested_parent"]["filed"])
         self.assertLess(r["suggested_parent"]["score"], server.AUTOFILE_THRESHOLD)
@@ -109,11 +112,10 @@ class AutoFile(Base):
         self.assertNotIn("auto_filed", r)
 
     def test_02c_a_HIGH_score_with_a_close_runner_up_is_declined(self):
-        """0.48, and the defect it fixes: score ALONE was 48% precise across 159 real captures whose
-        home a human later chose by hand. A capture that resembles two hubs almost equally is written
-        in generic project vocabulary - the winner is a coin-flip between neighbours, and that is
-        where the misfiles lived. Both hubs here clear the 0.40 score bar comfortably; the GAP between
-        them is what has to stop the placement."""
+        """The defect the margin fixes: on a measured tree, score ALONE picked the human's hub only
+        about half the time. A capture resembling two hubs almost equally is written in vocabulary the
+        whole tree shares - the winner is a coin-flip between neighbours, and that is where mis-files
+        concentrate. Both hubs here clear the score bar comfortably; the GAP is what must stop it."""
         # Orthogonal hub vectors keep the arithmetic checkable by eye: |topic| ~ 1.0, so the two
         # cosines are just its first two components - 0.70 and 0.68, both over the 0.40 score bar
         # and 0.02 apart, well inside the 0.08 margin bar.
@@ -122,7 +124,7 @@ class AutoFile(Base):
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0),
                           "prose and voice": (0.0, 1.0, 0.0),
                           "ambiguous": (0.70, 0.68, 0.22)})
-        r = server.add_topics([{"title": "ambiguous capture", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "ambiguous capture", "autofile": True}], "tester")[0]
         sug = r["suggested_parent"]
         self.assertGreaterEqual(sug["score"], server.AUTOFILE_THRESHOLD,
                                 "precondition: score bar cleared, so score ALONE would have filed it")
@@ -139,7 +141,7 @@ class AutoFile(Base):
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0),
                           "prose and voice": (0.0, 1.0, 0.0),
                           "clear guard": (0.95, 0.1, 0.0)})
-        r = server.add_topics([{"title": "clear guard capture", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "clear guard capture", "autofile": True}], "tester")[0]
         sug = r["suggested_parent"]
         self.assertGreaterEqual(sug["margin"], server.AUTOFILE_MARGIN)
         self.assertTrue(sug["filed"])
@@ -156,7 +158,7 @@ class AutoFile(Base):
         goes and must be obeyed. Only the capture door opts in."""
         hub = self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
-        r = server.add_topics([{"title": "guard cannot fail"}], "Vera")[0]      # no autofile flag
+        r = server.add_topics([{"title": "guard cannot fail"}], "tester")[0]      # no autofile flag
         self.assertIsNone(self._parent_of(r["slug"]),
                           "a structural caller must land exactly where it said - at root")
         self.assertNotIn("auto_filed", self._events(r["slug"]))
@@ -169,7 +171,7 @@ class AutoFile(Base):
         strong = self._hub("Guards and gates")
         chosen = self._hub("Somewhere else entirely")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
-        r = server.add_topics([{"title": "guard thing", "parent_slug": chosen, "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard thing", "parent_slug": chosen, "autofile": True}], "tester")[0]
         self.assertEqual(self._parent_of(r["slug"]), chosen)
         self.assertNotEqual(self._parent_of(r["slug"]), strong)
         self.assertNotIn("suggested_parent", r, "no suggestion is computed when the caller chose")
@@ -179,7 +181,7 @@ class AutoFile(Base):
         self._hub("Guards and gates")
         self._fake_embed({"guards": (1.0, 0.0, 0.0)})
         r = server.add_topics([{"title": "Guards, deeper cut", "role": "hub", "state": "open", "autofile": True}],
-                              "Vera")[0]
+                              "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]), "a minted hub stays where the groom put it")
 
     def test_05_embedder_down_means_no_suggestion_and_no_placement(self):
@@ -187,7 +189,7 @@ class AutoFile(Base):
         strictly worse than a visible pile - the same reasoning root_orphan_hints already uses."""
         self._hub("Guards and gates")
         server._embed = lambda texts: None
-        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]))
         self.assertNotIn("suggested_parent", r)
 
@@ -206,7 +208,7 @@ class AutoFile(Base):
     def test_06_no_hubs_yet_means_no_placement(self):
         """A young tree has nothing to file under; capture must still work."""
         self._fake_embed({"anything": (1.0, 0.0, 0.0)})
-        r = server.add_topics([{"title": "anything at all", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "anything at all", "autofile": True}], "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]))
         self.assertTrue(r["slug"])
 
@@ -214,7 +216,7 @@ class AutoFile(Base):
         hub = self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
         server.AUTOFILE_ON = False
-        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]), "off means SUGGEST, never place")
         self.assertFalse(r["suggested_parent"]["filed"])
         self.assertEqual(r["suggested_parent"]["slug"], hub, "the proposal still reaches the caller")
@@ -227,7 +229,7 @@ class AutoFile(Base):
         def boom(texts):
             raise RuntimeError("embedder exploded")
         server._embed = boom
-        r = server.add_topics([{"title": "still must be stored", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "still must be stored", "autofile": True}], "tester")[0]
         self.assertTrue(r.get("slug"), "the topic is STORED even when the suggester dies")
         self.assertIsNone(self._parent_of(r["slug"]))
 
@@ -269,7 +271,7 @@ class AutoFile(Base):
         0.47, real captures 0.353, firing 1 in 8)."""
         self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "middling": (0.3, 0.954, 0.0)})
-        r = server.add_topics([{"title": "middling relevance capture", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "middling relevance capture", "autofile": True}], "tester")[0]
         self.assertIsNone(self._parent_of(r["slug"]), "still declines to place it")
         self.assertIn("hub_suggested", self._events(r["slug"]), "but the DECLINE is on the record")
         note = server._conn.execute(
@@ -285,8 +287,8 @@ class AutoFile(Base):
         wrong = self._hub("Somewhere else entirely")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "alpha": (0.3, 0.954, 0.0),
                           "beta": (0.3, 0.954, 0.0)})
-        a = server.add_topics([{"title": "alpha capture", "autofile": True}], "Vera")[0]
-        b = server.add_topics([{"title": "beta capture", "autofile": True}], "Vera")[0]
+        a = server.add_topics([{"title": "alpha capture", "autofile": True}], "tester")[0]
+        b = server.add_topics([{"title": "beta capture", "autofile": True}], "tester")[0]
 
         board = server.suggestion_scoreboard()
         self.assertEqual(board["suggestions_logged"], 2)
@@ -306,7 +308,7 @@ class AutoFile(Base):
         placement a win, which would report near-perfect accuracy for a system nobody checks."""
         self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
-        server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")
+        server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")
         board = server.suggestion_scoreboard()
         self.assertEqual(board["correct"], 0, "an unreviewed auto-file proves nothing")
         self.assertEqual(board["labelled_by_a_human"], 0)
@@ -316,7 +318,7 @@ class AutoFile(Base):
         """A machine guess must never read as a settled human decision."""
         hub = self._hub("Guards and gates")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
-        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")[0]
         self.assertIn("auto_filed", self._events(r["slug"]))
         q = server._auto_filed_unverified()
         self.assertEqual([x["slug"] for x in q], [r["slug"]])
@@ -328,7 +330,7 @@ class AutoFile(Base):
         self._hub("Guards and gates")
         other = self._hub("Somewhere else entirely")
         self._fake_embed({"guards and gates": (1.0, 0.0, 0.0), "guard": (1.0, 0.0, 0.0)})
-        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "Vera")[0]
+        r = server.add_topics([{"title": "guard cannot fail", "autofile": True}], "tester")[0]
         self.assertEqual(len(server._auto_filed_unverified()), 1)
         server.edit_topic(r["slug"], "Murakumo", None, None, other, None)   # the human moves it
         self.assertEqual(server._auto_filed_unverified(), [],

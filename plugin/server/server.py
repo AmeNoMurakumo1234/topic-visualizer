@@ -61,49 +61,47 @@ FANOUT_WARN_CHILDREN = _env_int("TOPICS_FANOUT_WARN", 9)
 # margin over noise, and the hint is advisory (the groom human ratifies).
 HINT_THRESHOLD = float(os.environ.get("TOPICS_HINT_THRESHOLD", "0.35") or 0.35)
 
-# 0.46 AUTO-FILE AT CAPTURE. Measured on the QC store 2026-07-27: 238 captures in 14 days (17/day,
-# peaks of 38), roughly HALF landing at root - so root grew ~8-9 leaf topics a day and a groom to zero
-# was back to 40+ within a week. No bug: the reparent log showed ZERO cases of a filed topic returning
-# to root. It is pure arithmetic, and no manual groom cadence beats it when one human is the bottleneck.
-# So the hub match that _root_orphan_hints already computes at GROOM time now also runs at CAPTURE.
+# AUTO-FILE AT CAPTURE. On an actively-used tree, capture outruns grooming: a store observed over two
+# weeks took ~17 captures a day with roughly HALF landing at root, so root grew ~8-9 leaf topics a day
+# and a groom to zero was back to 40+ within a week. Not a bug - arithmetic. No manual groom cadence
+# beats it when one human is the bottleneck, so the hub match that _root_orphan_hints already computes
+# at GROOM time also runs at CAPTURE.
 #
-# The bar is higher than HINT_THRESHOLD, because a hint is a proposal a human reads and an auto-file is
-# a placement nobody may ever look at. CALIBRATED ON MEASUREMENT - and the first guess was wrong. I set
-# 0.60 reasoning from a single observed miss (a 0.457 hint that wanted a continuity topic under
-# board-integrity when the right home was Covenant), then ran six realistic captures against QC's real
-# hubs and the live MiniLM embedder:
+# The bar is higher than HINT_THRESHOLD, because a hint is a proposal a human reads while an auto-file
+# is a placement nobody may ever look at.
 #
-#     0.557  "sweep the remaining guards for checks that cannot go red"  -> Can a guard actually fail?
-#     0.471  "pre-register sample size before the next prose A/B"        -> Measurement rigor
-#     0.465  "reviewer emitted malformed JSON on a dense scene"          -> Reviewer reliability
-#     0.414  "Alisha's childhood home should appear in the dossier"      -> Dossier & reveal seam
-#     0.334  "nightly runner reports green when a leg was skipped"       -> Can a guard actually fail?
-#     0.049  "what should we eat for lunch on Thursday"                  -> (nonsense, no real home)
+# WHY THE DEFAULT IS WHAT IT IS, AND WHY YOU SHOULD MEASURE YOUR OWN. Cosine scores are not comparable
+# across trees: they depend on how your hub titles are written, how long your bodies are, and how much
+# in-house vocabulary your captures share. On the tree these defaults were tuned against, obviously
+# correct matches sat around 0.41-0.56 and unrelated text near 0.05 - so the signal was a wide clean gap
+# rather than a sharp cut, and a bar of 0.60 made the feature INERT: shipped, armed, and never once
+# firing. A tree whose hubs are worded very differently may sit somewhere else entirely.
 #
-# Every obviously-correct match sits at 0.41-0.56, so 0.60 would have made this INERT: shipped, armed,
-# and never once firing. Nonsense lands at 0.05, so the real signal is a WIDE CLEAN MARGIN rather than a
-# sharp cut. 0.40 takes the good matches and accepts that a 0.457-shaped miss lands too. That trade is
-# deliberate: root refills at ~8-9/day, and a mostly-right placement that is STAMPED unverified beats an
-# honest pile nobody has time to file. Re-tune from the auto_filed_unverified queue's real hit rate -
-# which is exactly why every placement is counted rather than assumed correct.
+# So treat these as a STARTING POINT, not a constant. Both are env-overridable, every placement AND
+# every decline is logged with its score, and suggestion_scoreboard joins those guesses against where a
+# human actually filed the topic - which is what makes the bar knowable on YOUR data instead of
+# inherited from someone else's.
 AUTOFILE_THRESHOLD = float(os.environ.get("TOPICS_AUTOFILE_THRESHOLD", "0.40") or 0.40)
-# 0.48 MARGIN. 0.47 shipped the decline log so this could be MEASURED instead of guessed again.
-# Measured, and it was never the threshold. Scored 159 real captures whose home a human later chose
-# BY HAND (the 2026-07-28 groom, in which six of the embedder's own hints were rejected - so the
-# labels are not its own opinion fed back to it):
+# MARGIN - the gap to the runner-up, and the more robust of the two bars.
 #
-#     score >= 0.40 alone             fires 101, correct 48  =  48% precision
-#     score >= 0.40 AND margin >= 0.08  fires  48, correct 37  =  77% precision
+# A raw score answers "does this resemble that hub?", which is not the question. The question is "does
+# it resemble that hub MORE THAN THE ALTERNATIVES?" - and a capture that resembles four hubs about
+# equally belongs to none of them. It is written in vocabulary the whole tree shares, and the winner is
+# a coin-flip between neighbours. That is where mis-placements concentrate.
 #
-# The separating signal is not how high the winner scores; it is HOW FAR AHEAD OF THE RUNNER-UP it
-# sits. Correct picks beat second place by a median of 0.109, wrong picks by 0.028 - 4x apart, while
-# their raw scores overlap almost entirely (that overlap is why three rounds of threshold-tuning
-# could not fix this). A capture that resembles four hubs equally belongs to none of them: it is
-# written in generic project vocabulary, and the winner is a coin-flip between neighbours.
+# Measured on a tree with ~40 hubs and 159 captures whose home a human later chose BY HAND: score alone
+# picked the human's hub 48% of the time, while requiring the winner to beat second place by >= 0.08
+# raised that to 77%. Correct picks led by a median 0.109 and wrong picks by 0.028 - about 4x apart -
+# while their RAW scores overlapped almost entirely, which is why tuning the score threshold alone kept
+# trading mis-files for inertness without fixing either.
 #
-# Trading 48 correct placements down to 37 is the right direction on this system's OWN principle
-# (see _suggest_hub): a bad auto-file is worse than an honest root landing, because the root pile is
-# VISIBLE and a mis-filed topic is not. Misfiles drop from 53 to 11.
+# The margin is more portable across trees than the absolute score: it is a comparison WITHIN one
+# tree's own scale, so it is not thrown off by hub wording or body length the way a fixed cut is. Tune
+# it on your own data all the same - suggestion_scoreboard exists for exactly that.
+#
+# Requiring both bars places fewer topics and gets more of them right. That trade runs the correct way
+# on this system's own principle (see _suggest_hub): a bad auto-file is worse than an honest root
+# landing, because the root pile is VISIBLE and a mis-filed topic is not.
 AUTOFILE_MARGIN = float(os.environ.get("TOPICS_AUTOFILE_MARGIN", "0.08") or 0.08)
 # Kill switch: TOPICS_AUTOFILE=off returns the suggestion WITHOUT placing anything (suggest-only).
 AUTOFILE_ON = str(os.environ.get("TOPICS_AUTOFILE", "on")).strip().lower() not in ("0", "off", "false", "no")
@@ -825,7 +823,7 @@ def list_topics(include_archive=False, limit=500, offset=0) -> dict:
         limit = max(1, min(int(limit), 2000)); offset = max(0, int(offset))
     except Exception:
         limit, offset = 500, 0
-    # 0.45 (Polaris): children (live count) + state_note ride the compact row so a groom
+    # 0.45: children (live count) + state_note ride the compact row so a groom
     # finds wide hubs and reads decision-notes in ONE call instead of report+get per item.
     q = ("SELECT t.slug, t.title, t.state, t.priority, p.slug AS parent, "
          "t.state_note, "
@@ -1930,7 +1928,7 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                 _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
                               (tid, p["id"]))
                 _event(tid, "reparented", actor, f"-> {parent_slug}")
-                # 0.45 (Polaris): echo an over-wide push IN the result - a batch reparent
+                # 0.45: echo an over-wide push IN the result - a batch reparent
                 # silently built a 15-child hub and the groom only learned from a follow-up
                 # report. Say it in the same motion so the re-split happens now.
                 kids_now = _conn.execute(
@@ -2324,7 +2322,7 @@ def groom_report(verbose: bool = True) -> dict:
         root_count = _conn.execute(
             "SELECT COUNT(*) c FROM topic WHERE parent_id IS NULL "
             "AND state IN ('seedling','open','discussed')").fetchone()["c"]
-        # 0.45 (field groom, Polaris): breadth is COMPOSITION-aware. A root that is itself
+        # 0.45 (from field grooming): breadth is COMPOSITION-aware. A root that is itself
         # a hub (has live children) is healthy structure - 10 domain hubs at root is a
         # GOOD tree, and a warning that stays red after a genuinely good groom trains the
         # operator to ignore it. The sprawl signal is the UN-NESTED LEAF root.
@@ -2460,7 +2458,7 @@ def groom_report(verbose: bool = True) -> dict:
     if not verbose:   # 0.45: the guidance paragraphs never change - drop them on request
         report["fan_out"].pop("target", None)
         report["coherence"].pop("note", None)
-    # 0.45 (Polaris): an absent hint set because the EMBEDDER is down must be loud at the
+    # 0.45: an absent hint set because the EMBEDDER is down must be loud at the
     # TOP, not discovered by reading root_orphan_note - "a negative result is only as good
     # as its scope". Alert leads the dict so it is the first thing a groom reads.
     if "embedder" in (orphan_note or ""):
@@ -2563,7 +2561,7 @@ def _root_orphan_hints() -> tuple[list[dict], str]:
     round-trip (8s timeout) does serialize other API requests; acceptable for a
     human-cadence groom, called out here so nobody trusts the old 'never blocks' claim."""
     LIVE = "('seedling','open','discussed')"
-    # 0.45 (Polaris): a root that is ITSELF a hub (>=2 live children) is never an "orphan" -
+    # 0.45: a root that is ITSELF a hub (>=2 live children) is never an "orphan" -
     # once a tree is nested, semantic similarity between two meta-flavored domain hubs reads
     # as "nest one under the other", i.e. a hint to bury a top-level domain. Similarity can't
     # tell "same topic" from "both meta"; only childless-or-single-child roots are candidates.
@@ -2846,7 +2844,7 @@ def reconcile(items: list[dict], actor: str, decision: str | None = None) -> dic
             _event(tid, "reconciled", actor,
                    disp + (f" -> {ref}" if ref else "") + (f" | {note}" if note else ""))
             _conn.commit()
-        # 0.45 (Polaris): closing a seedling via reconcile is LEGAL (a deliberate decision
+        # 0.45: closing a seedling via reconcile is LEGAL (a deliberate decision
         # legitimately closes a board-covered seedling) but must be surfaced, never silent -
         # the skill says "don't reconcile seedlings" and the tool used to quietly disagree.
         item_res = {"slug": slug, "ok": True, "disposition": disp}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grouped-triage tests (Polaris brief 2, owner-ratified pattern, 2026-07-24):
+"""Grouped-triage tests:
 topic_buckets clusters live topics into hub-seeded buckets; topic_reconcile gains a
 uniform bucket-level `decision` stamp and the first-class `leave_open` disposition.
 

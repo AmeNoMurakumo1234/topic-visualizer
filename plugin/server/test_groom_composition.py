@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Field-groom upgrade tests (Polaris brief, 2026-07-24): composition-aware breadth,
+"""Field-groom upgrade tests: composition-aware breadth,
 hub-orphan suppression, embedder-down loud alert, over-wide reparent echo, list child
 counts, seedlings-closed surfacing, and the groom_report verbose flag.
 
