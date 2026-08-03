@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.50.0 - 2026-08-03 - A tree has to be able to get smaller
+
+Every lens in the groom report answered an ADDITIVE question - nest this, merge that, split the
+wide hub. None could say the tree had simply outgrown its reader, or which branch carried the
+weight. So a groom facing 500 topics had no instrument for the one move that actually helps, and
+the tool trends toward unusable purely by accumulating.
+
+The field case behind it: dropping two branches of a 516-row tree required hand-written recursive
+SQL against the store, because nothing reported a branch's weight. That same groom then
+recommended marking the branches "discussed" rather than pruning them, believing the record was
+free to keep. It is not - and nothing in the report said so.
+
+- **`topic_state(state="pruned", preview=true)` writes nothing and returns the exact cascade** -
+  weight (undecided / discussed / hubs / total), the full slug list, and any descendant SPARED
+  because another avenue still reaches it. The GUI has always had its consequence dialog; the API
+  had none, so an agent learned a prune's blast radius only after causing it.
+- **The preview shares one code path with the real prune** (`_prune_plan`, extracted from
+  `set_state`). A preview backed by a second implementation would diverge exactly where the tree
+  is complicated - the multi-parent survivor rule - and so be wrong precisely when it matters. A
+  test asserts the previewed set equals the set the prune actually takes.
+- **`groom_report().subtraction` reports WEIGHT, not width**: per branch (roots and their direct
+  children), what pruning it would cost, sorted by live questions dropped, with each branch's
+  share of the live store.
+- **It says plainly that `discussed` is not free.** A discussed row still counts as live - it is
+  embedded, duplicate-scanned, bucketed and re-read by every groom. Freezing a branch instead of
+  pruning it reclaims nothing; it only stops the topic reading as a might-do.
+
+The guidance that comes with it: subtract when a branch no longer serves the direction you are
+moving in. If an idea is good and the direction is valid, the topic will rise again - usually
+better measured the second time.
+
 ## 0.49.0 - 2026-07-28 - What came of it: converted refs are visible, and clickable for any tracker
 
 `topic_convert(kind="work_item", ref=...)` has always recorded which item in YOUR tracker

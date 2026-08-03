@@ -439,12 +439,13 @@ class ServerBackend:
         except Unreachable:
             return {"results": self._fallback().search(query)}
 
-    def state(self, slug, state, note):
+    def state(self, slug, state, note, preview=False):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/state",
-                         self._p({"state": state, "actor": ACTOR, "note": note}))
+                         self._p({"state": state, "actor": ACTOR, "note": note,
+                                  "preview": preview}))
         except Unreachable:
-            return self._fallback().set_state(slug, state, ACTOR, note)
+            return self._fallback().set_state(slug, state, ACTOR, note, preview=preview)
 
     def convert(self, slug, kind, ref, note):
         try:
@@ -1139,7 +1140,12 @@ TOOLS = [
                     "And/or set `priority`: critical (beacon) | normal - this is how the "
                     "groom's beacon audit promotes/demotes an existing topic. At least one "
                     "of state/priority. A deliberate state change graduates a seedling; "
-                    "structural reparents/attaches no longer do (0.42). BATCH: pass "
+                    "structural reparents/attaches no longer do (0.42). "
+                    "PREVIEW A PRUNE FIRST: preview=true with state='pruned' writes NOTHING "
+                    "and returns the exact cascade - weight (undecided / discussed / hubs), "
+                    "the slug list, and any descendant spared by another avenue. Pruning a "
+                    "branch takes its whole live subtree, so check the blast radius before "
+                    "you take it, not after (0.50). BATCH: pass "
                     "items:[{slug,state?,priority?,note?}, ...] to change many in one call "
                     "(per-item results) instead of a call each.",
      "inputSchema": {"type": "object", "properties": {
@@ -1147,6 +1153,8 @@ TOOLS = [
          "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
          "priority": {"type": "string", "enum": ["normal", "critical"]},
          "note": {"type": "string"},
+         "preview": {"type": "boolean",
+                     "description": "state='pruned' only: report the cascade, change nothing"},
          "items": {"type": "array", "description": "batch form (each an op like above)",
                    "items": {"type": "object", "properties": {
                        "slug": {"type": "string"},
@@ -1382,6 +1390,12 @@ def _state_one(b, a: dict) -> dict:
     state, priority = a.get("state"), a.get("priority")
     if not state and not priority:
         return {"error": "needs a state and/or a priority", "slug": slug}
+    # 0.50: preview is a READ - answer it alone and write nothing, so a caller that passes
+    # preview with a stray priority cannot half-apply the very change it was checking on.
+    if a.get("preview"):
+        if state != "pruned":
+            return {"error": "preview only applies to state='pruned'", "slug": slug}
+        return b.state(slug, state, note, preview=True)
     pres = b.priority(slug, priority == "critical") if priority else None
     sres = b.state(slug, state, note) if state else None
     if sres is not None and pres is None:

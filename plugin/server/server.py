@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.49.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.50.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -1778,11 +1778,130 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
     return results
 
 
+def _prune_plan(root_id: int) -> tuple[list[int], list[tuple[int, int]]]:
+    """What a prune of `root_id` WOULD take: (subtree ids, [(spared id, new parent id)]).
+
+    0.50: extracted from set_state so a PREVIEW is computed by the code that does the real
+    pruning. A preview backed by a second implementation is worse than none - it would
+    diverge exactly where the tree is complicated (the survivor rule below), so the number
+    would be wrong precisely when someone needs it. Read-only; callers do the writing."""
+    def closure(root_ids):
+        out, fr = list(root_ids), list(root_ids)
+        while fr:
+            marks = ",".join("?" for _ in fr)
+            kids = _conn.execute(
+                f"SELECT id FROM topic WHERE parent_id IN ({marks}) "
+                "AND state IN ('seedling','open','discussed')", fr).fetchall()
+            fr = [k["id"] for k in kids if k["id"] not in out]
+            out.extend(fr)
+        return out
+    subtree = closure([root_id])
+    # SURVIVORS (multi-parent law): a descendant reachable via an extra
+    # parent OUTSIDE the pruned set has another reason to exist - it is
+    # spared, and that outside avenue is promoted to its primary parent.
+    # (Mirrored in the web core's pruneSet(); keep the two in sync.)
+    promoted: list[tuple[int, int]] = []
+    while True:
+        sset = set(subtree)
+        spared = None
+        for tid2 in subtree:
+            if tid2 == root_id:
+                continue
+            xp = _conn.execute(
+                """SELECT tp.parent_id FROM topic_parent tp
+                   JOIN topic p ON p.id = tp.parent_id
+                   WHERE tp.topic_id=? AND p.state IN
+                     ('seedling','open','discussed')""", (tid2,)).fetchall()
+            outside = [x["parent_id"] for x in xp if x["parent_id"] not in sset]
+            if outside:
+                spared = (tid2, outside[0])
+                break
+        if spared is None:
+            break
+        tid2, new_pid = spared
+        keep = set(closure([tid2]))
+        subtree = [i for i in subtree if i not in keep]
+        promoted.append((tid2, new_pid))
+    return subtree, promoted
+
+
+def _weigh(ids: list[int]) -> dict:
+    """Break a row set into what a groom actually decides on: undecided vs closed RECORD vs
+    scaffolding. 0.50 - 'how many rows' is not the question; 'how many live QUESTIONS am I
+    dropping, and how much of this is just hubs' is."""
+    if not ids:
+        return {"undecided": 0, "discussed": 0, "hubs": 0, "total": 0}
+    marks = ",".join("?" for _ in ids)
+    r = _conn.execute(
+        f"""SELECT SUM(CASE WHEN state IN ('seedling','open') AND role!='hub'
+                            THEN 1 ELSE 0 END) AS undecided,
+                   SUM(CASE WHEN state='discussed' THEN 1 ELSE 0 END) AS discussed,
+                   SUM(CASE WHEN role='hub' THEN 1 ELSE 0 END) AS hubs,
+                   COUNT(*) AS total
+            FROM topic WHERE id IN ({marks})""", ids).fetchone()
+    return {"undecided": r["undecided"] or 0, "discussed": r["discussed"] or 0,
+            "hubs": r["hubs"] or 0, "total": r["total"] or 0}
+
+
+def _subtraction_view(limit: int = 12) -> dict:
+    """WHERE IS THE MASS, and what would removing it cost? (0.50)
+
+    The groom report could always tell you the tree was too WIDE. It could never tell you it
+    was too BIG, or which branch was carrying the weight - so the only supported answers were
+    additive (nest it, merge it, split it) and a groom facing a tree that had simply outgrown
+    its reader had no instrument at all. Field case that produced this: deciding to drop two
+    branches of a 516-row tree required hand-written recursive SQL, because nothing here
+    reports a branch's weight.
+
+    Two things every row of this view exists to say:
+      - UNDECIDED is the real cost of a prune. Dropping 155 rows of which 91 are live
+        questions is a different act from dropping 155 rows of hubs and closed records.
+      - DISCUSSED IS NOT FREE. It reads like filing something away, but a discussed row is
+        still LIVE here: it is embedded, duplicate-scanned, bucketed, and re-read by every
+        groom. 'Freeze it instead of pruning it' therefore reclaims nothing, and a groomer
+        who believes otherwise (this one did) will hoard.
+    """
+    rows = _conn.execute(
+        "SELECT id, slug, title, parent_id, state, role FROM topic "
+        "WHERE state IN ('seedling','open','discussed')").fetchall()
+    load = _weigh([r["id"] for r in rows])
+    kids: dict = {}
+    for r in rows:
+        kids.setdefault(r["parent_id"], []).append(r)
+    branches = []
+    for root in kids.get(None, []):
+        for node, depth in [(root, 0)] + [(k, 1) for k in kids.get(root["id"], [])]:
+            subtree, _ = _prune_plan(node["id"])
+            if len(subtree) < 2:      # a lone leaf is not a "branch" worth weighing
+                continue
+            w = _weigh(subtree)
+            branches.append({"slug": node["slug"], "title": node["title"], "depth": depth,
+                             "prune_takes": w,
+                             "share_of_live_pct": round(100.0 * w["total"] / max(1, load["total"]), 1)})
+    branches.sort(key=lambda b: (-b["prune_takes"]["undecided"], -b["prune_takes"]["total"]))
+    return {
+        "note": "Weight, not width. prune_takes is the EXACT cascade topic_state(state='pruned') "
+                "would remove for that node (same code path, survivors already spared), so these "
+                "numbers are the real cost, not an estimate. Sorted by undecided desc.",
+        "live_load": load,
+        "discussed_is_not_free": (
+            f"{load['discussed']} discussed row(s) still count as LIVE - embedded, "
+            "duplicate-scanned, bucketed and re-read every groom. Marking a branch discussed "
+            "instead of pruning it reclaims NOTHING; it only stops the topic reading as a "
+            "might-do. Subtract when a branch no longer serves the direction you are moving in."),
+        "branches": branches[:limit]}
+
+
 def set_state(slug: str, state: str, actor: str, note: str = "",
-              cascade: list[str] | None = None) -> dict:
+              cascade: list[str] | None = None, preview: bool = False) -> dict:
     """State transitions. prune supports a client-confirmed cascade: the subtree the
     human SAW in the consequence dialog; the server verifies it still matches (no
-    TOCTOU pruning of children added mid-dialog)."""
+    TOCTOU pruning of children added mid-dialog).
+
+    preview=True (0.50) answers "what would this take?" and writes NOTHING. The GUI has
+    always had its consequence dialog; the API had none, so an agent pruning a branch
+    learned the blast radius only after causing it - which in practice means counting the
+    subtree by hand first, or not looking."""
     if state not in ("open", "discussed", "pruned"):
         return {"error": f"bad state {state!r}"}
     with _lock:
@@ -1791,44 +1910,18 @@ def set_state(slug: str, state: str, actor: str, note: str = "",
             return _fail("not found")
         ids = [row["id"]]
         if state == "pruned":
-            # collect the live PRIMARY subtree
-            def closure(root_ids):
-                out, fr = list(root_ids), list(root_ids)
-                while fr:
-                    marks = ",".join("?" for _ in fr)
-                    kids = _conn.execute(
-                        f"SELECT id FROM topic WHERE parent_id IN ({marks}) "
-                        "AND state IN ('seedling','open','discussed')", fr).fetchall()
-                    fr = [k["id"] for k in kids if k["id"] not in out]
-                    out.extend(fr)
-                return out
-            subtree = closure([row["id"]])
-            # SURVIVORS (multi-parent law): a descendant reachable via an extra
-            # parent OUTSIDE the pruned set has another reason to exist - it is
-            # spared, and that outside avenue is promoted to its primary parent.
-            # (Mirrored in the web core's pruneSet(); keep the two in sync.)
-            promoted = []
-            while True:
-                sset = set(subtree)
-                spared = None
-                for tid2 in subtree:
-                    if tid2 == row["id"]:
-                        continue
-                    xp = _conn.execute(
-                        """SELECT tp.parent_id FROM topic_parent tp
-                           JOIN topic p ON p.id = tp.parent_id
-                           WHERE tp.topic_id=? AND p.state IN
-                             ('seedling','open','discussed')""", (tid2,)).fetchall()
-                    outside = [x["parent_id"] for x in xp if x["parent_id"] not in sset]
-                    if outside:
-                        spared = (tid2, outside[0])
-                        break
-                if spared is None:
-                    break
-                tid2, new_pid = spared
-                keep = set(closure([tid2]))
-                subtree = [i for i in subtree if i not in keep]
-                promoted.append((tid2, new_pid))
+            subtree, promoted = _prune_plan(row["id"])
+            if preview:
+                spared_ids = [p[0] for p in promoted]
+                spared = [r2["slug"] for r2 in _conn.execute(
+                    f"SELECT slug FROM topic WHERE id IN "
+                    f"({','.join('?' for _ in spared_ids)})", spared_ids)] if spared_ids else []
+                return {"ok": True, "preview": True, "slug": slug,
+                        "weight": _weigh(subtree),
+                        "spared_by_another_avenue": spared,
+                        "cascade": sorted(r2["slug"] for r2 in _conn.execute(
+                            f"SELECT slug FROM topic WHERE id IN "
+                            f"({','.join('?' for _ in subtree)})", subtree))}
             # verify the client-confirmed cascade BEFORE any promotion writes:
             # a REFUSED prune must leave the DAG untouched (audit HIGH-1)
             if cascade is not None:
@@ -2470,6 +2563,10 @@ def groom_report(verbose: bool = True) -> dict:
                 # captures they wrote themselves (which is exactly how 0.46 shipped inert).
                 "suggestion_scoreboard": suggestion_scoreboard(),
                 "possible_buckets": buckets},
+            # 0.50: the SUBTRACTIVE lens. Every other block here answers "what should I add
+            # or reshape"; a tree also has to be able to get SMALLER, and a groom that can
+            # only nest and merge will grow it until nobody can read it.
+            "subtraction": _subtraction_view(),
             "capture_calibration": [dict(r) for r in by_actor],
             "expiry_candidates_count": stale_total,
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
@@ -3126,7 +3223,8 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "state":
                     return self._json(200, set_state(slug, str(body.get("state")), actor,
                                                      str(body.get("note") or ""),
-                                                     body.get("cascade")))
+                                                     body.get("cascade"),
+                                                     preview=bool(body.get("preview"))))
                 if op == "links":
                     return self._json(200, convert(slug, body.get("links") or [], actor,
                                                    str(body.get("note") or "")))
