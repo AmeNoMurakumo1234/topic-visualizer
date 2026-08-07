@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.50.1 - 2026-08-07 - The prune preview did not survive the batch form
+
+0.50.0 shipped `preview` so an agent learns a prune's blast radius BEFORE causing it. In the
+batch form it did the opposite: `preview` was read only off each per-item dict, and the natural
+call shape - `{items:[{slug,state:"pruned"},...], preview:true}` - puts the flag at the top
+level, where nothing looked for it. `_single_or_batch` forwarded only the item dicts, so the flag
+was dropped and the prune EXECUTED. The result carried `{"ok":true,"changed":N}` with no
+`preview` key, which reads like a report if you are scanning for success rather than for the
+absence of a field.
+
+Found in the field on 2026-08-07 by previewing six prunes and having all six written. Those six
+were childless and already slated for pruning, so nothing was lost - but the same call against a
+hub cascades its entire live subtree away, under the one flag whose whole job is to stop that.
+The safety feature was unavailable in precisely the shape a groom reaches for when it has several
+branches to weigh at once.
+
+Same disease as 0653, one tool over: a batch wrapper silently mangling an argument, so the agent
+believes something safe happened while the store changes underneath.
+
+- **A top-level `preview` now falls through to every item that does not set its own**, via a new
+  `inherit` parameter on `_single_or_batch`. A per-item `preview` still works and still wins.
+- **Proven-red test** (`test_06b_batch_preview_writes_nothing`) using the exact field call shape,
+  asserting both that every result carries `preview` and - the assertion that actually matters -
+  that no topic changed state. The fixture's hub is given a real child, so a wrongly-executed
+  preview would cascade and be caught. An earlier draft of this test went red for the wrong
+  reason (items carrying no `state` at all, erroring before the flag mattered); a test that
+  reddens on an unrelated error proves nothing about the guard.
+
 ## 0.50.0 - 2026-08-03 - A tree has to be able to get smaller
 
 Every lens in the groom report answered an ADDITIVE question - nest this, merge that, split the

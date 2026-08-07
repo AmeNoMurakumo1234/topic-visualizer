@@ -208,6 +208,47 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         # single form still works
         self.assertTrue(self.mcp.tool("topic_state", {"slug": c, "state": "discussed"})[0].get("ok"))
 
+    def test_06b_batch_preview_writes_nothing(self):
+        """A top-level preview must reach every ITEM of a batch prune.
+
+        PROVEN RED before the fix: `preview` was read only off the per-item dict, so
+        {items:[...], preview:true} dropped the flag and pruned for real. Found in the
+        field 2026-08-07 - six topics previewed, six written. They were childless, so
+        nothing was lost; against a HUB the same call cascades the whole live subtree
+        away under the one flag whose entire job is to stop that.
+        """
+        out, _ = self.mcp.tool("topic_add", {"items": [
+            {"title": "preview parent hub", "state": "open"},
+            {"title": "preview victim one", "state": "open"},
+            {"title": "preview victim two", "state": "open"}]})
+        hub, v1, v2 = [r["slug"] for r in out["results"]]
+        # give the hub a real child, so a wrongly-executed preview would cascade
+        self.mcp.tool("topic_reparent", {"slug": v1, "parent_slug": hub})
+
+        # EXACTLY the field call shape: each item carries its own state, preview is
+        # top-level. Anything else goes red for an unrelated reason (a missing state)
+        # and proves nothing about the flag.
+        pv, _ = self.mcp.tool("topic_state", {
+            "items": [{"slug": hub, "state": "pruned"},
+                      {"slug": v2, "state": "pruned"}],
+            "preview": True})
+        self.assertEqual(len(pv["results"]), 2, pv)
+        for r in pv["results"]:
+            self.assertTrue(r.get("preview"), f"item lost the preview flag: {r}")
+            self.assertIn("cascade", r)
+
+        # THE ASSERTION THAT MATTERS: nothing changed state.
+        for slug in (hub, v1, v2):
+            got, _ = self.mcp.tool("topic_get", {"slug": slug})
+            self.assertEqual(got["topic"]["state"], "open",
+                             f"{slug} was WRITTEN by a preview")
+
+        # and the real prune still works when preview is absent
+        rp, _ = self.mcp.tool("topic_state", {"items": [{"slug": v2, "state": "pruned"}]})
+        self.assertTrue(rp["results"][0].get("ok"), rp)
+        self.assertEqual(
+            self.mcp.tool("topic_get", {"slug": v2})[0]["topic"]["state"], "pruned")
+
     def test_07_export_import_merge_duplicates(self):
         import tempfile as _tf
         out, _ = self.mcp.tool("topic_add", {"items": [

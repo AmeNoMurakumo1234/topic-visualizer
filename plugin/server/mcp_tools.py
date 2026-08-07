@@ -1438,12 +1438,30 @@ def _edit_one(b, a: dict) -> dict:
     return b.edit(slug, title, body)
 
 
-def _single_or_batch(b, args, one):
+def _single_or_batch(b, args, one, inherit=()):
     """Every mutation tool takes EITHER its single-op fields OR an `items:[...]` array
-    (same pattern as topic_add). Batch applies each op independently -> {results:[...]}."""
+    (same pattern as topic_add). Batch applies each op independently -> {results:[...]}.
+
+    `inherit` names top-level keys that fall through into every item that does not set one
+    itself. It exists for ONE reason and it is a safety one: `preview` was read only off the
+    per-item dict, so the documented-looking call {items:[...], preview:true} DROPPED the
+    flag and executed a real prune while the caller believed they were reading a report.
+    Found 2026-08-07 previewing six prunes - all six were written. Those six were childless
+    and already slated for pruning so nothing was lost, but the same call against a hub
+    would have cascaded its entire live subtree away under the one flag that exists to stop
+    exactly that. Same disease as 0653: a batch wrapper silently mangling an argument, so
+    the agent believes something safe happened while the store changes underneath.
+    """
     items = args.get("items")
     if items is not None:
-        return {"results": [one(b, it if isinstance(it, dict) else {}) for it in items]}
+        out = []
+        for it in items:
+            it = dict(it) if isinstance(it, dict) else {}
+            for k in inherit:
+                if k in args and k not in it:
+                    it[k] = args[k]
+            out.append(one(b, it))
+        return {"results": out}
     return one(b, args)
 
 
@@ -1483,7 +1501,9 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_search":
         return b.search(str(args.get("query") or ""))
     if name == "topic_state":
-        return _single_or_batch(b, args, _state_one)
+        # preview inherits: a top-level preview must reach every item, or the batch form
+        # silently writes the prune it was asked to only describe (see _single_or_batch).
+        return _single_or_batch(b, args, _state_one, inherit=("preview",))
     if name == "topic_convert":
         return _single_or_batch(b, args, _convert_one)
     if name == "topic_attach":
