@@ -484,13 +484,26 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().edit_topic(slug, ACTOR, title=title, body=body)
 
-    def groom(self, verbose=True):
+    def groom(self, verbose=True, project=None):
+        # 0.51 (issue 0798): `project` lets a VERIFIER aim the report at the store the
+        # ISSUE names rather than the one their cwd happens to key. Without it, running
+        # this from a second clone reported another tree's numbers under no name at all,
+        # and two of five PASS criteria were read straight off the wrong store. Omitted =
+        # the session project, so every existing caller is unchanged.
         try:
-            url = self._q(f"{self.base}/api/topics/groom")
+            url = f"{self.base}/api/topics/groom?project=" + (project or self.project)
             if not verbose:
                 url += "&verbose=0"
             return _http("GET", url)
         except Unreachable:
+            # The sqlite fallback opens THIS session's store and cannot honour an
+            # override. Answering from the wrong tree is the exact defect 0798 is about,
+            # so refuse loudly instead of silently reporting the local one.
+            if project and project != self.project:
+                return {"error": "project override needs the topics server",
+                        "detail": (f"the server at {self.base} is unreachable, and the direct "
+                                   f"sqlite fallback can only read this session's store "
+                                   f"({self.project}), not {project}. Start the server and retry.")}
             return self._fallback().groom_report(verbose=verbose)
 
     def reconcile(self, items, decision=None):
@@ -1325,11 +1338,20 @@ TOOLS = [
                     "breadth_warning is COMPOSITION-aware: it counts un-nested LEAF roots "
                     "(hub roots are healthy structure); a top-level 'alert' key means the "
                     "embedder is down and the semantic hints are absent, NOT clean. Adjust "
-                    "your capture threshold from the evidence.",
+                    "your capture threshold from the evidence. `store` names the tree these "
+                    "numbers describe (read off the live connection) - check it before quoting "
+                    "them as evidence about a particular project, because the store is keyed "
+                    "from the cwd and another tree's numbers look entirely plausible.",
      "inputSchema": {"type": "object", "properties": {
          "verbose": {"type": "boolean", "description":
                      "false drops the fixed guidance prose (fan_out.target / "
-                     "coherence.note) on repeat calls in the same groom; default true"}}}},
+                     "coherence.note) on repeat calls in the same groom; default true"},
+         "project": {"type": "string", "description":
+                     "read ANOTHER project's store (its key, e.g. F--writing-myrepo) "
+                     "instead of the one this session's cwd keys. Omit for the session "
+                     "project. Use it when VERIFYING a tree that is not yours: the report "
+                     "names the store it read in its `store` block, and numbers from the "
+                     "wrong tree are plausible enough to pass a check by accident"}}}},
     {"name": "topic_doctor",
      "description": "Health check: resolved config + LIVE up/down for every piece, so you can see "
                     "whether the plugin runs at full value or is SILENTLY degraded. Surfaces both "
@@ -1519,7 +1541,8 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_restore":
         return b.restore(args.get("id"))
     if name == "topic_groom_report":
-        return b.groom(verbose=args.get("verbose") is not False)
+        return b.groom(verbose=args.get("verbose") is not False,
+                       project=args.get("project") or None)
     if name == "topic_doctor":
         return b.doctor()
     if name == "topic_open":

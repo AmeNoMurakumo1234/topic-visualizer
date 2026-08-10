@@ -327,6 +327,43 @@ class McpOpenVisualizerScoping(unittest.TestCase):
         self.assertIn(b.project, r["url"])
 
 
+class McpGroomReportProjectOverride(unittest.TestCase):
+    """0798: a verifier working from a second clone ran topic_groom_report as a verify
+    handle and got a DIFFERENT project's tree, satisfying two PASS criteria off the wrong
+    store. The store block names the tree now; this is the other half - the tool must let
+    a caller POINT the report at the store the issue names, instead of silently taking
+    whatever cwd hands it. The HTTP layer already scopes on ?project=; it was simply
+    unreachable from MCP."""
+
+    def _url_for(self, args):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        seen = {}
+
+        def fake_http(method, url, body=None, headers=None):
+            seen["url"] = url
+            return {"health": {}}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            mcp_tools._call("topic_groom_report", args)
+        return seen["url"]
+
+    def test_tool_declares_a_project_argument(self):
+        import mcp_tools
+        tool = next(t for t in mcp_tools.TOOLS if t["name"] == "topic_groom_report")
+        self.assertIn("project", tool["inputSchema"]["properties"],
+                      "no way to aim the report at the store under review")
+
+    def test_explicit_project_reaches_the_query_string(self):
+        self.assertIn("project=some-other-store", self._url_for({"project": "some-other-store"}))
+
+    def test_omitting_it_keeps_the_session_project(self):
+        import mcp_tools
+        self.assertIn("project=" + mcp_tools.ServerBackend().project, self._url_for({}))
+
+
 class TestMCPServerBackendDirect(unittest.TestCase):
     """Shape 2: no HTTP server -> the in-process sqlite fallback must carry it."""
 

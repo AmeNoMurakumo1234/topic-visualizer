@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.50.1"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.51.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -2388,6 +2388,31 @@ def health() -> dict:
         "converted": converted, "pruned": pruned, "expired": expired}
 
 
+def _conn_store() -> dict:
+    """Which store did the numbers ACTUALLY come from - read off the live connection.
+
+    Deliberately NOT built from _default_project / DB_PATH. A request pins _conn per
+    project via _use_project() and never moves those globals, so a label taken from them
+    can name a tree the report did not read - the same trap export_topics documents in
+    its own docstring. PRAGMA database_list asks the connection that ran the queries,
+    so the attribution cannot disagree with the numbers it sits beside.
+    """
+    try:
+        row = _conn.execute("PRAGMA database_list").fetchone()
+        path = (row["file"] if row and row["file"] else "") or ""
+    except Exception:                                # a report is never worth an exception
+        return {"project": _default_project, "db_path": None,
+                "note": "could not read the connection's file"}
+    if not path:                                     # in-memory store (tests, ad-hoc use)
+        return {"project": _default_project, "db_path": ":memory:"}
+    try:
+        is_default = Path(path).resolve() == Path(DEFAULT_DB).expanduser().resolve()
+    except Exception:
+        is_default = False
+    return {"project": _default_project if is_default else Path(path).stem,
+            "db_path": path}
+
+
 def groom_report(verbose: bool = True) -> dict:
     """What the topics-groom skill needs, including the calibration feedback that
     teaches the AI from the human's actual behavior. verbose=False drops the fixed
@@ -2568,6 +2593,13 @@ def groom_report(verbose: bool = True) -> dict:
             # only nest and merge will grow it until nobody can read it.
             "subtraction": _subtraction_view(),
             "capture_calibration": [dict(r) for r in by_actor],
+            # 0.51 (issue 0798): NAME the tree these numbers describe. The report used to
+            # state live_topics / stale_open_count / redundant_parents about an unnamed
+            # store, so a verifier running the report from a second clone got a DIFFERENT
+            # project's tree and read two PASS criteria straight off it. Nothing errored
+            # and the numbers were plausible - an absent premise is not reassurance, it
+            # fails toward a FALSE PASS, which is the worst direction available.
+            "store": _conn_store(),
             "expiry_candidates_count": stale_total,
             "expiry_candidates_full_topics": [dict(r) for r in stale]}
     if not verbose:   # 0.45: the guidance paragraphs never change - drop them on request

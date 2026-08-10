@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.51.0 - 2026-08-10 - The groom report described a tree it never named
+
+`topic_groom_report` returned confident numbers - `live_topics`, `stale_open_count`,
+`redundant_parents` - and nothing in the payload said which store they described. The store is
+keyed off the working directory, so the same call from a second clone reports a DIFFERENT
+project's tree, with no error and entirely plausible numbers.
+
+That is not a cosmetic gap. In the field a verifier followed a check handle that said "run
+topic_groom_report against the <X> store", got another project's tree, and two of the five PASS
+criteria - `stale_open_count 0` and `redundant_parents []` - were satisfied BY THE WRONG TREE.
+The item was one step from being closed on a report about a store nobody had looked at. An absent
+premise is not reassurance: with nothing to contradict, a report that names no subject fails
+toward a FALSE PASS, which is the worst direction a check can fail in.
+
+- **The report now carries a `store` block** naming the project key and the db path it read.
+  It is derived from `PRAGMA database_list` on the connection that ran the queries, NOT from the
+  module globals - a request pins its connection per project without moving `DB_PATH`, so a label
+  taken from a global can name a tree the report did not read. Deriving it from the connection
+  makes attribution and numbers structurally unable to disagree.
+- **`topic_groom_report` accepts an optional `project`**, so a verifier can aim the report at the
+  store under review instead of the one their cwd hands them. The HTTP layer already scoped on
+  `?project=`; the capability existed and was simply unreachable from MCP. Omitted, it keeps the
+  session project, so every existing caller is unchanged.
+- **The sqlite fallback refuses an override rather than answering from the local store.** With
+  the server down it can only open this session's tree, and quietly reporting that one is the
+  exact defect being fixed.
+
+`topic_doctor` already reported `store.project` beside `project` and needed no change; this
+closes the other half.
+
 ## 0.50.1 - 2026-08-07 - The prune preview did not survive the batch form
 
 0.50.0 shipped `preview` so an agent learns a prune's blast radius BEFORE causing it. In the
