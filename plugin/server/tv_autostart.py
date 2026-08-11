@@ -31,12 +31,15 @@ LOGDIR = Path.home() / ".topic-visualizer" / "logs"
 _VER = re.compile(r"^\d+(?:\.\d+)*")
 
 # --- Windows console flags. Get these wrong and the user gets random flickering windows. ---
-# CREATE_NO_WINDOW gives the child its OWN console and never shows it, so anything the child
-# later spawns inherits a real-but-invisible console. DETACHED_PROCESS (0x8) reads like the
-# same intent and is the opposite: it leaves the child with NO console, so the first thing it
-# spawns makes Windows ALLOCATE a visible one - a console that appears, takes keyboard focus,
-# and vanishes. On a login-launched server that is a random flicker which eats keystrokes and
-# drops fullscreen games to the desktop, with nothing in any log to trace it to.
+# CREATE_NO_WINDOW gives a CONSOLE-subsystem child its own hidden console, which its children
+# then inherit. DETACHED_PROCESS (0x8) reads like the same intent and is the opposite: it
+# leaves the child with NO console, so the first thing it spawns makes Windows ALLOCATE a
+# visible one - a console that appears, takes keyboard focus, and vanishes. On a login-launched
+# server that is a random flicker which eats keystrokes and drops fullscreen games.
+# FIELD-MEASURED LIMIT (vm-dev-fyibos-newbot, 2026-08-11): a GUI-subsystem child (pythonw)
+# IGNORES the flag - it has no console either way, and ITS console-subsystem children still
+# allocate. So flagging the LAUNCH of a pythonw daemon protects nothing; what protects is every
+# spawn site INSIDE the daemon carrying the flag itself, which is exactly what this repo does.
 # This file is COPIED to ~/.topic-visualizer/ and must not import from the plugin, so the
 # constants are repeated per module and test_no_console_flash.py scans the tree to keep them
 # honest. Do not "simplify" this back to DETACHED_PROCESS.

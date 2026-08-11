@@ -37,9 +37,11 @@ CFG = HOME / "tv-autostart.json"
 VENV = HOME / "venv"
 
 # --- Windows console flags. See test_no_console_flash.py for the full account. ---
-# CREATE_NO_WINDOW gives a child its own INVISIBLE console, so anything IT spawns inherits one.
-# DETACHED_PROCESS (0x8) leaves the child with NO console, so its first spawn makes Windows
-# allocate a VISIBLE one - the random flicker that steals focus and drops fullscreen games.
+# CREATE_NO_WINDOW gives a CONSOLE-subsystem child its own INVISIBLE console; a GUI-subsystem
+# child (pythonw) IGNORES the flag, so each spawn site inside a daemon needs the flag itself -
+# flagging the launch protects nothing (field-measured 2026-08-11). DETACHED_PROCESS (0x8)
+# leaves the child with NO console, so its first spawn makes Windows allocate a VISIBLE one -
+# the random flicker that steals focus and drops fullscreen games.
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_NO_WINDOW = 0x08000000
 

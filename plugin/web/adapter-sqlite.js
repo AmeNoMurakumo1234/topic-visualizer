@@ -55,6 +55,11 @@ window.TopicsAdapter = (function () {
       // The per-install tracker URL template rides this same payload. Stashed on the adapter so
       // the panel can build a link without a second fetch; "" = none configured, refs stay plain.
       api.trackerUrl = payload.tracker_url || "";
+      // 0.53.0: a project with NO STORE now answers an honest empty instead of minting one
+      // (field report: a mis-clicked dropdown entry read as "the board went dark"). Stash the
+      // flag so the shell can SAY it is empty-and-storeless rather than render a blank sky.
+      api.storeExists = payload.store_exists !== false;
+      api.storeNote = payload.note || "";
       return items.map(t => ({
         slug: t.slug, title: t.title, body: t.body, author: t.created_by,
         created: t.created_at, parentSlug: t.parent_slug || null,

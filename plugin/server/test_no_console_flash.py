@@ -64,6 +64,17 @@ def _eval_int(node, consts):
         raise Unresolvable(f"unknown name {node.id!r}")
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
         return _eval_int(node.left, consts) | _eval_int(node.right, consts)
+    # getattr(subprocess, "CREATE_NO_WINDOW", 0) - the messageboard port of this guard taught
+    # its scanner this idiom first, and the first file here to use it went loud-UNREADABLE,
+    # which is the anti-blindness leg doing its job: teach the shape, never default it.
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr" and len(node.args) == 3
+            and isinstance(node.args[0], ast.Name) and node.args[0].id == "subprocess"
+            and isinstance(node.args[1], ast.Constant)):
+        v = getattr(subprocess, node.args[1].value, None)
+        if isinstance(v, int):
+            return v
+        return _eval_int(node.args[2], consts)
     raise Unresolvable(ast.dump(node)[:80])
 
 

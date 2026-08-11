@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.52.2"
+VERSION = "0.53.0"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -272,11 +272,41 @@ def project_db_path(key: str) -> str:
     return DEFAULT_DB if key == "default" else str(_projects_dir() / f"{key}.db")
 
 
+def _store_exists(key: str) -> bool:
+    """Does this project's store FILE exist - as a filesystem question, never a connection
+    attempt, because sqlite CREATES on open. This is the gate that keeps a READ from minting
+    a store (field report 2026-08-11: selecting a ghost project in the dropdown silently
+    created its .db and pinned the view to it - a mis-click indistinguishable from an empty
+    board, and three bogus stores on one machine nobody ever noticed minting)."""
+    return Path(project_db_path(_safe_key(key))).exists()
+
+
+def _adopt_existing_casing(key: str) -> str:
+    """One store file = one project key, whatever casing the caller spelled. Keys arrive from
+    two sources - Claude project DIR names (W--repos-fyibos) and computed git roots
+    (W--Repos-FyiBOS) - and on a case-insensitive filesystem both open the SAME file while
+    staying different strings, so the dropdown grew twin entries and _conns held two
+    connections to one WAL database (field report 2026-08-11). If a store exists under any
+    casing of this key, that stem wins: the file on disk is the identity, not the string.
+    glob reports the TRUE on-disk name even on Windows, which is what makes this reliable."""
+    if key == "default":
+        return key
+    pdir = _projects_dir()
+    if pdir.is_dir():
+        low = key.lower()
+        for f in pdir.glob("*.db"):
+            if f.stem.lower() == low:
+                return f.stem
+    return key
+
+
 def _use_project(key: str) -> str:
     """Point the module-global _conn at this project's (cached, lazily opened) connection.
-    The CALLER MUST HOLD _lock for the whole request so the pin is stable under threading."""
+    The CALLER MUST HOLD _lock for the whole request so the pin is stable under threading.
+    NOTE: opening CREATES a missing store (sqlite semantics) - READ paths must check
+    _store_exists first; the HTTP handler does. Capture paths rely on the create."""
     global _conn
-    key = _safe_key(key)
+    key = _adopt_existing_casing(_safe_key(key))
     c = _conns.get(key)
     if c is None:
         c = open_db(project_db_path(key))
@@ -289,27 +319,41 @@ def list_projects(current: str) -> dict:
     """Every project the dropdown should offer: the Claude projects present on THIS
     machine (so it knows what exists) plus any topic stores already created, current
     flagged. Nothing hardcoded to any one machine."""
-    seen: dict[str, str] = {}                         # key -> clean display label
+    # 0.53.0 (field report 2026-08-11): a dropdown entry must never be a CONSTRUCTOR. Offer a
+    # key only when its store EXISTS (plus the current session project, whose store the first
+    # capture will create) - selecting a storeless key used to mint an empty .db and pin the
+    # view to it, which reads as "the board went dark". And one store FILE is one ENTRY: keys
+    # from dir names vs computed git roots differ only in casing on case-insensitive
+    # filesystems, and used to show as twin projects backed by the same database.
+    seen: dict[str, str] = {}                         # canonical key -> clean display label
+    def _offer(key, label):
+        key = _adopt_existing_casing(key)             # one file, one casing, one entry
+        if key not in seen:
+            seen[key] = label
     if CLAUDE_PROJECTS_DIR.is_dir():
         for d in sorted(CLAUDE_PROJECTS_DIR.iterdir()):
             if d.is_dir() and not d.name.startswith("."):
                 key = _safe_key(_fold_worktree(d.name))   # collapse N worktrees -> one repo entry
-                if key in seen:
-                    continue
+                if not _store_exists(key):
+                    continue                          # no store = nothing to view; not offered
                 cwd = _read_project_cwd(d)                # real path -> just the folder name
-                seen[key] = _repo_name_from_path(cwd) if cwd else _label_fallback(key)
+                _offer(key, _repo_name_from_path(cwd) if cwd else _label_fallback(key))
     pdir = _projects_dir()
     if pdir.is_dir():
         for f in sorted(pdir.glob("*.db")):
-            seen.setdefault(_safe_key(f.stem), _label_fallback(_safe_key(f.stem)))
-    cur = _safe_key(current)
-    if cur not in seen:                              # label the current project cleanly when
-        root = _repo_root()                          # it is the server's own repo (real path
-        if root and _safe_key(encode_project_path(root)) == cur:   # -> real folder name)
+            _offer(_safe_key(f.stem), _label_fallback(_safe_key(f.stem)))
+    # 'default' is the legacy single-store fallback, not a board anyone means to select -
+    # offered ONLY when that store genuinely exists (it maps to DEFAULT_DB, so _store_exists
+    # answers this correctly). The old unconditional setdefault was the second landmine.
+    if _store_exists("default"):
+        _offer("default", "default")
+    cur = _adopt_existing_casing(_safe_key(current))
+    if cur not in seen:                              # the current project is ALWAYS offered,
+        root = _repo_root()                          # storeless or not - a fresh session must
+        if root and _safe_key(encode_project_path(root)) == cur:   # see the project it is in
             seen[cur] = _repo_name_from_path(root)
         else:
             seen[cur] = _label_fallback(cur)
-    seen.setdefault("default", "default")
     projects = [{"key": k, "label": lbl, "current": k == cur}
                 for k, lbl in sorted(seen.items(), key=lambda kv: kv[1].lower())]
     return {"projects": projects, "current": cur}
@@ -3193,6 +3237,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, doctor())
         if u.path.startswith("/api/topics"):
             key = qs.get("project", [None])[0] or _default_project
+            # 0.53.0: a READ must not mint. sqlite creates on open, so before 0.53.0 a GET of a
+            # nonexistent project silently created its store and pinned the view to it - the
+            # dropdown landmine. The board-load endpoint answers an HONEST EMPTY (the UI shows
+            # a message instead of a dark board; a fresh session's project legitimately has no
+            # store until its first capture). Every other read REFUSES: a groom report about a
+            # store that does not exist must error, never report plausible zeros - an absent
+            # premise fails toward a false PASS (the 0798 lesson, one endpoint over).
+            if not _store_exists(key):
+                if u.path == "/api/topics":
+                    return self._json(200, {
+                        "topics": [], "tracker_url": TRACKER_URL, "store_exists": False,
+                        "store": {"project": _safe_key(key),
+                                  "db_path": project_db_path(_safe_key(key)), "exists": False},
+                        "note": "no topic store exists for this project yet - a capture creates it"})
+                return self._json(404, {
+                    "error": f"no topic store for project '{_safe_key(key)}'",
+                    "hint": "check the key (casing included) against /api/projects; a capture "
+                            "or import is what creates a store - a read never does"})
             with _lock:                          # pin this project's connection for the request
                 _use_project(key)
                 if u.path == "/api/topics":
@@ -3301,6 +3363,15 @@ class Handler(BaseHTTPRequestHandler):
                                                   str(body.get("mode") or "trash")))
         if u.path == "/api/projects/restore":
             return self._json(200, project_restore(str(body.get("name") or "")))
+        # 0.53.0: only CAPTURE and IMPORT may create a store - they are how a project comes to
+        # exist, and capture must never fail. Every other mutation of a ghost project refuses
+        # rather than minting an empty store and then failing on the slug anyway.
+        if (not _store_exists(key)
+                and u.path not in ("/api/topics", "/api/topics/import")):
+            return self._json(404, {
+                "error": f"no topic store for project '{_safe_key(key)}'",
+                "hint": "check the key (casing included) against /api/projects; a capture "
+                        "or import is what creates a store"})
         with _lock:                              # pin this project's connection for the request
             key = _use_project(key)
             if u.path == "/api/topics":

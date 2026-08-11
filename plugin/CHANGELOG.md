@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.53.0 - 2026-08-11 - The dropdown was a constructor, and one store could be two projects
+
+From a field report off a second machine (vm-dev-fyibos-newbot): "if someone touches the dropdown
+and picks default or the 2nd FyiBOS the board goes dark and is a major pain to get it to reload."
+Three mechanisms, all verified against source before touching anything:
+
+**Selecting a project MINTED it.** _use_project opened the store unconditionally and sqlite
+creates a missing file, so picking a key with no store silently created an empty .db and pinned
+the view to it - a mis-click indistinguishable from a genuinely empty board. The reporting box
+found three bogus stores it never noticed minting (C:\Windows\System32 among them); this
+machine's own code comments name a fourth. Now:
+
+- **A read never creates.** The board-load endpoint answers a ghost project with an honest
+  200 + `store_exists: false` + an explanatory note (a fresh session's project legitimately has
+  no store until its first capture, so this is first-run UX too, not just mis-click armor). The
+  UI renders a plain-words banner instead of a dark board.
+- **Every other read REFUSES with 404 "no topic store for project ..."** - a groom report about
+  a store that does not exist must error, never report plausible zeros about a tree nobody has.
+- **Mutations refuse too**, except the two verbs that are how a project comes to exist: capture
+  (topic add) and import still create, and a test pins that they do.
+
+**The dropdown offered keys backed by nothing.** list_projects emitted every Claude-projects
+directory whether or not a store existed, plus an unconditional 'default' - an internal fallback
+nobody means to select. Now an entry is offered only when its store exists; 'default' appears
+only when the legacy single-store file is really there; the current session project is always
+offered (its store arrives with the first capture).
+
+**One file could be two projects.** Keys arrive from two sources - Claude project DIR names
+(W--repos-fyibos) and computed git roots (W--Repos-FyiBOS) - and on a case-insensitive
+filesystem both open the SAME file while staying different strings: twin dropdown entries, and
+two live connections to one WAL database. Keys now adopt the casing of the existing store file
+(glob reports the true on-disk name), so the dropdown, the connection cache, and the store
+converge on one identity per file.
+
+Also, from the same report's postscript - a correction to 0.51.1's own changelog, verified by
+their measurement: CREATE_NO_WINDOW is inherited only through a CONSOLE-subsystem intermediate.
+A GUI-subsystem child (pythonw) ignores the flag, so flagging the LAUNCH of a pythonw daemon
+protects nothing - what protects is every spawn site inside the daemon carrying the flag itself,
+which is what this repo does. The comments that claimed blanket inheritance now say so.
+
+11 new tests (test_project_dropdown.py): 7 unit legs on the offer/casing rules, 4 HTTP legs
+proving a ghost read/mutation creates nothing on disk and capture still can.
+
 ## 0.52.2 - 2026-08-11 - The confirm verb recorded its rulings as nobody
 
 Caught minutes after 0.52.1 was armed, by the first live use of the new verb: topic_confirm

@@ -387,5 +387,22 @@
   let saved = localStorage.getItem("topics-view") || "starchart";
   saved = LEGACY[saved] || saved;
   if (!window.TopicsRenderers[saved]) saved = "starchart";
-  core.load().then(() => { show(saved); setupLiveRefresh(); setupGroomUndo(); checkDoctor(); });
+  // 0.53.0: a storeless project renders a plain-words banner, not a dark board. The server
+  // answers the board-load with store_exists:false (and creates NOTHING) when the selected
+  // project has no store; before this, a mis-clicked dropdown entry minted an empty store and
+  // the blank view was indistinguishable from a failed load - "the board went dark".
+  function checkStoreless() {
+    const a = window.TopicsAdapter;
+    if (demo || a.storeExists !== false) return;
+    const bar = document.createElement("div");
+    bar.id = "storeless-note";
+    bar.style.cssText = "padding:7px 14px;background:#1f3a5f;color:#eaf2ff;font-size:12px;" +
+      "line-height:1.45;border-bottom:1px solid #35608f";
+    bar.textContent = "This project has no topic store yet - the board is empty because " +
+      "nothing was ever captured here, not because a load failed. The first capture creates " +
+      "the store. (Only projects with stores are listed in the dropdown.)";
+    document.body.prepend(bar);
+  }
+
+  core.load().then(() => { show(saved); setupLiveRefresh(); setupGroomUndo(); checkDoctor(); checkStoreless(); });
 })();
