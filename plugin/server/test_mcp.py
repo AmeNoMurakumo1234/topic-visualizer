@@ -498,3 +498,33 @@ class TestMCPBoardBackend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class McpConfirmCarriesTheActor(unittest.TestCase):
+    """0.52.1 field catch, minutes after arming: the FIRST live confirm recorded actor 'unknown'.
+    confirm() wrapped its payload in _p(), which stamps project but not actor - every other verb
+    passes actor explicitly, and the server defaults an absent one to 'unknown'. In the one verb
+    whose entire purpose is per-actor attribution, that silently pools every MCP-side ruling
+    under 'unknown' - the same attribution-vanishes-in-transport class as the per-item actor bug
+    fixed in the same release, one seam over."""
+
+    def _payload(self):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        seen = {}
+
+        def fake_http(method, url, body=None, headers=None):
+            seen["body"] = body
+            return {"ok": True}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            mcp_tools._call("topic_confirm", {"slug": "some-topic", "note": "checked"})
+        return seen["body"], mcp_tools.ACTOR
+
+    def test_confirm_sends_the_session_actor(self):
+        body, actor = self._payload()
+        self.assertEqual(body.get("actor"), actor,
+                         "the ruling arrives at the server with no actor and records as "
+                         "'unknown' - the attribution the verb exists for")

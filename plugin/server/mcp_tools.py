@@ -588,8 +588,12 @@ class ServerBackend:
 
     def confirm(self, slug, note=None):
         try:
+            # actor EXPLICIT (0.52.2): _p stamps project only, and the server defaults an absent
+            # actor to 'unknown'. The first live confirm after 0.52.1 armed recorded exactly that
+            # - an anonymous ruling in the one verb whose entire purpose is per-actor attribution.
+            # Same attribution-vanishes-in-transport class as the per-item actor fix, one seam over.
             return _http("POST", f"{self.base}/api/topics/confirm",
-                         self._p({"slug": slug, "note": note}))
+                         self._p({"slug": slug, "note": note, "actor": ACTOR}))
         except Unreachable:
             return self._fallback().confirm_placement(slug, ACTOR, note or "")
 

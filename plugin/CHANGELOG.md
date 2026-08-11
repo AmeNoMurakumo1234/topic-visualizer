@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.52.2 - 2026-08-11 - The confirm verb recorded its rulings as nobody
+
+Caught minutes after 0.52.1 was armed, by the first live use of the new verb: topic_confirm
+returned `"actor": "unknown"`. The MCP client wrapped its payload in _p(), which stamps the
+project but not the actor, and the server defaults an absent actor to 'unknown' - so every
+ruling made through the MCP seam would have pooled under an anonymous label, in the one verb
+whose entire purpose is per-actor attribution. The scoreboard would have filled with verdicts
+nobody could be held to, which is barely better than the empty scoreboard the verb was built
+to fix.
+
+Same class as 0.52.1's per-item actor fix - attribution vanishing in transport - one seam over.
+The actor now rides the payload explicitly, matching every other verb, and a test pins the
+payload shape. One anonymous ruling from the field catch remains in the QC store's history as
+the specimen.
+
 ## 0.52.1 - 2026-08-11 - The report's most-trusted hint could invert, and a capture's actor vanished
 
 Two field defects, both found by using the tool and both verified against the live code before
