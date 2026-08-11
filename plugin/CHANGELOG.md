@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.52.0 - 2026-08-11 - The scoreboard could only ever see disagreement
+
+`suggestion_scoreboard` exists so the auto-file threshold can be tuned on counted evidence instead of
+taste. It reported `labelled_by_a_human: 0` on a store holding 347 logged guesses - and the reason
+was not that nobody had checked.
+
+**Two separate walls produced that one zero, and fixing either alone would have made things worse.**
+Moving a topic logs `reparented`, but CONFIRMING a placement logged nothing at all, because
+`edit_topic` deliberately skips a no-op same-parent reparent so a title-only edit cannot manufacture
+a spurious move. Agreement was therefore structurally unrecordable by anyone. Separately, a ruling by
+actor `ai` was discarded - which is what a designated AI groomer is. Measured on the live store: 292
+of the 347 already carried a verdict the instrument refused to read. Lifting the actor filter alone
+would then have surfaced every disagreement and no agreement, reporting the classifier as far worse
+than it is.
+
+- **NEW `topic_confirm`** (`POST /api/topics/confirm`): record that you checked a machine placement
+  and deliberately left it where it was. The groom's other verdict, beside moving it.
+- It does NOT assert the guess was right. Agreement means the topic still SITS where the classifier
+  put it, so confirming one a human already moved records a ruling that agreed with the HUMAN. That
+  is what keeps the verb from becoming a way to manufacture accuracy.
+- **Agent rulings are reported separately and never merged into human ones** - new
+  `ruled_by_an_agent` / `agent_correct` counts, plus `by_actor` showing WHO ruled and how often they
+  agreed. An agent's ruling is real evidence and weaker than a person's; the original exclusion was
+  right about that and wrong to throw it away. Reporting per-actor also avoids a hand-maintained
+  roster of who counts as a human, which is the kind of list that silently under-covers.
+- **A confirmation now drains `auto_filed_unverified`.** That queue used to be drainable only by
+  MOVING a topic, so an agent who checked a placement and found it correct had no way to say so and a
+  correct classifier could never empty its own queue. Keeping it in was the safe call only while the
+  confirmation was unrecordable.
+- The groom skill gained a step for working that queue, since a tool has to be named at the moment of
+  use to be reachable at all.
+
+7 new behavioural tests plus 2 end-to-end MCP legs; 240 green across 13 suites. Mutation control RUN,
+not merely described: merging agent rulings into the human count, calling every ruling an agreement,
+and reverting the queue drain to reparent-only were each introduced and each caught by exactly the
+intended test.
+
 ## 0.51.2 - 2026-08-10 - The console-flash guard went blind on the fix that made it green
 
 0.51.1 added test_no_console_flash.py to stop DETACHED_PROCESS coming back, and it worked - it

@@ -162,6 +162,28 @@ that depend on a busy mind remembering hygiene ARE the failure mode.
    near-zero expiry with a tiny tree may mean you are missing captures. No scolding
    in either direction; the numbers are the teacher.
 
+6b. **Rule on the machine's guesses - BOTH verdicts, not just the corrections.**
+   `topic_groom_report` returns `coherence.auto_filed_unverified`: topics the classifier
+   filed at capture that nobody has ruled on. Work that queue and give each one a verdict.
+   - It belongs somewhere else -> `topic_reparent` it. That is a ruling.
+   - It is where it belongs -> **`topic_confirm`** it. That is EQUALLY a ruling, and it is
+     the only way agreement is ever recorded: moving a topic logs an event, but leaving it
+     alone is indistinguishable from never having looked, so a confirmation that is not
+     written down does not exist. Confirming also drains it from the queue.
+
+   **Why both halves matter more than they look.** `coherence.suggestion_scoreboard` scores
+   the classifier against real rulings, and it is what tells you where to set the auto-file
+   bar. If you only ever record the moves, it sees every disagreement and no agreement, and
+   reports the classifier as far worse than it is - so the bar gets tuned down on evidence
+   that was never balanced. Measured on one live store before the confirm verb existed: 347
+   logged guesses, 292 of them already ruled on in practice, and the scoreboard read `0`.
+
+   An unmoved auto-file is still NOT a correct one - silence is not assent. That is exactly
+   why the confirmation has to be an explicit act. And confirming does not mean "the guess
+   was right": agreement means the topic still SITS where the classifier put it, so
+   confirming one you already moved records that you agreed with the MOVE. Your ruling is
+   recorded under your actor and reported separately from a human's, never merged into it.
+
 7. **Report in one breath.** The groom ends with a two-line summary to the human:
    what merged, what's waiting on expiry choices, beacon count, tree size trend.
    Tree GREW a lot? Check capture threshold discipline. Tree static and unserved?

@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.51.2"
+VERSION = "0.52.0"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2623,6 +2623,39 @@ def groom_report(verbose: bool = True) -> dict:
 
 _SUGG_RE = re.compile(r"^(?P<hub>[a-z0-9-]+) @ (?P<score>[0-9.]+) .*- (?P<verdict>FILED|declined)$")
 
+# A RULING on a machine placement is a later reparent OR an explicit confirmation. 'similarity' is
+# the classifier itself, so its own writes can never be evidence about its own accuracy.
+_RULING_EVENTS = ("reparented", "placement_confirmed")
+_CLASSIFIER_ACTOR = "similarity"
+_AGENT_ACTOR = "ai"
+
+
+def confirm_placement(slug: str, actor: str, note: str = "") -> dict:
+    """Record that someone CHECKED a machine placement and deliberately left it where it was.
+
+    THE GAP THIS CLOSES. Moving a topic logs `reparented`, but confirming one logged NOTHING -
+    edit_topic skips a no-op same-parent reparent on purpose, so that a title-only edit does not
+    manufacture a spurious move. The consequence was that AGREEMENT with the classifier was
+    structurally unrecordable by anybody, human or agent. suggestion_scoreboard could therefore only
+    ever observe DISAGREEMENTS, and the verify queue could only be drained by moving a topic - an
+    agent who checked a placement and found it correct had no way to say so.
+
+    Measured on the live QC store 2026-08-11 before this shipped: 347 logged guesses, 292 of which
+    already carried a verdict the instrument discarded, reported as `labelled_by_a_human: 0`.
+
+    Note this does NOT assert the guess was right - suggestion_scoreboard decides that by asking
+    whether the topic still SITS where the machine put it. Confirming a topic a human already moved
+    away records a ruling that agreed with the HUMAN, not with the classifier. Keeping those apart is
+    what stops the verb becoming a way to manufacture accuracy.
+    """
+    with _lock:
+        row = _conn.execute("SELECT id FROM topic WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            return _fail("not found")
+        _event(row["id"], "placement_confirmed", actor, note or "placement confirmed in place")
+        _conn.commit()
+    return {"ok": True, "slug": slug, "actor": actor}
+
 
 def suggestion_scoreboard() -> dict:
     """Was the hub suggestion RIGHT? Scored against where a human actually put the topic.
@@ -2646,59 +2679,90 @@ def suggestion_scoreboard() -> dict:
         "WHERE e.event = 'hub_suggested'").fetchall()
     buckets: dict = {}
     labelled = unlabelled = hits = 0
+    agent_ruled = agent_hits = 0
+    by_actor: dict = {}
     misses: list = []
+    placeholders = ",".join("?" for _ in _RULING_EVENTS)
     for r in rows:
         m = _SUGG_RE.match(r["note"] or "")
         if not m:
             continue
         score = float(m.group("score"))
         filed = m.group("verdict") == "FILED"
-        # did a HUMAN move it after the machine spoke? that reparent is the label
-        human = _conn.execute(
-            "SELECT 1 FROM topic_event r WHERE r.topic_id=? AND r.event='reparented' "
-            "AND r.actor NOT IN ('similarity','ai') LIMIT 1", (r["tid"],)).fetchone()
+        # Did anyone RULE after the machine spoke - by moving it, or by explicitly confirming it?
+        # The LATEST ruling is the operative one; the classifier's own writes are never evidence.
+        ruling = _conn.execute(
+            f"SELECT r.actor AS actor FROM topic_event r WHERE r.topic_id=? "
+            f"AND r.event IN ({placeholders}) AND r.actor != ? "
+            f"ORDER BY r.id DESC LIMIT 1",
+            (r["tid"], *_RULING_EVENTS, _CLASSIFIER_ACTOR)).fetchone()
         key = f"{int(score * 20) / 20:.2f}"          # 0.05-wide buckets
         b = buckets.setdefault(key, {"n": 0, "labelled": 0, "correct": 0})
         b["n"] += 1
-        if not human:
+        if not ruling:
             unlabelled += 1
+            continue
+        agreed = r["parent_slug"] == m.group("hub")
+        actor = ruling["actor"] or "unknown"
+        a = by_actor.setdefault(actor, {"n": 0, "agreed": 0})
+        a["n"] += 1
+        a["agreed"] += 1 if agreed else 0
+        # An AGENT's ruling is real evidence and WEAKER than a person's, so it is reported on its own
+        # line and never folded into the human columns - that distinction is what the original
+        # actor exclusion was right to protect. What it got wrong was discarding the agent ruling
+        # entirely, which reported 0 over a population that had largely been ruled on.
+        if actor == _AGENT_ACTOR:
+            agent_ruled += 1
+            agent_hits += 1 if agreed else 0
             continue
         labelled += 1
         b["labelled"] += 1
-        if r["parent_slug"] == m.group("hub"):
+        if agreed:
             hits += 1
             b["correct"] += 1
         else:
             misses.append({"topic": r["title"][:70], "guessed": m.group("hub"),
                            "human_chose": r["parent_slug"], "score": score, "filed": filed})
     return {
-        "note": "score buckets vs where a HUMAN actually filed it. Unlabelled = nobody has ruled yet; "
-                "an unmoved auto-file is NOT a correct one. Counts, not percentages - n is small.",
+        "note": "score buckets vs where a ruling actually put the topic. A RULING is a later reparent "
+                "or an explicit confirm_placement; unlabelled = nobody has ruled at all, and an "
+                "unmoved auto-file is NOT a correct one. Agent rulings are reported separately and "
+                "never merged into the human counts. Counts, not percentages - n is small.",
         "suggestions_logged": len(rows),
         "labelled_by_a_human": labelled,
         "unlabelled": unlabelled,
         "correct": hits,
+        "ruled_by_an_agent": agent_ruled,
+        "agent_correct": agent_hits,
+        "by_actor": dict(sorted(by_actor.items())),
         "buckets": dict(sorted(buckets.items())),
         "misses": misses[:12],
     }
 
 
 def _auto_filed_unverified() -> list[dict]:
-    """Live topics the similarity FILED at capture that no human has reparented since.
+    """Live topics the similarity FILED at capture that nobody has RULED on since.
 
-    'Verified' is deliberately defined as a later human reparent - moving it, or moving it back - not
-    as anyone having merely looked. A groom that confirms a placement in place still leaves it here,
-    which over-reports rather than under-reports; that is the safe direction for a queue whose whole
-    job is to stop machine guesses from setting like concrete."""
+    'Verified' is a later reparent - moving it, or moving it back - or an explicit
+    confirm_placement. It is still never 'anyone having merely looked': the ruling has to be written
+    down, which is exactly what confirm_placement exists to make possible.
+
+    THIS USED TO SAY confirming in place still left a topic here, "which over-reports rather than
+    under-reports; that is the safe direction". That was the right call for as long as a confirmation
+    was UNRECORDABLE - the queue could not tell a checked placement from an unexamined one, so it had
+    to assume the worse. Now that agreement can be written down, keeping a confirmed placement in the
+    queue would not be caution, it would just be discarding a real ruling: the queue would never
+    drain for a classifier that is right, which is the one outcome that should empty it fastest."""
     LIVE = "('seedling','open','discussed')"
+    placeholders = ",".join("?" for _ in _RULING_EVENTS)
     rows = _conn.execute(
         f"SELECT t.slug, t.title, e.note, e.at, p.slug AS parent "
         f"FROM topic_event e JOIN topic t ON t.id = e.topic_id "
         f"LEFT JOIN topic p ON p.id = t.parent_id "
         f"WHERE e.event = 'auto_filed' AND t.state IN {LIVE} "
         f"AND NOT EXISTS (SELECT 1 FROM topic_event r WHERE r.topic_id = e.topic_id "
-        f"                AND r.event = 'reparented' AND r.id > e.id) "
-        f"ORDER BY e.id DESC").fetchall()
+        f"                AND r.event IN ({placeholders}) AND r.id > e.id) "
+        f"ORDER BY e.id DESC", tuple(_RULING_EVENTS)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -3246,6 +3310,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, merge_topics(
                     str(body.get("into") or ""), str(body.get("from") or ""), actor,
                     body.get("body")))
+            if u.path == "/api/topics/confirm":          # 0.52: record a ruling that AGREED
+                return self._json(200, confirm_placement(
+                    str(body.get("slug") or ""), actor, str(body.get("note") or "")))
             if u.path == "/api/topics/reconcile":        # 0.42 bulk tracker reconcile
                 return self._json(200, reconcile(
                     body.get("items") or [], actor,

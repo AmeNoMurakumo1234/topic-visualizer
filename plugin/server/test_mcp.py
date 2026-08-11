@@ -144,6 +144,31 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         self.assertIn("health", g)                  # plugin-server groom shape
         self.assertIn("capture_calibration", g)
 
+    def test_02b_confirm_placement_is_reachable_over_the_seam(self):
+        """A verb only the server module can call is not a verb - 0798 was exactly this shape (the
+        HTTP layer could already scope a store and MCP could not reach it), so the confirm ruling
+        gets an end-to-end leg rather than a unit test proving the function exists in python."""
+        out, err = self.mcp.tool("topic_add", {"items": [{"title": "a placement to rule on"}]})
+        self.assertFalse(err)
+        slug = out["results"][0]["slug"]
+
+        res, err = self.mcp.tool("topic_confirm", {"slug": slug, "note": "checked, it belongs here"})
+        self.assertFalse(err)
+        self.assertTrue(res.get("ok"), res)
+
+        got, _ = self.mcp.tool("topic_get", {"slug": slug})
+        self.assertIn("placement_confirmed",
+                      [h.get("event") for h in (got["topic"].get("history") or [])],
+                      "the ruling has to be visible in the record it was written to")
+
+    def test_02c_confirming_a_missing_topic_reports_failure_over_the_seam(self):
+        """The failure has to survive the transport too - a verb that swallows a bad slug into a
+        cheerful ok is how a typo becomes a fabricated ruling. It surfaces BOTH ways, matching the
+        rest of the surface: ok=False in the payload and isError on the envelope."""
+        res, err = self.mcp.tool("topic_confirm", {"slug": "definitely-not-a-real-slug-0000"})
+        self.assertTrue(err, "a bad slug must raise, not return quietly")
+        self.assertFalse(res.get("ok"))
+
     def test_03_attach_multi_parent(self):
         out, _ = self.mcp.tool("topic_add", {"items": [
             {"title": "avenue A"}, {"title": "avenue B"},

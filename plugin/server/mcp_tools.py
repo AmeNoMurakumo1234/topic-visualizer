@@ -586,6 +586,13 @@ class ServerBackend:
         except Unreachable:
             return self._fallback().merge_topics(into, from_, ACTOR, body)
 
+    def confirm(self, slug, note=None):
+        try:
+            return _http("POST", f"{self.base}/api/topics/confirm",
+                         self._p({"slug": slug, "note": note}))
+        except Unreachable:
+            return self._fallback().confirm_placement(slug, ACTOR, note or "")
+
     def duplicates(self, band="kin"):
         try:
             return _http("GET", self._q(f"{self.base}/api/topics/duplicates?band={band}"))
@@ -1027,6 +1034,11 @@ class BoardBackend:
         return {"error": "the board backend cannot merge topics (posts are append-only and "
                          "the board is already a shared store). Reconcile on the sqlite backend."}
 
+    def confirm(self, slug, note=None):
+        return {"error": "the board backend has no auto-file classifier, so there is no machine "
+                         "placement to rule on and nothing a confirmation would be scored against. "
+                         "Confirm placements on the sqlite backend."}
+
     def duplicates(self, band="kin"):
         from server import near_duplicates_in
         topics = self._load()
@@ -1410,6 +1422,21 @@ TOOLS = [
          "from": {"type": "string", "description": "the slug to fold away"},
          "body": {"type": "string", "description": "optional rewritten combined body"}},
        "required": ["into", "from"]}},
+    {"name": "topic_confirm",
+     "description": "Record that you CHECKED an auto-filed placement and deliberately left it where "
+                    "it was - the groom's other verdict, beside moving it. Use it whenever you audit "
+                    "the auto_filed_unverified queue and agree with the machine; it drains that "
+                    "topic from the queue and is the ONLY way an agreement enters "
+                    "suggestion_scoreboard. Without it the scoreboard can see disagreements only, so "
+                    "it reports the classifier as worse than it is and its threshold can never be "
+                    "tuned on real evidence. It does NOT assert the guess was right: agreement means "
+                    "the topic still SITS where the classifier put it, so confirming one a human "
+                    "already moved records a ruling that agreed with the HUMAN. Your ruling is "
+                    "recorded under your actor and reported separately from a human's, never merged.",
+     "inputSchema": {"type": "object", "properties": {
+         "slug": {"type": "string", "description": "the topic whose placement you are ruling on"},
+         "note": {"type": "string", "description": "optional: why you agree (what you checked)"}},
+       "required": ["slug"]}},
     {"name": "topic_duplicates",
      "description": "List candidate near-duplicate PAIRS across the live tree (the reconcile "
                     "worklist), semantic when the local embedder is up. band: 'kin' (default) "
@@ -1567,6 +1594,8 @@ def _call(name: str, args: dict) -> dict:
         return b.import_(args.get("dir"))
     if name == "topic_merge":
         return b.merge(str(args.get("into") or ""), str(args.get("from") or ""), args.get("body"))
+    if name == "topic_confirm":
+        return b.confirm(str(args.get("slug") or ""), args.get("note"))
     if name == "topic_duplicates":
         return b.duplicates(str(args.get("band") or "kin"))
     if name == "topic_reconcile":

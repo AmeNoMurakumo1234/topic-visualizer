@@ -337,5 +337,108 @@ class AutoFile(Base):
                          "once a person has ruled on the placement it is no longer a machine guess")
 
 
+class ConfirmPlacement(Base):
+    """A CONFIRMATION has to be recordable, or the scoreboard can only ever see disagreement.
+
+    THE DEFECT THESE PIN (measured on the live QC store 2026-08-11, Tare + Polaris independently):
+    347 topics carried a logged guess and 292 of them - 84 percent - ALREADY had a verdict the
+    instrument refused to read, so it reported "0 labelled" over a population that had largely been
+    ruled on. Two separate walls produced that one zero. (1) Moving a topic logs `reparented`, but
+    CONFIRMING a placement in place logs NOTHING at all, because edit_topic deliberately skips a
+    no-op same-parent reparent - so agreement was structurally unrecordable by anyone, human or
+    agent. (2) The ruling actor is excluded when it is 'ai', which is what the designated groomer is.
+
+    Why lifting the actor filter alone would have made it WORSE rather than better: with (1) still in
+    place the scoreboard would then see every disagreement and no agreement, and report the
+    classifier as far worse than it is. The recordable-agreement half is load-bearing and has to land
+    first. And the fix must NOT merge an agent's ruling into the human count - an agent's move is
+    genuinely weaker evidence than a person's, which is what the original exclusion was right about.
+    """
+
+    def _guessed(self, hub_title="Guards and gates", word="guard"):
+        """A capture the machine auto-filed under `hub_title` - i.e. one logged guess, unruled.
+
+        `word` is the capture's distinctive token and must not appear in ANY other hub's title: the
+        fake embedder matches on substring, so a second hub sharing the token would tie, trip the
+        margin rule and DECLINE - leaving the topic at root and testing something else entirely.
+        """
+        hub = self._hub(hub_title)
+        self._fake_embed({hub_title.lower(): (1.0, 0.0, 0.0), word: (1.0, 0.0, 0.0)})
+        r = server.add_topics([{"title": f"{word} cannot fail", "autofile": True}], "tester")[0]
+        return hub, r["slug"]
+
+    def test_11_a_confirmation_is_recorded_as_an_event(self):
+        """Nothing else in the tool can write this fact down, so the event is the whole feature."""
+        _, slug = self._guessed()
+        self.assertNotIn("placement_confirmed", self._events(slug))
+        res = server.confirm_placement(slug, "Murakumo")
+        self.assertTrue(res.get("ok"), res)
+        self.assertIn("placement_confirmed", self._events(slug))
+
+    def test_12_confirming_an_unknown_topic_fails_instead_of_writing(self):
+        """A typo must not silently manufacture a ruling for a topic that does not exist."""
+        res = server.confirm_placement("no-such-topic-9999", "Murakumo")
+        self.assertFalse(res.get("ok"))
+
+    def test_13_a_human_confirmation_counts_as_a_ruling_that_AGREED(self):
+        """The case the old scoreboard could not see at all: the guess was right and someone said so."""
+        _, slug = self._guessed()
+        before = server.suggestion_scoreboard()
+        self.assertEqual(before["labelled_by_a_human"], 0)
+        self.assertEqual(before["correct"], 0)
+
+        server.confirm_placement(slug, "Murakumo")
+
+        after = server.suggestion_scoreboard()
+        self.assertEqual(after["labelled_by_a_human"], 1, "a confirmation IS a human ruling")
+        self.assertEqual(after["correct"], 1, "confirming the machine's hub means the guess was right")
+        self.assertEqual(after["unlabelled"], 0)
+
+    def test_14_an_AGENT_confirmation_is_counted_separately_and_never_merged(self):
+        """The distinction the original exclusion was right to protect: an agent's ruling is real
+        evidence but weaker than a person's, so it is reported on its own line, not folded in."""
+        _, slug = self._guessed()
+        server.confirm_placement(slug, "ai")
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["labelled_by_a_human"], 0, "an agent is not a human ruling")
+        self.assertEqual(board["ruled_by_an_agent"], 1)
+        self.assertEqual(board["agent_correct"], 1)
+        self.assertEqual(board["correct"], 0, "the human column must stay untouched by agent rulings")
+
+    def test_15_the_scoreboard_reports_WHO_ruled(self):
+        """Reported per-actor rather than judged against a hand-maintained list of who counts as a
+        person - this repo has been bitten twice this week by a guard whose hand-kept scope list
+        silently under-covered, and a roster of humans is the same shape."""
+        _, a = self._guessed("Guards and gates", "guard")
+        _, b = self._guessed("Zebra husbandry", "zebra")
+        server.confirm_placement(a, "Murakumo")
+        server.confirm_placement(b, "ai")
+        by_actor = server.suggestion_scoreboard()["by_actor"]
+        self.assertEqual(by_actor["Murakumo"]["n"], 1)
+        self.assertEqual(by_actor["Murakumo"]["agreed"], 1)
+        self.assertEqual(by_actor["ai"]["n"], 1)
+
+    def test_16_a_confirmation_drains_the_unverified_queue(self):
+        """Before this verb existed the queue could ONLY be drained by moving a topic, so an agent who
+        checked a placement and found it correct had no way to say so and it stayed a machine guess
+        for ever. Confirming is now a recorded ruling, so it drains - the reason the old docstring
+        called leaving it 'the safe direction' was that the confirmation was unrecordable."""
+        _, slug = self._guessed()
+        self.assertEqual(len(server._auto_filed_unverified()), 1)
+        server.confirm_placement(slug, "ai")
+        self.assertEqual(server._auto_filed_unverified(), [])
+
+    def test_17_confirming_a_placement_that_was_moved_away_does_NOT_read_as_agreement(self):
+        """Uniform rule with the move path: agreement is 'the topic sits where the machine guessed',
+        never 'somebody pressed confirm'. Otherwise the verb becomes a way to manufacture accuracy."""
+        _, slug = self._guessed()
+        elsewhere = self._hub("Somewhere else entirely")
+        server.edit_topic(slug, "Murakumo", None, None, elsewhere, None)
+        server.confirm_placement(slug, "Murakumo")
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["correct"], 0, "it was confirmed where a HUMAN put it, not where the machine did")
+        self.assertEqual(board["labelled_by_a_human"], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
