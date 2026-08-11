@@ -161,3 +161,76 @@ class GroomCompositionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SeeAlsoIsNotAStructuralParent(unittest.TestCase):
+    """A see_also is a WEAK cross-link by its own tool's definition ('a quiet dashed see-also'),
+    but the redundant_parents detector built ancestry from every topic_parent row with no filter
+    on rel. Measured consequence (2026-08-10, live QC store): a node with a real hub parent and
+    one see_also to a SIBLING under that hub was reported with the HUB edge as redundant and the
+    see_also target as keep_parent - i.e. the highest-trust hint in the report recommended
+    deleting the correct spine edge and re-hanging the node off a weak cross-link. The
+    recommendation INVERTS, on the hint whose own note says 'a near-certain cleanup'."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self._db = server.DB_PATH
+        self._conn = server._conn
+        self._embed = server._embed
+        server.DB_PATH = str(Path(self.tmp.name) / "t.db")
+        server._conn = server.open_db(server.DB_PATH)
+        server._embed = lambda texts: None          # keyword mode: deterministic, no embedder
+
+    def tearDown(self):
+        try:
+            server._conn.close()
+        except Exception:
+            pass
+        server.DB_PATH = self._db
+        server._conn = self._conn
+        server._embed = self._embed
+        self.tmp.cleanup()
+
+    def _add(self, title, parent=None):
+        item = {"title": title}
+        if parent:
+            item["parent_slug"] = parent
+        return server.add_topics([item], "t")[0]["slug"]
+
+    def test_see_also_to_a_sibling_is_not_redundancy(self):
+        """The measured inversion, reproduced exactly: hub -> {node, sibling}, node --see_also-->
+        sibling. The hub edge is CORRECT and must not be reported redundant."""
+        hub = self._add("the hub")
+        node = self._add("the node", parent=hub)
+        sib = self._add("the sibling", parent=hub)
+        server.attach_parent(node, sib, "t", note="related", kind="see_also")
+        red = server.groom_report(verbose=False)["coherence"]["redundant_parents"]
+        self.assertEqual([r for r in red if r["child"] == node], [],
+                         "a weak see_also conferred ancestry and inverted the recommendation")
+
+    def test_real_co_parent_ancestor_is_still_caught(self):
+        """The filter must not lobotomise the detector: a genuine ancestor-as-second-parent
+        (grandparent AND parent both parenting one node, via a real co_parent edge) is the
+        true positive this hint exists for, and must still be reported."""
+        grand = self._add("grandparent")
+        parent = self._add("parent", parent=grand)
+        node = self._add("node", parent=parent)
+        server.attach_parent(node, grand, "t", note="direct too", kind="co_parent")
+        red = server.groom_report(verbose=False)["coherence"]["redundant_parents"]
+        mine = [r for r in red if r["child"] == node]
+        self.assertEqual(len(mine), 1, "the true-positive case stopped being detected")
+        self.assertEqual(mine[0]["redundant_parent"], grand)
+        self.assertEqual(mine[0]["keep_parent"], parent)
+
+    def test_see_also_chain_does_not_carry_ancestry_transitively(self):
+        """Ancestry must not flow THROUGH a see_also either: node's co_parent X, where X has a
+        see_also to node's other ancestor, must not convict the ancestor edge."""
+        top = self._add("top")
+        mid = self._add("mid", parent=top)
+        node = self._add("node", parent=mid)
+        other = self._add("other")
+        server.attach_parent(node, other, "t", note="real second parent", kind="co_parent")
+        server.attach_parent(other, top, "t", note="loose reference", kind="see_also")
+        red = server.groom_report(verbose=False)["coherence"]["redundant_parents"]
+        self.assertEqual([r for r in red if r["child"] == node], [],
+                         "ancestry flowed through a see_also edge")

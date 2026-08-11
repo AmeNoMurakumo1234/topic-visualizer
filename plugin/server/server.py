@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.52.0"
+VERSION = "0.52.1"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -1682,6 +1682,18 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
         if not title:
             results.append({"error": "title required"})
             continue
+        # PER-ITEM actor wins over the call-level one (0.52.1). An item carrying its own actor
+        # used to have the key SILENTLY dropped, so the capture landed as the transport default
+        # ('ai' over MCP) - and the misattribution surfaced two layers away, in the per-actor
+        # capture CALIBRATION the auto-filer bars are tuned from. The live store carries
+        # 'unknown' calibration rows that are really other agents' captures.
+        item_actor = str(it.get("actor") or "").strip() or actor
+        # Unknown keys are LOUD, never swallowed. Not an error - capture must never fail on a
+        # typo (a lost idea is unrecoverable, an untidy one is not) - but a dropped key and an
+        # honoured key must not return the same shape, or the drop is invisible (the actor key
+        # above was exactly this, for months).
+        ignored = sorted(set(it) - {"title", "body", "parent_slug", "priority", "tags",
+                                    "provenance", "state", "role", "actor", "autofile"})
         # Capture is the one path that must not fail - a lost idea is unrecoverable, an unfiled or
         # un-deduped one is merely untidy. Neither the duplicate check nor the hub suggester may take
         # a capture down with them.
@@ -1739,7 +1751,7 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                            VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
                         (slug, title, str(it.get("body") or ""), parent_id, state,
                          "critical" if it.get("priority") == "critical" else "normal",
-                         str(it.get("tags") or ""), actor, str(it.get("provenance") or ""),
+                         str(it.get("tags") or ""), item_actor, str(it.get("provenance") or ""),
                          "hub" if it.get("role") == "hub" else "topic"))
                     break
                 except sqlite3.IntegrityError:
@@ -1750,7 +1762,7 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                         break
             if slug is None:
                 continue
-            _event(cur.lastrowid, "created", actor, f"as {state}")
+            _event(cur.lastrowid, "created", item_actor, f"as {state}")
             # RECORD THE SUGGESTION, INCLUDING WHEN IT DECLINES (0.47). A below-threshold match used
             # to leave no trace at all, so the distribution was invisible and the next person to tune
             # the threshold would guess exactly as I did - I calibrated 0.46's bar on six captures I
@@ -1775,6 +1787,8 @@ def add_topics(items: list[dict], actor: str) -> list[dict]:
                        f"UNVERIFIED, a groom should confirm or move it")
             _conn.commit()
         out = {"slug": slug, "near_duplicates": dups}
+        if ignored:
+            out["ignored_keys"] = ignored
         if suggested:
             out["suggested_parent"] = suggested
             if auto_filed:
@@ -2510,10 +2524,18 @@ def groom_report(verbose: bool = True) -> dict:
                 f"SELECT c.slug AS c, p.slug AS p FROM topic c JOIN topic p ON p.id=c.parent_id "
                 f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
             parents_of.setdefault(r["c"], set()).add(r["p"])
+        # rel != 'see_also' (0.52.1): a see_also is a WEAK cross-link by topic_attach's own
+        # contract ("a quiet dashed see-also"), not a structural parent - but this query used to
+        # read every row, so ancestry flowed through it. Measured inversion (2026-08-10, live
+        # store): a node with a real hub parent and a see_also to a SIBLING under that hub was
+        # reported with the HUB edge as redundant and the see_also target as keep_parent - the
+        # report's highest-trust hint recommending deletion of a correct spine edge. Only
+        # co_parent edges are ancestry; the prune cascade's spared_by_another_avenue deliberately
+        # still counts a see_also as a tether (sparing MORE is the safe direction there).
         for r in _conn.execute(
                 f"SELECT c.slug AS c, p.slug AS p FROM topic_parent tp "
                 f"JOIN topic c ON c.id=tp.topic_id JOIN topic p ON p.id=tp.parent_id "
-                f"WHERE c.state IN {LIVE} AND p.state IN {LIVE}"):
+                f"WHERE c.state IN {LIVE} AND p.state IN {LIVE} AND tp.rel != 'see_also'"):
             parents_of.setdefault(r["c"], set()).add(r["p"])
 
         def _reaches(start, target):     # does walking UP from `start` (all parent edges) hit `target`?

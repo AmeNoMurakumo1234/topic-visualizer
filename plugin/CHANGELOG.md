@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.52.1 - 2026-08-11 - The report's most-trusted hint could invert, and a capture's actor vanished
+
+Two field defects, both found by using the tool and both verified against the live code before
+fixing (a third filing - "?project is ignored on state/merge/edit/attach" - was tested empirically
+and found already fixed: body-project reaches the store on every verb, so it closed as stale).
+
+**redundant_parents counted a see_also as a structural parent.** The ancestry query read every
+topic_parent row with no filter on `rel`, while topic_attach's own contract calls a see_also "a
+quiet dashed see-also". Measured consequence on a live store: a node with a real hub parent and
+one see_also to a SIBLING under that hub was reported with the HUB edge as redundant and the
+see_also target as keep_parent - the report's highest-trust hint ("a near-certain cleanup", its
+own note says) recommending the deletion of a correct spine edge and re-hanging the node off a
+weak cross-link. Now only co_parent edges confer ancestry. Deliberately NOT changed: the prune
+cascade's spared_by_another_avenue still counts a see_also as a tether, because sparing MORE is
+the safe direction there - the two consumers mean different things by "parent" and now say so.
+
+**A per-item `actor` was silently dropped.** add_topics took actor only at call level, so an item
+carrying its own was quietly re-attributed to the transport default ('ai' over MCP). Nothing
+errored; the damage surfaced two layers away, in the per-actor capture calibration the auto-filer
+bars are tuned from - the live store carries 'unknown' calibration rows that are really other
+agents' captures. Now a per-item actor wins, the MCP schema declares it, and - the general fix -
+ANY unknown item key comes back named in the result's `ignored_keys` instead of vanishing.
+Capture still never fails on a typo; it just cannot silently eat one any more.
+
+New tests: 3 legs on see_also semantics (including the true-positive ancestor case, so the filter
+cannot lobotomise the detector, and transitive flow through a see_also), 5 on item actor and
+ignored keys.
+
 ## 0.52.0 - 2026-08-11 - The scoreboard could only ever see disagreement
 
 `suggestion_scoreboard` exists so the auto-file threshold can be tuned on counted evidence instead of

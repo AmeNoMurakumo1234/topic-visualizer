@@ -1135,6 +1135,11 @@ TOOLS = [
                       "container you mint during a GROOM to nest children under. A hub is scaffolding, "
                       "not a capture: undo removes an empty post-checkpoint hub, so mark it so a "
                       "rollback stays clean. Only for groom-minted containers, never a real capture."},
+             "actor": {"type": "string", "description":
+                       "attribute THIS item to a different actor than the call-level one - for "
+                       "capturing on another agent's behalf. Feeds per-actor calibration, so "
+                       "attribute honestly. (Silently dropped before 0.52.1; unknown item keys "
+                       "now come back named in the result's ignored_keys instead of vanishing.)"},
          }, "required": ["title"]}},
          "actor": {"type": "string", "description": "who is capturing - pass a STABLE label "
                    "(same string every session) so per-actor calibration can learn; "
