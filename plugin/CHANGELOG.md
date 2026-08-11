@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.55.1 - 2026-08-11 - Constellation's hide-discussed joins the other two views
+
+Owner report: lineage and star chart have the toggle in the right place; constellation is the
+odd one out. It was odd THREE ways, not one:
+
+- **Its own checkbox, buried in the legend** instead of the shared top-right toggle.
+- **Its own module-level boolean** - unpersisted, so the choice silently reset to "show
+  everything" every time you switched views or reloaded, unlike the other two.
+- **Its own blunter rule**: it hid EVERY discussed node, including one still holding live
+  children - orphaning the live subtree visually - where the shared rule deliberately keeps a
+  discussed node with live descendants (hiding it would strand its children).
+
+Now one mechanism in all three views: same `core.discussedToggle` in the same screen position
+(verified at identical coordinates across a view round-trip), persisted per view like the
+others, and the shared keep-live-structure semantics. The behaviour change to note: a
+discussed node with live children now STAYS visible in constellation - that is the unification,
+not a regression. The legend checkbox and its orphaned CSS are gone.
 ## 0.55.0 - 2026-08-11 - The lineage view narrated a different tree than it drew
 
 Owner report: expand/collapse needs whole-tree buttons; "discussed" cards with live children plus

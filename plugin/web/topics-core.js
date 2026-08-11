@@ -424,6 +424,10 @@ window.TopicsCore = (function () {
     core.hideDiscussed = {
       lineage: localStorage.getItem("topics-hide-discussed-lineage") === "on",
       starchart: localStorage.getItem("topics-hide-discussed-starchart") === "on",
+      // 0.55.1: constellation had its OWN module-level boolean and a checkbox buried in the
+      // legend - unpersisted (reset on every view switch), differently placed, and with
+      // different semantics. One mechanism, three views, one place on screen.
+      constellation: localStorage.getItem("topics-hide-discussed-constellation") === "on",
     };
     core.setHideDiscussed = function (view, on) {
       core.hideDiscussed[view] = !!on;

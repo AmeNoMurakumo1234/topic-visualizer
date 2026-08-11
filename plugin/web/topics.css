@@ -102,8 +102,6 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .node.critical text.label { fill: #ffb26a; font-weight: 600; }
 .node circle.beacon { fill: none; stroke: #ff9a4a; stroke-width: 2; pointer-events: none; }
 /* constellation legend declutter toggle */
-.lgtoggle { cursor: pointer; user-select: none; opacity: 0.85; }
-.lgtoggle input { vertical-align: middle; margin: 0 3px 0 0; cursor: pointer; }
 .node circle.halo { fill: none; stroke: #f0b24a; stroke-opacity: 0.6;
                     stroke-dasharray: 3 4; stroke-width: 1.3; }
 .tv-crumbs { position: absolute; top: 10px; left: 14px; z-index: 5; font-size: 12px;

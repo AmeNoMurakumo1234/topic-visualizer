@@ -6,7 +6,6 @@ window.TopicsRenderers.constellation = (function () {
   "use strict";
   let core, stage, svg, view, fogG, edgesG, nodesG;
   let tx = 0, ty = 0, scale = 1, labelRaf = null, animId = null, userMoved = false, ac = null;
-  let hideDiscussed = false;              // legend toggle: declutter already-talked-about topics
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   const DEFS = `
@@ -72,9 +71,12 @@ window.TopicsRenderers.constellation = (function () {
       tx = mx - (mx - tx) * (next / scale); ty = my - (my - ty) * (next / scale);
       scale = next; apply(); }, { passive: false, signal: ac.signal });
 
-    // legend toggle (injected by the shell just before mount): declutter discussed topics
-    const cb = document.querySelector("#legend .hidediscussed");
-    if (cb) { cb.checked = hideDiscussed; cb.onchange = () => { hideDiscussed = cb.checked; render(); }; }
+    // 0.55.1: the SHARED toggle, same top-right spot as lineage and starchart. This view used
+    // to wire its own checkbox into the legend with its own unpersisted boolean and its own
+    // blunter rule (hide every discussed node, orphaning live children of a discussed parent).
+    // One mechanism now: core.hiddenDiscussed keeps a discussed node that still holds live
+    // structure, and the choice persists per view like the others.
+    core.discussedToggle(stage, "constellation");  // AFTER the innerHTML reset, or it is wiped
   }
 
   const apply = () => { if (view) { view.setAttribute("transform",
@@ -125,7 +127,7 @@ window.TopicsRenderers.constellation = (function () {
     seedPositions();
     fogG.innerHTML = ""; edgesG.innerHTML = ""; nodesG.innerHTML = "";
     for (const n of core.nodes) {
-      if (hideDiscussed && n.state === "discussed") continue;   // declutter: drop touched topics + their up-edge
+      if (core.hiddenDiscussed(n, "constellation")) continue;   // declutter: drop resolved-and-childless-of-live subtrees
       if (!n.parent) {
         const f = document.createElementNS(SVG_NS, "circle");
         f.setAttribute("class", "fog"); f.dataset.slug = n.slug;
@@ -133,7 +135,7 @@ window.TopicsRenderers.constellation = (function () {
         f.setAttribute("fill", "url(#tvFogGrad)");
         f.style.filter = `hue-rotate(${n.hue || 0}deg)`;
         fogG.appendChild(f);
-      } else if (!(hideDiscussed && (core.bySlug[n.parent] || {}).state === "discussed")) {
+      } else if (!core.hiddenDiscussed(core.bySlug[n.parent] || {}, "constellation")) {
         const e = document.createElementNS(SVG_NS, "path");   // skip edges into a hidden discussed parent (no dangle)
         e.setAttribute("class", "edge"); e.dataset.a = n.slug; e.dataset.b = n.parent;
         e.style.stroke = `hsl(${(222 + (n.hue || 0)) % 360}, 65%, 72%)`;
@@ -181,7 +183,8 @@ window.TopicsRenderers.constellation = (function () {
     for (const x of core.xlinks || []) {
       // match the node loop's hideDiscussed skip - else an avenue into a hidden discussed node
       // draws as an arrow into empty space (the node still has stale coordinates)
-      if (hideDiscussed && (x.from.state === "discussed" || x.to.state === "discussed")) continue;
+      if (core.hiddenDiscussed(x.from, "constellation")
+          || core.hiddenDiscussed(x.to, "constellation")) continue;
       const e = document.createElementNS(SVG_NS, "path");
       e.setAttribute("class", "edge xlink" + (x.kind === "co_parent" ? " coparent" : ""));
       // parent -> child so the arrowhead lands on the CHILD (direction grammar)
@@ -293,7 +296,6 @@ window.TopicsRenderers.constellation = (function () {
                     <span style="color:#7fa7ff">&#9679;</span> open &nbsp;
                     <span style="color:#d9f2ff">&#10022;</span> frontier leaf &nbsp;
                     <span style="color:#ffb26a;text-shadow:0 0 6px #ff9a4a">&#9678;</span> <span style="color:#ffb26a">critical</span> &nbsp;
-                    <span style="color:#7fb0b6">&#9673;</span> discussed
-                    &nbsp;<label class="lgtoggle"><input type="checkbox" class="hidediscussed"> hide discussed</label>`,
+                    <span style="color:#7fb0b6">&#9673;</span> discussed`,
            hint: "drag = pan, wheel = zoom, click node = detail" };
 })();
