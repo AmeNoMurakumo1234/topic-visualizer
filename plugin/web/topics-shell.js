@@ -54,7 +54,16 @@
     const coerced = demo && name === "projects";
     if (coerced) name = "starchart";
     const next = window.TopicsRenderers[name];
-    if (!next) return;
+    if (!next) {
+      // 0.54.0 (field report): renderers self-register, but these tabs are static HTML - if a
+      // renderer script fails to load (the exact thing the backlog overflow caused), the button
+      // still exists, fires, and used to silently do nothing: a dead control indistinguishable
+      // from a broken app. Same gate the Projects tab has always had, now with a visible answer.
+      document.getElementById("hint").textContent =
+        " | view '" + name + "' unavailable - its renderer script failed to load (reload the " +
+        "page; if it persists, check the browser's network tab for a failed script)";
+      return;
+    }
     if (active) active.unmount();
     active = next; activeName = name;
     if (!coerced) localStorage.setItem("topics-view", name);
@@ -194,13 +203,18 @@
       const pretty = f => f.replace(/\.(png|jpe?g|webp|gif|avif)$/i, "").replace(/[-_]/g, " ");
       const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
       // "generated" tile first, then a thumbnail per image (lazy-loaded; the tile
-      // is dark so a transparent image composites to its true backdrop look)
+      // is dark so a transparent image composites to its true backdrop look).
+      // ?w=240 (0.54.0): the grid painted 180px tiles from ~1 MB full-res originals - ~31 MB
+      // for 38 tiles, a broken-image storm through a remote proxy. The server answers with a
+      // cached ~10 KB WebP, or the original when it has no imaging library - so this query is
+      // safe against any server. APPLYING a backdrop still uses the bare URL (full resolution);
+      // pick() passes the name and applyBackdrop builds its own URL without ?w.
       bgGrid.innerHTML =
         `<button class="bgtile gen${current === "__default__" ? " sel" : ""}" data-bg="__default__">
            <span class="bgthumb bggen"></span><span class="bglabel">generated</span></button>`
         + list.map(f =>
           `<button class="bgtile${current === f ? " sel" : ""}" data-bg="${esc(f)}">
-             <img class="bgthumb" loading="lazy" src="${urlBase}${encodeURIComponent(f)}" alt="">
+             <img class="bgthumb" loading="lazy" src="${urlBase}${encodeURIComponent(f)}?w=240" alt="">
              <span class="bglabel">${esc(pretty(f))}</span></button>`).join("");
       const closeModal = () => { bgModal.className = ""; };
       const pick = choice => {

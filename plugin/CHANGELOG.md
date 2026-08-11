@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.54.0 - 2026-08-11 - Two stdlib defaults dropped requests behind a proxy, and thumbnails were megabytes
+
+Field reports #2 and #3 from the same remote box: over a Tailscale HTTPS proxy the board 502'd
+one script of seven and the backdrop picker rendered broken-image tiles, while loopback was
+flawless. The single strongest piece of evidence, worth restating because it convicts the exact
+component: GET /topics-core.js -> 502 while all six sibling scripts in the SAME burst returned
+200. Same client, same instant, one loser - bandwidth degrades everyone; a full listen backlog
+refuses whoever arrives last.
+
+**The two defaults.** The server ran on stdlib defaults nobody had ever questioned:
+protocol_version HTTP/1.0 (no keep-alive - every script, API call and thumbnail opened its own
+TCP connection) and request_queue_size 5 (a listen backlog smaller than one browser's parallel-
+connection count). Now HTTP/1.1 + backlog 64, plus a 75s idle timeout so parked keep-alive
+connections release their threads. The precondition audited before flipping HTTP/1.1 on - and
+now PINNED by a test that drives JSON, static, image and 404 responses over one connection:
+every response path must send Content-Length, or keep-alive hangs the client. Both paths did.
+
+**Thumbnails are now thumbnails.** The picker painted 180px tiles from ~1 MB full-resolution
+FLUX renders - ~31 MB for 38 tiles. GET /backgrounds/<name>?w=240 now answers a cached WebP
+(5-15 KB), generated on first request into backgrounds/.thumbs/ - request-time rather than
+build-time because backgrounds/README.md promises user-dropped images appear automatically,
+and a build step could never cover those. The cache is mtime-aware (a replaced source
+regenerates), the width is clamped 64..640 (the query cannot mint junk files or upscale), and
+Pillow stays OPTIONAL per the report's own constraint: absent, the original is served -
+degraded, never broken - so the front-end sends ?w=240 unconditionally and is safe against any
+server, old or new. Applying a backdrop still uses the full-resolution original.
+
+**A dead tab now says why.** Renderers self-register into window.TopicsRenderers, but the view
+tabs are static HTML - when a renderer script failed to load (the exact thing the backlog
+overflow caused), the button fired into a missing registry entry and silently did nothing. The
+main tabs now carry the same existence gate the Projects tab always had, with a visible
+message naming the failed script instead of a control that appears broken.
+
+8 new tests in test_proxy_hardening.py, written first and watched fail.
+
 ## 0.53.0 - 2026-08-11 - The dropdown was a constructor, and one store could be two projects
 
 From a field report off a second machine (vm-dev-fyibos-newbot): "if someone touches the dropdown

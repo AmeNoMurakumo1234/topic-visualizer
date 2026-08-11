@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.53.0"
+VERSION = "0.54.0"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -3192,8 +3192,70 @@ def doctor() -> dict:
 
 
 # ---------------------------------------------------------------- http ----
+def _thumbnail(src: Path, w) -> Path | None:
+    """A real thumbnail for `src` at width ~w, cached beside the originals in .thumbs/.
+
+    WHY (field report, proxied access): the picker painted 180px tiles by downloading ~1 MB
+    full-resolution FLUX renders, 38 times - ~31 MB for a grid that needs a few hundred KB.
+    Loopback hides that completely; through a remote proxy the burst times out into
+    broken-image tiles. WebP at ~240px is 5-15 KB per tile.
+
+    Generated ON FIRST REQUEST and cached, because backgrounds/README.md promises that a
+    user-dropped image appears in the picker automatically - a build-time thumbnail set could
+    never cover those. The cache is mtime-aware: a REPLACED source regenerates its thumb, or
+    the picker would show the old image forever. Width is clamped (64..640) so the ?w= query
+    cannot mint one cache file per arbitrary number, and a giant w cannot upscale.
+
+    Pillow is OPTIONAL by design (the report's own constraint): absent, return None and the
+    caller serves the original - current behaviour, degraded, never broken. Failures return
+    None for the same reason: a background picker must never 500 over one bad image."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        w = max(64, min(640, int(w)))
+    except (TypeError, ValueError):
+        w = 240
+    tdir = src.parent / ".thumbs"
+    out = tdir / f"{src.name}.{w}.webp"
+    try:
+        if out.exists() and out.stat().st_mtime_ns >= src.stat().st_mtime_ns:
+            return out
+        tdir.mkdir(exist_ok=True)
+        with Image.open(src) as im:
+            im = im.convert("RGBA") if im.mode not in ("RGB", "RGBA") else im
+            if im.width > w:
+                im = im.resize((w, max(1, round(im.height * w / im.width))), Image.LANCZOS)
+            im.save(out, "WEBP", quality=80)
+        return out
+    except Exception:
+        return None
+
+
+class TopicsServer(ThreadingHTTPServer):
+    # 0.54.0: the stdlib listen backlog is 5 - smaller than ONE browser's parallel-connection
+    # count. On loopback connects never queue long enough to matter; remote handshakes overlap,
+    # the backlog overflows, and the refused connection surfaces as the proxy's 502. The field
+    # evidence that convicts the QUEUE specifically (not bandwidth): GET /topics-core.js -> 502
+    # while all six sibling scripts in the same burst returned 200 - same client, same instant,
+    # one loser. Bandwidth degrades everyone; a full backlog refuses whoever arrives last.
+    request_queue_size = 64
+
+
 class Handler(BaseHTTPRequestHandler):
     web_root: Path | None = None
+    # 0.54.0 (field report, proxied access): HTTP/1.1 = keep-alive, so a page burst of
+    # 7 scripts + 4 API calls + 38 thumbnails rides ~6 persistent connections instead of
+    # opening ~50 TCP handshakes. The stdlib default is HTTP/1.0 - fine on loopback,
+    # a connection storm through a remote proxy. PRECONDITION (audited, and pinned by
+    # test_proxy_hardening's mixed-requests leg): EVERY response path must send
+    # Content-Length, or keep-alive HANGS the client waiting for bytes that never end.
+    # This server has two response paths (_json, the static block); both send it.
+    protocol_version = "HTTP/1.1"
+    # An idle keep-alive connection would otherwise hold its thread forever; on timeout
+    # BaseHTTPRequestHandler closes the connection cleanly (handle_one_request catches it).
+    timeout = 75
 
     def _json(self, code: int, obj) -> None:
         data = json.dumps(obj).encode("utf-8")
@@ -3305,6 +3367,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith("/backgrounds/"):
                 f = (bg_root / u.path[len("/backgrounds/"):]).resolve()
                 f = f if (f.is_file() and bg_root in f.parents) else None
+                # ?w=240 -> a cached WebP thumbnail; missing Pillow or a failed resize falls
+                # back to the original, so this query is safe for any client to send always.
+                if f is not None and qs.get("w"):
+                    f = _thumbnail(f, qs["w"][0]) or f
             else:
                 f = (self.web_root / rel).resolve()
                 if f == (self.web_root / "index.html").resolve():
@@ -3465,7 +3531,7 @@ def main() -> None:
     purge_trash()                                       # 0.44: aged-out trashed stores go for good
     threading.Thread(target=_expiry_loop, daemon=True).start()
     Handler.web_root = Path(args.web)
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    srv = TopicsServer(("127.0.0.1", args.port), Handler)
     print(json.dumps({"topic_visualizer_server": f"http://127.0.0.1:{args.port}",
                       "db": args.db, "default_project": _default_project,
                       "expired_on_start": expired}))
