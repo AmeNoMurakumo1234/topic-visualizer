@@ -36,6 +36,32 @@ LAUNCHER = HOME / "tv-autostart.py"
 CFG = HOME / "tv-autostart.json"
 VENV = HOME / "venv"
 
+# --- Windows console flags. See test_no_console_flash.py for the full account. ---
+# CREATE_NO_WINDOW gives a child its own INVISIBLE console, so anything IT spawns inherits one.
+# DETACHED_PROCESS (0x8) leaves the child with NO console, so its first spawn makes Windows
+# allocate a VISIBLE one - the random flicker that steals focus and drops fullscreen games.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _no_window():
+    """Kwargs so an INCIDENTAL spawn never creates a console window.
+
+    Console-aware: with a console we pass nothing, so the child inherits it and an interactive
+    setup still shows pip's progress; with none (an agent-run setup, the login launcher) we
+    suppress the allocation. Empty off Windows, so every call site can splat it unconditionally
+    - which is the point, because the site nobody remembered is how this bug keeps coming back.
+    """
+    if os.name != "nt":
+        return {}
+    try:
+        import ctypes
+        if ctypes.windll.kernel32.GetConsoleWindow():
+            return {}
+    except Exception:
+        pass
+    return {"creationflags": CREATE_NO_WINDOW}
+
 
 def _pythonw() -> str:
     exe = Path(sys.executable)
@@ -60,10 +86,12 @@ def _provision_embedder(dry) -> str | None:
         import venv as _v
         _v.EnvBuilder(with_pip=True).create(str(VENV))
         py = str(_venv_python())
-        subprocess.run([py, "-m", "pip", "install", "-q", "sentence-transformers"], check=True)
+        subprocess.run([py, "-m", "pip", "install", "-q", "sentence-transformers"],
+                       check=True, **_no_window())
         subprocess.run([py, "-c",
                         "from sentence_transformers import SentenceTransformer; "
-                        "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"], check=True)
+                        "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"],
+                       check=True, **_no_window())
         return py
     except Exception as e:
         # human/log diagnostic only - no code reads "embedder_provisioned" back; only
@@ -86,7 +114,8 @@ def _vbs_content(pyw, launcher) -> str:
 
 
 def _quiet(cmd):
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   **_no_window())
 
 
 def _our_script_paths():
@@ -125,7 +154,7 @@ def _stop_processes(dry) -> list:
               " } | Select-Object -ExpandProperty ProcessId")
         try:
             out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, **_no_window())
             pids = [int(x) for x in out.stdout.split() if x.strip().isdigit()]
         except Exception:
             pids = []
@@ -138,20 +167,21 @@ def _stop_processes(dry) -> list:
     acted = []
     for p in paths:
         try:
-            out = subprocess.run(["pgrep", "-f", p], capture_output=True, text=True)
+            out = subprocess.run(["pgrep", "-f", p], capture_output=True, text=True,
+                                 **_no_window())
             cands = [int(x) for x in out.stdout.split() if x.strip().isdigit()]
         except Exception:
             cands = []
         for pid in cands:
             if pid == os.getpid():
                 continue
-            comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
+            comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], **_no_window(),
                                   capture_output=True, text=True).stdout.strip()
             if "python" not in comm.lower():
                 continue
             print(f"DRY-RUN: kill {pid}" if dry else f"kill {pid}")
             if not dry:
-                subprocess.run(["kill", str(pid)])
+                subprocess.run(["kill", str(pid)], **_no_window())
             acted.append(pid)
     return acted
 
@@ -208,7 +238,10 @@ def _start_via_launcher() -> bool:
     the launcher skips a port already serving. Best-effort; returns whether we launched it."""
     if not LAUNCHER.exists():
         return False
-    flags = ({"creationflags": 0x00000008 | 0x00000200} if os.name == "nt"
+    # CREATE_NO_WINDOW, never DETACHED_PROCESS: the launcher we start here goes on to spawn
+    # the server and the embedder, and a console-less parent turns each of those into a
+    # visible flicker. See the constants at the top of this file.
+    flags = ({"creationflags": CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
     try:
         subprocess.Popen([_pythonw(), str(LAUNCHER)],

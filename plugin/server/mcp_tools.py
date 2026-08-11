@@ -54,6 +54,13 @@ from server import (near_duplicates_in, search_in, rank_candidates,  # noqa: E40
 
 ACTOR = os.environ.get("TOPICS_ACTOR", "ai")
 
+# Windows console flags - see test_no_console_flash.py for why this is not DETACHED_PROCESS.
+# Short version: DETACHED_PROCESS leaves a child with NO console, so the FIRST thing that child
+# spawns makes Windows allocate a visible one. CREATE_NO_WINDOW gives it an invisible console
+# to hand down instead. We run inside a windowless MCP host, which is the exact trigger.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000
+
 
 class Unreachable(Exception):
     """The target server is not running (connection-level failure, not an app error)."""
@@ -369,7 +376,14 @@ class ServerBackend:
         try:
             kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
             if os.name == "nt":
-                kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+                # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP - NOT DETACHED_PROCESS.
+                # DETACHED_PROCESS leaves the server with NO console, and the server spawns
+                # further processes (git, and the launcher spawns the embedder), so Windows
+                # allocates a VISIBLE console for each of those - the random flicker that eats
+                # keystrokes and drops fullscreen games. CREATE_NO_WINDOW gives it an invisible
+                # console of its own for those children to inherit. We are an MCP host with no
+                # console at all, which is exactly the condition that triggers the allocation.
+                kwargs["creationflags"] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
             else:
                 kwargs["start_new_session"] = True
             if launcher.exists() and _launcher_port() == int(port):

@@ -89,7 +89,12 @@ class DetachedLogRedirectTests(unittest.TestCase):
             try:
                 self.assertEqual(kw["env"].get("TOPICS_LAUNCHED_BY"), "autostart")
                 if os.name == "nt":
-                    self.assertEqual(kw.get("creationflags"), 0x00000008 | 0x00000200)
+                    # CORRECTED 2026-08-10. This asserted DETACHED_PROCESS (0x8) | NEW_PROCESS_GROUP,
+                    # and it is the reason the console-flash bug survived across three launch paths:
+                    # anyone who fixed a path correctly went RED here and would reasonably conclude
+                    # the FIX was wrong. A test pins a defect exactly as firmly as it pins a
+                    # requirement. CREATE_NO_WINDOW (0x08000000) is correct - see test_no_console_flash.py.
+                    self.assertEqual(kw.get("creationflags"), 0x08000000 | 0x00000200)
                     self.assertNotIn("start_new_session", kw)
                 else:
                     self.assertTrue(kw.get("start_new_session"))

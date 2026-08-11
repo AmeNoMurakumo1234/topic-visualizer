@@ -30,6 +30,39 @@ CFG = Path.home() / ".topic-visualizer" / "tv-autostart.json"
 LOGDIR = Path.home() / ".topic-visualizer" / "logs"
 _VER = re.compile(r"^\d+(?:\.\d+)*")
 
+# --- Windows console flags. Get these wrong and the user gets random flickering windows. ---
+# CREATE_NO_WINDOW gives the child its OWN console and never shows it, so anything the child
+# later spawns inherits a real-but-invisible console. DETACHED_PROCESS (0x8) reads like the
+# same intent and is the opposite: it leaves the child with NO console, so the first thing it
+# spawns makes Windows ALLOCATE a visible one - a console that appears, takes keyboard focus,
+# and vanishes. On a login-launched server that is a random flicker which eats keystrokes and
+# drops fullscreen games to the desktop, with nothing in any log to trace it to.
+# This file is COPIED to ~/.topic-visualizer/ and must not import from the plugin, so the
+# constants are repeated per module and test_no_console_flash.py scans the tree to keep them
+# honest. Do not "simplify" this back to DETACHED_PROCESS.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _no_window():
+    """Popen/run kwargs so an INCIDENTAL spawn never creates a console window.
+
+    Console-aware on purpose: if this process HAS a console we pass nothing, so the child
+    inherits it and an interactive run still shows its output. If we have none - the login
+    launcher, an MCP host - we pass CREATE_NO_WINDOW so Windows does not allocate one.
+    Empty off Windows, so it is safe to splat at every call site including POSIX-only ones,
+    which is what stops the next spawn from being the one somebody forgot.
+    """
+    if os.name != "nt":
+        return {}
+    try:
+        import ctypes
+        if ctypes.windll.kernel32.GetConsoleWindow():
+            return {}
+    except Exception:
+        pass
+    return {"creationflags": CREATE_NO_WINDOW}
+
 
 def _logfile(name):
     return LOGDIR / f"{name}.log"
@@ -104,7 +137,11 @@ def _detached(logname=None):
             out = err = subprocess.DEVNULL
     base = {"stdout": out, "stderr": err, "env": env}
     if os.name == "nt":
-        base["creationflags"] = 0x00000008 | 0x00000200
+        # CREATE_NO_WINDOW, never DETACHED_PROCESS - see the constants at the top of this file.
+        # The server and embedder we launch here BOTH spawn further processes, so a console-less
+        # parent turns every one of those into a visible flicker. NEW_PROCESS_GROUP is kept so a
+        # Ctrl+C in whatever started us does not travel down into the daemon.
+        base["creationflags"] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:
         base["start_new_session"] = True
     return base
@@ -120,7 +157,8 @@ def _self_clean(cfg):
     if os.name == "nt":
         for tn in cfg.get("tasks", []):             # legacy Scheduled Tasks (pre-VBS installs)
             subprocess.run(["schtasks", "/Delete", "/TN", tn, "/F"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           **_no_window())   # runs at LOGIN from a console-less launcher
     for p in (CFG, Path(__file__).resolve()):
         try:
             p.unlink()

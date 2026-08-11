@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.51.1 - 2026-08-10 - Random console windows, and the test that kept them there
+
+Users on Windows saw console windows flicker open and shut at random. They steal keyboard focus,
+so they eat keystrokes, and they drop fullscreen games to the desktop. Nothing was logged and
+nothing errored, which is why this was expensive to chase and had already been chased before.
+
+THE MECHANISM. Three launch paths created processes with DETACHED_PROCESS (0x8). That reads like
+the right flag for a background daemon and is the opposite of it: the child gets NO console at
+all, so the FIRST thing that child spawns leaves Windows with nothing to inherit and it ALLOCATES
+a fresh console - a real window, on screen, briefly. Our launcher starts the server and the
+embedder, and the server itself shells out to git, so the flag turned every one of those into a
+flicker. CREATE_NO_WINDOW (0x08000000) is the correct flag: the process gets its own console and
+that console is never shown, so its children inherit a real-but-invisible one.
+
+WHY IT SURVIVED, which is the part worth fixing properly. It had been diagnosed once already and
+fixed in exactly ONE place - server.py's git call carries the right flag and an accurate comment -
+while three other launch paths kept DETACHED_PROCESS. And `test_autostart.py` ASSERTED the wrong
+value, so anyone who corrected a launch path went red and would reasonably conclude their fix was
+wrong. A test pins a defect exactly as firmly as it pins a requirement.
+
+- **All four launch paths now use CREATE_NO_WINDOW** (with CREATE_NEW_PROCESS_GROUP kept, so a
+  Ctrl+C upstream does not travel into the daemon): the login launcher, the MCP auto-start, the
+  installer's start-via-launcher, and the server's git call.
+- **Every other spawn got the same treatment via a shared `_no_window()` helper** - the powershell
+  process query, `schtasks`, `taskkill`, pip and the model pre-download were all unflagged and
+  could each allocate a console from a windowless parent. The helper is console-AWARE: if the
+  current process has a console the child inherits it (so an interactive setup still shows pip's
+  output), and only when there is none does it suppress. It returns `{}` off Windows, so it can be
+  splatted at every call site unconditionally - including the POSIX-only ones, because the site
+  nobody remembered is how this keeps coming back.
+- **`test_autostart.py`'s assertion was corrected**, with a note saying what it had been pinning.
+- **New `test_no_console_flash.py` scans the whole tree** rather than testing per-site: no file may
+  pass DETACHED_PROCESS, every creationflags must request CREATE_NO_WINDOW, and every spawn must
+  carry flags or splat a kwargs dict. A per-site test cannot catch the site nobody thought of, and
+  the launcher is copied outside the plugin so it cannot import a shared constant. The suite also
+  feeds itself a synthetic violation, because a scanner that cannot fail is not a guard, and
+  asserts it actually opened all four launch files, because a negative result is only as good as
+  its reach.
+
+UPGRADING: the launcher lives at ~/.topic-visualizer/tv-autostart.py, OUTSIDE the plugin, and
+refreshes itself from the newest installed version at login. So after updating the plugin it takes
+effect on the login after next (the running launcher has already loaded its old code), or
+immediately if you re-run setup.
+
 ## 0.51.0 - 2026-08-10 - The groom report described a tree it never named
 
 `topic_groom_report` returned confident numbers - `live_topics`, `stale_open_count`,

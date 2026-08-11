@@ -26,7 +26,12 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.51.0"                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
+VERSION = "0.51.1"
+
+# Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
+# first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
+# drops fullscreen games. See test_no_console_flash.py for the whole account.
+CREATE_NO_WINDOW = 0x08000000                    # single source of truth (MCP serverInfo reads this); keep in lockstep with plugin.json
 LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" iff started by tv-autostart
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
@@ -164,7 +169,7 @@ def _repo_root(start=None) -> str | None:
         start = str(start or Path.cwd())
         kw = {}
         if sys.platform == "win32":
-            kw["creationflags"] = 0x08000000   # CREATE_NO_WINDOW - no console flash (windowless MCP host)
+            kw["creationflags"] = CREATE_NO_WINDOW   # no console flash (windowless MCP host)
         out = subprocess.run(["git", "-C", start, "rev-parse", "--git-common-dir"],
                              capture_output=True, text=True, timeout=5, **kw)
         common = (out.stdout or "").strip()
