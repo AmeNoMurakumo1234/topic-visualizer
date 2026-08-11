@@ -52,23 +52,61 @@ def _py_files():
         yield p
 
 
+def _eval_int(node, consts):
+    """Evaluate a flag expression to ONE int, or raise. Handles an int literal, a module-level
+    named constant, and `a | b` over either. Anything else raises rather than returning a
+    default - a default here is how the scanner went blind once already."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in consts:
+            return consts[node.id]
+        raise Unresolvable(f"unknown name {node.id!r}")
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _eval_int(node.left, consts) | _eval_int(node.right, consts)
+    raise Unresolvable(ast.dump(node)[:80])
+
+
+class Unresolvable(Exception):
+    """A creationflags expression this scanner cannot evaluate.
+
+    Raised rather than skipped ON PURPOSE. The first version of this file collected only
+    INTEGER LITERALS and returned [] for anything else. Then the fix replaced the magic
+    numbers with named constants - better code - and both load-bearing legs went vacuously
+    green: `any(v & DETACHED for v in [])` is False, and the other leg skipped empty lists.
+    The guard reported CLEAN on files it could no longer read, which is the exact defect it
+    exists to catch, committed by the guard itself. An expression we cannot evaluate must be
+    LOUD, never silently empty.
+    """
+
+
 def _creationflags_values(path):
     """Every value assigned to a `creationflags` key/kwarg in one file, as (lineno, ints).
 
     Reads the AST rather than the text so a comment mentioning the flag cannot trip it and a
     split-across-lines expression cannot hide from it - the exact two ways a source-text
-    assertion in this repo has been fooled before.
+    assertion in this repo has been fooled before. Module-level int constants are resolved,
+    because naming the flags is what a correct fix looks like and the scanner has to survive it.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found = []
 
+    # module-level `NAME = <int expr>` so `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` resolves
+    consts: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                consts[node.targets[0].id] = _eval_int(node.value, consts)
+            except Unresolvable:
+                pass
+
     def literal_ints(node):
-        """Collect int constants in a (possibly OR-ed) flag expression."""
-        if isinstance(node, ast.Constant) and isinstance(node.value, int):
-            return [node.value]
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            return literal_ints(node.left) + literal_ints(node.right)
-        return []
+        """None means UNREADABLE - never an empty list, which every caller would read as
+        'nothing bad here'. The callers treat None as an offender."""
+        try:
+            return [_eval_int(node, consts)]
+        except Unresolvable:
+            return None
 
     for node in ast.walk(tree):
         # kwargs: subprocess.Popen(..., creationflags=X)
@@ -96,8 +134,9 @@ class NoDetachedProcessAnywhere(unittest.TestCase):
         offenders = []
         for path in _py_files():
             for lineno, ints in _creationflags_values(path):
-                if any(v & DETACHED_PROCESS for v in ints):
-                    offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {[hex(v) for v in ints]}")
+                if ints is None or any(v & DETACHED_PROCESS for v in ints):
+                    shown = "UNREADABLE" if ints is None else [hex(v) for v in ints]
+                    offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {shown}")
         self.assertEqual(offenders, [], "DETACHED_PROCESS leaves a process with NO console, so "
                                         "its first child ALLOCATES a visible one. Use "
                                         "CREATE_NO_WINDOW (0x08000000) instead:\n  "
@@ -108,10 +147,31 @@ class NoDetachedProcessAnywhere(unittest.TestCase):
         offenders = []
         for path in _py_files():
             for lineno, ints in _creationflags_values(path):
-                if ints and not any(v & CREATE_NO_WINDOW for v in ints):
-                    offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {[hex(v) for v in ints]}")
+                if ints is None or not any(v & CREATE_NO_WINDOW for v in ints):
+                    shown = "UNREADABLE" if ints is None else [hex(v) for v in ints]
+                    offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {shown}")
         self.assertEqual(offenders, [], "every Windows spawn must carry CREATE_NO_WINDOW:\n  "
                                         + "\n  ".join(offenders))
+
+    def test_every_creationflags_expression_is_readable(self):
+        """The anti-blindness leg, and the reason this file has a version 2.
+
+        v1 collected integer literals only. The fix then NAMED the constants, which is what a
+        correct fix looks like, and the scanner silently returned [] for every site it had been
+        built to watch - so the two legs above passed vacuously on exactly the four files that
+        carried the bug. A guard that cannot read its subject must FAIL, never report clean.
+        """
+        unreadable, sites = [], 0
+        for path in _py_files():
+            for lineno, ints in _creationflags_values(path):
+                sites += 1
+                if ints is None:
+                    unreadable.append(f"{path.relative_to(REPO)}:{lineno}")
+        self.assertEqual(unreadable, [], "the scanner cannot evaluate these, so it is BLIND to "
+                                         "them - teach _eval_int the shape or simplify the "
+                                         "expression:\n  " + "\n  ".join(unreadable))
+        self.assertGreaterEqual(sites, 4, "the scanner found almost no creationflags at all - it "
+                                          "has stopped seeing the thing it guards")
 
     def test_the_scanner_can_actually_see_a_violation(self):
         """A scanner that cannot fail is not a guard. Feed it the defect and watch it bite -

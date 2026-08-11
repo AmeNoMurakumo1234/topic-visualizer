@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.51.2 - 2026-08-10 - The console-flash guard went blind on the fix that made it green
+
+0.51.1 added test_no_console_flash.py to stop DETACHED_PROCESS coming back, and it worked - it
+found the three bad launch paths and went red. The same release also replaced the magic numbers
+with named constants, which is what a correct fix looks like. The scanner collected INTEGER
+LITERALS only, so from that moment it returned an empty list for every site it had been built to
+watch, and both load-bearing legs passed VACUOUSLY: one asked `any(v & DETACHED for v in [])`,
+which is False, and the other skipped empty lists entirely.
+
+So the guard reported CLEAN on exactly the four files that had carried the bug, one commit after
+being written to watch them. It was caught by running the scan against the DEPLOYED files rather
+than the repo, where the empty value lists were visible in the output.
+
+This is the defect the guard exists to catch - an instrument that goes blind reports the same
+value as the innocent case - committed by the guard itself, which is why the fix is structural
+rather than just teaching it one more syntax:
+
+- **`_eval_int` resolves module-level named constants**, so `CREATE_NO_WINDOW |
+  CREATE_NEW_PROCESS_GROUP` evaluates instead of vanishing.
+- **An unevaluatable expression is now UNREADABLE, never an empty list.** Both legs treat
+  unreadable as an offender, so a future syntax the scanner does not know makes it FAIL rather
+  than quietly pass.
+- **A new leg asserts nothing is unreadable AND that at least 4 sites were found at all**, so the
+  scanner going quiet is itself a failure.
+
+Verified by mutating through the NAME rather than the number - setting `CREATE_NO_WINDOW =
+0x00000008` in the launcher, a bug the previous scanner could not have seen - which turns 3 legs
+red; restoring returns 7/7 green.
+
 ## 0.51.1 - 2026-08-10 - Random console windows, and the test that kept them there
 
 Users on Windows saw console windows flicker open and shut at random. They steal keyboard focus,
