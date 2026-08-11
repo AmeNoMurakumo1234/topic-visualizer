@@ -20,6 +20,27 @@ window.TopicsRenderers.lineage = (function () {
     // AFTER the innerHTML reset, or it is wiped. anchoredRelayout keeps the view still across the
     // row add/remove, the way toggleOpen does for a collapse.
     core.discussedToggle(stage, "lineage", anchoredRelayout);
+    // Global expand states (owner ask, 2026-08-11): the per-node caret works a branch, but a
+    // whole-tree change meant hunting carets one by one. DEFAULT re-derives the first-visit
+    // state (small trees open, big trees shallow+narrow, critical paths revealed) by clearing
+    // the per-node flags the defaulting logic keys on. All three RESET THE PAN: a global
+    // reshape has no meaningful anchor node, and the top-left origin is the one predictable
+    // place - an anchored jump after "collapse all" reads as the view teleporting.
+    const bar = document.createElement("div");
+    bar.className = "tv-expandbar";
+    for (const [label, op] of [
+      ["expand all", () => core.nodes.forEach(n => { if (n.children.length) n.open = true; })],
+      ["default", () => { core.nodes.forEach(n => { n.open = undefined; n.revealed = false; });
+                          critsRevealed = false; }],
+      ["collapse all", () => core.nodes.forEach(n => { n.open = false; n.revealed = false; })],
+    ]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", () => { op(); tx = 20; ty = 20; scale = 1; render(); apply(); });
+      bar.appendChild(b);
+    }
+    bar.addEventListener("pointerdown", e => e.stopPropagation());  // same capture trap as the toggle
+    stage.appendChild(bar);
     world = stage.querySelector(".tv-world");
     wires = stage.querySelector(".tv-wires");
     cards = stage.querySelector(".tv-cards");
@@ -90,7 +111,11 @@ window.TopicsRenderers.lineage = (function () {
       btns.push({ label: n.open ? "Collapse all" : "Expand all", className: "expandbtn",
                   onClick: () => { toggleOpen(n); selectNode(n); } });
       for (const cat of CATS) {
-        const hidden = n.children.filter(c => cat.test(c) && !(n.open || c.revealed));
+        // exclude filtered children: "Show discussed (3)" used to count children that
+        // hide-discussed would drop on the very next render, so the button revealed fewer
+        // cards than it promised - or none at all, a control that lies about its own effect
+        const hidden = n.children.filter(c => cat.test(c) && !(n.open || c.revealed)
+                                              && !core.hiddenDiscussed(c, "lineage"));
         if (hidden.length) btns.push({
           label: `Show ${cat.label} (${hidden.length})`, className: "revealbtn",
           onClick: () => { hidden.forEach(c => { c.revealed = true; }); render(); selectNode(n); } });
@@ -193,14 +218,22 @@ window.TopicsRenderers.lineage = (function () {
         d.style.borderLeft = `3px solid hsl(${(222 + (n.hue || 0)) % 360}, 70%, 62%)`;
       }
       const s = core.short(n.title), w = core.weight(n.title);
-      const shownKids = n.open ? n.children.length : n.children.filter(c => c.revealed).length;
-      const partial = !n.open && shownKids > 0 && shownKids < n.children.length;
+      // Filter-aware counts (field audit 2026-08-11): every number here used to be computed
+      // from RAW children, so with hide-discussed on a card said "4 child(ren)" above a fan of
+      // two, "2 of 5 shown" above none, and - the worst shape - kept its expand caret while
+      // EVERY child was filtered, a control that visibly did nothing when clicked. The layout
+      // consults kidsOf; the labels must consult the same rule or they narrate a different tree.
+      const filteredKids = n.children.filter(c => core.hiddenDiscussed(c, "lineage")).length;
+      const showable = n.children.length - filteredKids;      // what "all" means under the filter
+      const shownKids = kidsOf(n).length;                     // what is actually laid out
+      const partial = !n.open && shownKids > 0 && shownKids < showable;
       d.innerHTML = `<div class="sum">${core.esc(s.slice(0, 72))}${s.length > 72 ? "..." : ""}</div>
         <div class="chips">${w ? `<span class="chip">${core.esc(w)}</span>` : ""}
           ${n.children.length
-            ? `<span class="chip kids${partial ? " partial" : ""}">${partial
-                ? `${shownKids} of ${n.children.length} shown`
-                : `${n.children.length} child(ren)`}</span>`
+            ? `<span class="chip kids${partial ? " partial" : ""}">${
+                showable === 0 ? `${n.children.length} filtered`
+                : partial ? `${shownKids} of ${showable} shown${filteredKids ? ` · ${filteredKids} filtered` : ""}`
+                : `${showable} child(ren)${filteredKids ? ` · ${filteredKids} filtered` : ""}`}</span>`
             : `<span class="chip frontier">frontier</span>`}
           ${n.critical ? `<span class="chip crit">critical</span>` : ""}
           ${n.state === "discussed" ? `<span class="chip done">discussed</span>` : ""}
@@ -214,7 +247,7 @@ window.TopicsRenderers.lineage = (function () {
                  .filter(x => x.to === n).map(x => x.from.slug).join(", "))}">&#8618; ${
                  (core.xlinks || []).filter(x => x.to === n).length} out</span>` : ""}
         </div>
-        ${n.children.length ? `<div class="caret" title="${n.open ? "collapse" : partial
+        ${n.children.length && showable > 0 ? `<div class="caret" title="${n.open ? "collapse" : partial
             ? "partially expanded - click to show all" : "expand"}">${
             n.open ? "−" : partial ? "⋯" : "+"}</div>` : ""}`;
       d.addEventListener("click", ev => {

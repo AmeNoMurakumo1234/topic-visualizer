@@ -393,6 +393,19 @@ main { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 }
 .hide-discussed-tgl:hover { opacity: 1; }
 
+/* 0.55: global expand-state buttons (expand all / default / collapse all), left of the toggle */
+.tv-expandbar {
+  position: absolute; top: 6px; right: 132px; z-index: 30;
+  display: inline-flex; gap: 4px; opacity: 0.75;
+}
+.tv-expandbar:hover { opacity: 1; }
+.tv-expandbar button {
+  font-size: 11px; padding: 2px 8px; cursor: pointer;
+  background: var(--panel, #1b1e2e); color: var(--ink, #cdd3e8);
+  border: 1px solid var(--line, #333a52); border-radius: 4px;
+}
+.tv-expandbar button:hover { border-color: var(--accent, #6ea8ff); }
+
 /* 0.44: the Projects management page (plain DOM - no pan stage, by design) */
 .pj-wrap { padding: 18px 22px; max-width: 980px; overflow-y: auto; height: 100%; }
 .pj-note { font-size: 12px; color: var(--dim); margin: 0 0 12px; }

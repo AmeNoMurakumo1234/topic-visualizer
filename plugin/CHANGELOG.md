@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.55.0 - 2026-08-11 - The lineage view narrated a different tree than it drew
+
+Owner report: expand/collapse needs whole-tree buttons; "discussed" cards with live children plus
+the hide-discussed toggle produce "weird stuff"; respacing misses edge cases both hiding and
+showing. Audited adversarially rather than case-by-case.
+
+**The confirmed defect family: every label was filter-blind.** The LAYOUT consults one
+visibility rule (kidsOf: open/revealed children minus hidden-discussed); every LABEL was
+computed from raw children. With the filter on, a card said "4 child(ren)" above a fan of two,
+"2 of 5 shown" above none - and, the worst shape, kept its expand caret while every child was
+filtered: a control that visibly did nothing when clicked. The panel's "Show discussed (3)"
+counted children the filter would eat on the very next render, so it revealed fewer cards than
+it promised, sometimes zero. All counts now consult the same rule the layout does: cards read
+"N child(ren) - M filtered", "X of Y shown - M filtered", or "N filtered" with the caret
+suppressed when expanding would visibly do nothing, and reveal buttons only count children that
+will actually appear.
+
+**Expand all / default / collapse all** now sit beside the hide-discussed toggle. DEFAULT
+re-derives the first-visit state (small trees open, big trees shallow+narrow, critical paths
+revealed) by clearing the per-node flags the defaulting keys on. All three deliberately reset
+the pan: a whole-tree reshape has no meaningful anchor node, and top-left is the one
+predictable place.
+
+**The spacing bullets, reported honestly:** a geometry invariant checker (no same-column
+overlaps, no under-10px crowding, no >=120px vertical band covered by no card in any column)
+was run inside the live page across 470 randomized mutation steps - carets, filter flips,
+panel reveals, branch hides, the new toolbar - on three trees: a hostile fixture, a >35-node
+big-tree-defaults fixture, and a COPY of a real 389-topic store in the reporting user's usual
+state. Zero violations at any step. The visible "weird stuff" reproduced entirely as the
+label/caret/reveal family above, which reads exactly like a layout bug from the user's chair
+(cards you were promised that never appear ARE missing space, perceptually). If a genuine
+spacing case survives this release, it is a shape the storm did not reach - a repro (tree shape
++ action sequence) is the wanted artifact, and docs/lineage-audit-harness.md preserves the
+checker + storm to run against it.
+
+No server-side changes beyond the version constant.
+
 ## 0.54.0 - 2026-08-11 - Two stdlib defaults dropped requests behind a proxy, and thumbnails were megabytes
 
 Field reports #2 and #3 from the same remote box: over a Tailscale HTTPS proxy the board 502'd
