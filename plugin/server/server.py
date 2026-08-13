@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.55.1"
+VERSION = "0.55.2"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2693,7 +2693,18 @@ _SUGG_RE = re.compile(r"^(?P<hub>[a-z0-9-]+) @ (?P<score>[0-9.]+) .*- (?P<verdic
 # the classifier itself, so its own writes can never be evidence about its own accuracy.
 _RULING_EVENTS = ("reparented", "placement_confirmed")
 _CLASSIFIER_ACTOR = "similarity"
-_AGENT_ACTOR = "ai"
+# A human ruling is recognised by a POSITIVE marker, never by failing to match a list of agents.
+# 0.55.2: the split used to be `actor == "ai" -> agent, everything else -> human`, which is a
+# denylist of length one - so the moment an agent ruled under its own NAME (which 0.52.2 made
+# possible, and which the confirm verb exists to encourage) it was reclassified as a person.
+# Measured on the live QC store 2026-08-13: one groom's 17 confirmations took labelled_by_a_human
+# from 1 to 18 with no human involved, and the same store holds 175 rulings by another agent.
+# That fails in the dangerous direction - the original bug under-reported and looked broken, this
+# one over-reported and looked like good news, under two canon decisions parked on the counter.
+# A roster of humans is not the cure (see test_15: hand-maintained scope lists have bitten this
+# repo repeatedly). Only the human SURFACE can know it is a human, and it already says so - the
+# visualizer UI writes actor='human', which recent_human_activity has relied on since 0.42.
+_HUMAN_ACTOR = "human"
 
 
 def confirm_placement(slug: str, actor: str, note: str = "") -> dict:
@@ -2777,7 +2788,11 @@ def suggestion_scoreboard() -> dict:
         # line and never folded into the human columns - that distinction is what the original
         # actor exclusion was right to protect. What it got wrong was discarding the agent ruling
         # entirely, which reported 0 over a population that had largely been ruled on.
-        if actor == _AGENT_ACTOR:
+        # NOT-KNOWN-TO-BE-HUMAN lands here too ('unknown', any named agent). by_actor above records
+        # who it actually was, so nothing is hidden by the grouping - and the residual error is an
+        # UNDER-count of human validation, which is the direction that cannot mislead a reader into
+        # trusting the classifier more than the evidence supports.
+        if actor != _HUMAN_ACTOR:
             agent_ruled += 1
             agent_hits += 1 if agreed else 0
             continue

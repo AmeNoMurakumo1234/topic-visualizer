@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.55.2 - 2026-08-13 - A named agent was counted as a person, and the number went the flattering way
+
+The scoreboard's agent/human split keyed on a DENYLIST OF ONE NAME - `actor == "ai"` meant agent,
+everything else meant human. 0.52.2 taught the confirm verb to record a ruling under the ruler's real
+name, which is what makes an audit attributable; the two together meant that the moment an agent
+confirmed a placement as ITSELF, the instrument reclassified it as a person.
+
+Measured on the live quantum-concepts store during the 2026-08-13 groom: draining the unverified
+queue with 17 confirmations took `labelled_by_a_human` from 1 to 18 and `correct` from 1 to 18, over
+a population in which no human had ruled at all. The same store holds 175 rulings by `Vera`, also an
+agent, sitting in the same column.
+
+**Why this direction is worse than the bug it replaced.** The original defect UNDER-reported - 0 of
+167 - and so read as obviously broken, which is what got it fixed. This one OVER-reported and read as
+good news: a classifier showing 18-for-18 human-validated. Two canon decisions are parked behind that
+counter waiting for real evidence about the auto-filer's threshold.
+
+**The fix is a positive marker, not a roster.** `test_15` is right that a hand-maintained list of who
+counts as a person is the same shape as the scope lists that have bitten this repo repeatedly - but
+"anything that is not the string ai" IS such a list, of length one, which is exactly how a named agent
+walked into the human column. Only the human SURFACE can know it is a human, and it already says so:
+the visualizer UI writes `actor='human'`, which `recent_human_activity` has relied on since 0.42. So
+the human column now keys on that marker and everything else - named agents, `unknown`, anything
+unrecognised - lands on the agent line, with `by_actor` still disclosing exactly who ruled. The
+residual error is an UNDER-count of human validation, the direction that cannot mislead a reader into
+trusting the classifier more than the evidence supports.
+
+Two existing tests changed with it (`08d`, `13`): both used a person's NAME as a stand-in human, which
+is precisely the assumption the defect rested on - the server cannot tell `Murakumo` from `Vera` by
+string. They now speak the way the UI does. New legs `18` (a named agent is not a human ruling, proven
+red on the pre-fix code for the right reason) and `19` (the marker must still populate the column, or
+the fix would trade an over-count for a permanent false zero).
+
 ## 0.55.1 - 2026-08-11 - Constellation's hide-discussed joins the other two views
 
 Owner report: lineage and star chart have the toggle in the right place; constellation is the

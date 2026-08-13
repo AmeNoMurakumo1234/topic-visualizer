@@ -295,8 +295,10 @@ class AutoFile(Base):
         self.assertEqual(board["labelled_by_a_human"], 0, "nobody has ruled yet - nothing is scored")
         self.assertEqual(board["unlabelled"], 2)
 
-        server.edit_topic(a["slug"], "Murakumo", None, None, right, None)   # human agrees
-        server.edit_topic(b["slug"], "Murakumo", None, None, wrong, None)   # human disagrees
+        # actor='human' is what the visualizer UI writes; 0.55.2 made that the POSITIVE marker the
+        # human column keys on, so a test standing in a person has to speak the way the UI does.
+        server.edit_topic(a["slug"], "human", None, None, right, None)   # human agrees
+        server.edit_topic(b["slug"], "human", None, None, wrong, None)   # human disagrees
         board = server.suggestion_scoreboard()
         self.assertEqual(board["labelled_by_a_human"], 2)
         self.assertEqual(board["correct"], 1, "one guess matched the human, one did not")
@@ -387,7 +389,7 @@ class ConfirmPlacement(Base):
         self.assertEqual(before["labelled_by_a_human"], 0)
         self.assertEqual(before["correct"], 0)
 
-        server.confirm_placement(slug, "Murakumo")
+        server.confirm_placement(slug, "human")
 
         after = server.suggestion_scoreboard()
         self.assertEqual(after["labelled_by_a_human"], 1, "a confirmation IS a human ruling")
@@ -433,11 +435,52 @@ class ConfirmPlacement(Base):
         never 'somebody pressed confirm'. Otherwise the verb becomes a way to manufacture accuracy."""
         _, slug = self._guessed()
         elsewhere = self._hub("Somewhere else entirely")
-        server.edit_topic(slug, "Murakumo", None, None, elsewhere, None)
-        server.confirm_placement(slug, "Murakumo")
+        server.edit_topic(slug, "human", None, None, elsewhere, None)
+        server.confirm_placement(slug, "human")
         board = server.suggestion_scoreboard()
         self.assertEqual(board["correct"], 0, "it was confirmed where a HUMAN put it, not where the machine did")
         self.assertEqual(board["labelled_by_a_human"], 1)
+
+    def test_18_a_NAMED_agent_is_not_a_human_ruling(self):
+        """The agent/human split cannot key on a denylist of one name.
+
+        FIELD DEFECT, measured on the live QC store 2026-08-13 (Tare). The groomer drained the
+        unverified queue with 17 confirmations recorded under its own NAME rather than the literal
+        'ai' - which is exactly what 0.52.2's attribution fix made possible and what this verb is
+        for. `labelled_by_a_human` went 1 -> 18 and `correct` 1 -> 18 over a population in which no
+        human had ruled at all. The same store carries 175 rulings by 'Vera', another agent.
+
+        WHY THIS DIRECTION IS THE DANGEROUS ONE: the original bug UNDER-reported (0 of 167) and so
+        read as obviously broken. This one OVER-reports and reads as GOOD NEWS - the classifier
+        showing 18-for-18 human-validated - and two canon decisions are parked behind this counter.
+
+        The fix is NOT a roster of humans: test_15 is right that a hand-maintained list of who counts
+        as a person is the same shape as the scope lists that have bitten this repo twice. But
+        'anything that is not the string ai' IS such a list, of length one, which is how a named
+        agent walked into the human column. Only the human SURFACE can know it is a human, and it
+        already says so - the visualizer UI writes actor='human', which recent_human_activity has
+        relied on since 0.42. So the human column keys on that positive marker and everything else
+        fails to the honest side: under-claiming human validation, never over-claiming it.
+        """
+        _, slug = self._guessed()
+        server.confirm_placement(slug, "Tare")          # a named AGENT, not the literal 'ai'
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["labelled_by_a_human"], 0,
+                         "a named agent is not a person - the human column must stay empty")
+        self.assertEqual(board["correct"], 0, "and it must not claim the guess was human-validated")
+        self.assertEqual(board["ruled_by_an_agent"], 1, "it is still a real ruling, on the agent line")
+        self.assertEqual(board["agent_correct"], 1)
+
+    def test_19_the_UI_s_human_marker_still_counts_as_a_human_ruling(self):
+        """The other side of test_18: the positive marker must actually work, or the fix trades an
+        over-count for a column that can never be populated at all - which would be the same
+        false-zero the confirm verb was built to remove."""
+        _, slug = self._guessed()
+        server.confirm_placement(slug, "human")
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["labelled_by_a_human"], 1)
+        self.assertEqual(board["correct"], 1)
+        self.assertEqual(board["ruled_by_an_agent"], 0)
 
 
 if __name__ == "__main__":
