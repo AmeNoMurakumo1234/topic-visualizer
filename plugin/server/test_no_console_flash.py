@@ -75,7 +75,42 @@ def _eval_int(node, consts):
         if isinstance(v, int):
             return v
         return _eval_int(node.args[2], consts)
+    # `0x08000000 if os.name == "nt" else 0` - the cross-platform idiom the skill prescribes and
+    # the form the test files adopted on 2026-08-14. Resolve it to its WINDOWS branch, because
+    # that is the only branch this guard has an opinion about: off Windows creationflags must be
+    # 0, and demanding CREATE_NO_WINDOW there would convict correct code. The condition is
+    # matched EXPLICITLY rather than assuming the body is the Windows arm - `if os.name != "nt"`
+    # inverts it, and silently taking the wrong branch would make the guard confidently wrong,
+    # which is worse than the blindness this class exists to prevent.
+    if isinstance(node, ast.IfExp):
+        win = _windows_branch(node)
+        if win is None:
+            raise Unresolvable("ternary whose condition is not an os/platform test: "
+                               + ast.unparse(node.test)[:60])
+        return _eval_int(win, consts)
     raise Unresolvable(ast.dump(node)[:80])
+
+
+def _windows_branch(node):
+    """For `A if <os test> else B`, the arm that runs ON WINDOWS - or None if the condition is
+    not a recognised os/platform test. Never guesses: an unrecognised condition returns None so
+    the caller raises Unresolvable."""
+    test = node.test
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1):
+        return None
+    left, op, right = test.left, test.ops[0], test.comparators[0]
+    if not (isinstance(right, ast.Constant) and isinstance(right.value, str)):
+        return None
+    subject = ast.unparse(left)
+    windows_values = {"os.name": "nt", "sys.platform": "win32", "platform.system": "Windows"}
+    if subject not in windows_values:
+        return None
+    is_windows_value = right.value == windows_values[subject]
+    if isinstance(op, ast.Eq):
+        return node.body if is_windows_value else node.orelse
+    if isinstance(op, ast.NotEq):
+        return node.orelse if is_windows_value else node.body
+    return None
 
 
 class Unresolvable(Exception):
@@ -137,6 +172,56 @@ def _creationflags_values(path):
                         and t.slice.value == "creationflags"):
                     found.append((node.value.lineno, literal_ints(node.value)))
     return found
+
+
+def _creationflags_carriers(tree):
+    """Names in one file that demonstrably carry a creationflags key.
+
+    Two kinds, because both idioms are in this tree and both are correct code:
+      FUNCTIONS - `def _no_window(): ... return {"creationflags": X}`, splatted as **_no_window()
+      VARIABLES - `flags = {"creationflags": X}` or `kwargs["creationflags"] = X`, as **flags
+
+    This exists so the coverage leg can stop treating every **splat as innocent. It is
+    deliberately NAME-based and shallow: it proves the splatted thing mentions creationflags
+    somewhere, not that it does so on every path. The VALUE legs above are what check the flag
+    is the right one, and they read every creationflags in the file regardless of how it is
+    delivered - so shallow here is honest, not lazy.
+    """
+    funcs, vars_ = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Constant) and sub.value == "creationflags":
+                    funcs.add(node.name)
+                    break
+                if isinstance(sub, ast.keyword) and sub.arg == "creationflags":
+                    funcs.add(node.name)
+                    break
+        # kwargs["creationflags"] = X
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
+                        and isinstance(t.slice, ast.Constant) and t.slice.value == "creationflags"):
+                    vars_.add(t.value.id)
+            # flags = {"creationflags": X}  (also through a ternary, which is how this repo
+            # writes the os.name == "nt" fork)
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Constant) and sub.value == "creationflags":
+                        vars_.add(node.targets[0].id)
+                        break
+    return {"funcs": funcs, "vars": vars_}
+
+
+def _splat_carries_flags(node, carriers):
+    """Does `**node` deliver creationflags? Unknown shapes return False on purpose - the caller
+    reports them LOUDLY rather than passing them, because 'I could not tell' and 'it is fine'
+    are the two readings a guard must never merge."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return node.func.id in carriers["funcs"]
+    if isinstance(node, ast.Name):
+        return node.id in carriers["vars"]
+    return False
 
 
 class NoDetachedProcessAnywhere(unittest.TestCase):
@@ -209,34 +294,60 @@ class NoDetachedProcessAnywhere(unittest.TestCase):
     def test_every_windows_spawn_site_carries_flags(self):
         """A spawn with NO creationflags at all is the same flash: on a console-less parent
         Windows allocates a console for the child. Catches the site nobody flagged rather than
-        the site somebody flagged wrongly."""
+        the site somebody flagged wrongly.
+
+        TEST FILES ARE IN SCOPE (changed 2026-08-14, and the exemption is the reason this leg
+        had five real offenders it could not see). The old version skipped `test_*.py` on the
+        reasoning that a test is something a human types into a terminal. That is true right up
+        until a suite is wired into a nightly scheduled task, which runs it under pythonw with
+        NO console - and test_mcp/test_server Popen a SERVER, which goes on to spawn more. The
+        sibling repo already hit exactly that shape (a scheduled pythonw job running a test
+        tree). The skill's own rule settles it: you cannot decide this per-call, and "not sure"
+        means yes. Five lines of flag is cheaper than one more machine flickering.
+        """
         # Match the callee EXACTLY. An earlier version used re.match on the unparsed func, which
         # matched the prefix of a chained expression - `subprocess.run(...).stdout.strip` read as
         # a spawn, so a correctly-flagged call was reported as an offender. A guard that cries
-        # wolf gets switched off, which is how the bug it guards comes back.
+        # wolf gets switched off, which is how the bug it guards comes back. (The external
+        # scan_spawns.py has the untightened form of this bug the other way round: it matches a
+        # spawn by BARE NAME, so a local helper called `call(...)` reads as subprocess.call.)
         SPAWNS = {"subprocess.run", "subprocess.Popen", "subprocess.call",
                   "subprocess.check_output", "subprocess.check_call"}
-        offenders = []
+        offenders, unresolved, sites = [], [], 0
         for path in _py_files():
-            if path.name.startswith("test_"):
-                continue
             text = path.read_text(encoding="utf-8")
             tree = ast.parse(text, filename=str(path))
+            carriers = _creationflags_carriers(tree)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
                 fn = ast.unparse(node.func) if hasattr(ast, "unparse") else ""
                 if fn not in SPAWNS:
                     continue
-                has = any(kw.arg == "creationflags" for kw in node.keywords)
-                # **kwargs / **flags forwarding counts: the dict is built next to the call and
-                # is covered by the two literal legs above.
-                splat = any(kw.arg is None for kw in node.keywords)
-                if not (has or splat):
+                sites += 1
+                if any(kw.arg == "creationflags" for kw in node.keywords):
+                    continue
+                # A **splat is NOT taken on faith any more. It counts only when the thing being
+                # splatted demonstrably carries creationflags - a helper like _no_window() or a
+                # dict built next to the call. An unrecognised splat is LOUD, never assumed
+                # innocent, which is the same anti-blindness rule the Unresolvable class states.
+                splats = [kw.value for kw in node.keywords if kw.arg is None]
+                if not splats:
                     offenders.append(f"{path.relative_to(REPO)}:{node.lineno} {fn}(...)")
+                    continue
+                if not any(_splat_carries_flags(s, carriers) for s in splats):
+                    shown = ", ".join(ast.unparse(s) for s in splats)
+                    unresolved.append(f"{path.relative_to(REPO)}:{node.lineno} {fn}(**{shown})")
         self.assertEqual(offenders, [], "these spawn a process with no console flags, so on a "
                                         "windowless parent Windows allocates a visible "
                                         "console:\n  " + "\n  ".join(offenders))
+        self.assertEqual(unresolved, [], "these forward a **splat this scanner cannot tie to any "
+                                         "creationflags carrier, so it cannot tell a guarded "
+                                         "spawn from a bare one - name the helper or pass the "
+                                         "flag directly:\n  " + "\n  ".join(unresolved))
+        self.assertGreaterEqual(sites, 14, "the spawn walk has stopped finding the calls it "
+                                           "guards - a refactor of the AST match would leave "
+                                           "this leg permanently, silently green")
 
 
 class LauncherBehaviour(unittest.TestCase):

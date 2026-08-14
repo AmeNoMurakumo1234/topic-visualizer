@@ -20,6 +20,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# CREATE_NO_WINDOW. This suite is ordinarily run by a human from a terminal, where the
+# child inherits a console and nothing flashes - which is exactly why the bug is invisible
+# to whoever writes it. Wire the suite into a nightly scheduled task (pythonw, no console)
+# and every unflagged spawn below allocates a VISIBLE window. Windows-only flag; 0 elsewhere.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 PORT = 8992
 BASE = f"http://127.0.0.1:{PORT}"
@@ -46,7 +52,7 @@ class SeamTests(unittest.TestCase):
         cls.proc = subprocess.Popen(
             [sys.executable, str(HERE / "server.py"),
              "--db", str(Path(cls.tmp.name) / "topics.db"), "--port", str(PORT)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=_NO_WINDOW)
         for _ in range(50):
             try:
                 call("/api/topics")
@@ -854,7 +860,7 @@ class DegenerateAddTests(unittest.TestCase):
         cls.proc = subprocess.Popen(
             [sys.executable, str(HERE / "server.py"),
              "--db", str(Path(cls.tmp.name) / "topics.db"), "--port", str(cls.PORT2)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=_NO_WINDOW)
         for _ in range(50):
             try:
                 cls._get("/api/topics")

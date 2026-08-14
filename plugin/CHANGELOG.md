@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.55.3 - 2026-08-14 - The suite's own spawns were the unguarded ones, and the guard had exempted them
+
+An external scan reported this plugin as shipping the console-flash bug to every machine it is
+installed on - 14 unguarded spawns in the autostart and the service installer, the two files that by
+definition run without a console. That was serious enough to check site by site rather than act on.
+
+It is not true, and the reason it read that way matters more than the finding. All 14 production
+spawns already carry CREATE_NO_WINDOW; they deliver it through a `**_no_window()` splat, and the
+scanner convicts on the ABSENCE of a literal `creationflags=` keyword, which a splat does not
+contain. So the scanner reports a file as maximally broken precisely BECAUSE it was fixed with a
+shared helper - which is the fix that tool's own guidance recommends. Its false-positive rate rises
+with the quality of the fix. (It also matches spawn functions by bare name, so a local helper called
+`call(...)` reads as `subprocess.call`.)
+
+What WAS real, and what nobody's scanner had flagged: eight spawns in this repo's own TEST files,
+including the ones that Popen a server. The in-repo guard could not see them because it skipped
+`test_*.py` on the reasoning that a test is something a human runs in a terminal - true until a
+suite is wired into a nightly scheduled task, which runs it under pythonw with no console at all.
+
+- test files are now IN SCOPE of the coverage leg, and all eight spawns carry the flag
+- a `**splat` is no longer taken on faith: it counts as guarded only when the scanner can tie it to
+  a creationflags carrier, and an unrecognised splat is reported LOUDLY rather than assumed innocent
+- the flag scanner learned the `0x08000000 if os.name == "nt" else 0` ternary, resolving it to its
+  WINDOWS branch by reading the operator - it does not assume the body is the Windows arm
+- the coverage leg now asserts it can still see at least 14 spawn sites, so a refactor of the AST
+  match cannot leave it permanently and silently green
+
+Four mutation controls, each chosen so the PREVIOUS version of the guard would have survived it: all
+four killed, including an inverted ternary condition that resolves to 0 on Windows.
+
 ## 0.55.2 - 2026-08-13 - A named agent was counted as a person, and the number went the flattering way
 
 The scoreboard's agent/human split keyed on a DENYLIST OF ONE NAME - `actor == "ai"` meant agent,

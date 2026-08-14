@@ -16,6 +16,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+# CREATE_NO_WINDOW. This suite is ordinarily run by a human from a terminal, where the
+# child inherits a console and nothing flashes - which is exactly why the bug is invisible
+# to whoever writes it. Wire the suite into a nightly scheduled task (pythonw, no console)
+# and every unflagged spawn below allocates a VISIBLE window. Windows-only flag; 0 elsewhere.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 INSTALLER = HERE / "install_service.py"
 
@@ -28,8 +34,8 @@ class InstallTests(unittest.TestCase):
         started=False."""
         out = subprocess.run(
             [sys.executable, str(INSTALLER), "--dry-run"],
-            capture_output=True, text=True
-        )
+            capture_output=True, text=True,
+        creationflags=_NO_WINDOW)
         # Parse the last line that starts with { as JSON
         # (there are DRY-RUN: prefix lines before it)
         lines = [l for l in out.stdout.splitlines() if l.strip().startswith("{")]

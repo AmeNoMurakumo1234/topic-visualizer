@@ -21,6 +21,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+# CREATE_NO_WINDOW. This suite is ordinarily run by a human from a terminal, where the
+# child inherits a console and nothing flashes - which is exactly why the bug is invisible
+# to whoever writes it. Wire the suite into a nightly scheduled task (pythonw, no console)
+# and every unflagged spawn below allocates a VISIBLE window. Windows-only flag; 0 elsewhere.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "first_of_day.py"
 SERVER_DIR = HERE.parent / "server"
@@ -36,7 +42,7 @@ def run_hook(env):
         capture_output=True,
         text=True,
         env=env,
-    )
+    creationflags=_NO_WINDOW, )
 
 
 def isolated_env(home, extra=None):

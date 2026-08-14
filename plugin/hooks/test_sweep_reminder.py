@@ -13,6 +13,12 @@ import unittest
 import uuid
 from pathlib import Path
 
+# CREATE_NO_WINDOW. This suite is ordinarily run by a human from a terminal, where the
+# child inherits a console and nothing flashes - which is exactly why the bug is invisible
+# to whoever writes it. Wire the suite into a nightly scheduled task (pythonw, no console)
+# and every unflagged spawn below allocates a VISIBLE window. Windows-only flag; 0 elsewhere.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 HOOK = Path(__file__).resolve().parent / "sweep_reminder.py"
 
 
@@ -29,7 +35,7 @@ def run_hook(payload, env=None):
         capture_output=True,
         text=True,
         env=env,
-    )
+    creationflags=_NO_WINDOW, )
 
 
 class TestSweepReminderOptOut(unittest.TestCase):
