@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.55.4 - 2026-08-21 - The noise valve was expiring the structure people were standing on
+
+A groom of the quantum-concepts tree found twelve LIVE topics unreachable from any live root.
+The seedling expiry had taken two nodes that still held live children, and everything under them
+went with it - not deleted, not pruned, just hanging off a dead parent where no walk of the live
+tree can reach them while they still count as live in every total.
+
+The worst of the two was the tree's only home for story and craft seeds. It had been minted as a
+seedling during a groom, promoted to a hub by a reparent, and given an owner ruling - but nothing
+ever moved its STATE off 'seedling', so it stayed eligible for expiry forever while functioning as
+structure. It held ten live children, four of them open questions, including a canon contradiction
+nobody had answered yet. The second node expired MID-GROOM, three days later, with two live
+children under it, which is how the shape got noticed at all: the same defect twice in one week.
+
+The guard was already in this file, twenty lines below. `expire_merged` re-homes a tombstone's
+children before deleting it and carries a comment naming this exact hazard. `expire_seedlings`
+never learned it.
+
+WHY THE CLOCK COULD NOT SEE IT, which is the part worth keeping: `touched_at` records a node's OWN
+touches, and parenting a child under a node does not touch the parent. So a node can be actively
+used as structure for weeks while its clock honestly reads untouched. The sweep was asking "has
+anyone touched this?" when the question that decides the outcome is "is anyone STANDING on this?"
+
+A seedling holding live children is now ineligible, however old it reads. Deliberately NOT the
+`expire_merged` cure of re-homing children to root: a merge tombstone is dead and rescuing its
+children is the only option left, whereas a seedling with live children has BECOME structure, and
+dumping its subtree at root would destroy the grouping a groom built. Childless seedlings still
+expire exactly as before - that is the valve doing its job, and it took 30 nodes correctly in the
+same sweep that took these two wrongly - and so do seedlings whose only children are already dead.
+
+Tests: `test_expiry_orphan.py`, four legs, proven red on the two that matter before the fix. One
+leg asserts the child stays REACHABLE rather than merely asserting the parent's state, because a
+state-only assertion would also pass for the re-homing cure this deliberately does not use. Two
+mutation controls, each one the previous version would have survived: removing the guard entirely
+(kills both regression legs) and holding a seedling open on ANY child rather than a live one (kills
+the boundary leg).
+
 ## 0.55.3 - 2026-08-14 - The suite's own spawns were the unguarded ones, and the guard had exempted them
 
 An external scan reported this plugin as shipping the console-flash bug to every machine it is

@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.55.3"
+VERSION = "0.55.4"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2327,11 +2327,32 @@ def _parse_ts(ts: str) -> float:
 
 def expire_seedlings() -> int:
     """The noise valve: seedlings untouched ~21 days auto-expire (policy-level choice;
-    counted in the groom report; browsable + resurrectable in the archive)."""
+    counted in the groom report; browsable + resurrectable in the archive).
+
+    A seedling holding LIVE CHILDREN is never eligible, however old its clock reads.
+    Field incident 2026-08-21 (quantum-concepts store): this sweep expired two nodes that
+    still held live children and left TWELVE live topics unreachable from any live root -
+    one of them the tree's only home for story/craft seeds, groom-minted as a seedling,
+    promoted to a hub by a reparent, carrying an owner ruling, and never explicitly moved
+    off 'seedling' so it stayed eligible forever.
+
+    The clock is the reason this is not merely a role check: touched_at records a node's
+    OWN touches and does NOT move when a child is parented under it, so a node can serve
+    as structure for weeks while reading untouched. "Has anyone touched this?" is the
+    wrong question; "is anyone STANDING on this?" is the one that matters.
+
+    Deliberately NOT expire_merged's cure (which re-homes children to root): a merge
+    tombstone is dead and rescuing its children is the only option, whereas a seedling
+    with live children has BECOME structure - dumping its subtree at root would destroy
+    the grouping a groom built. Tests: test_expiry_orphan.py.
+    """
     with _lock:
         rows = _conn.execute(
             "SELECT id FROM topic WHERE state='seedling' AND "
-            "julianday('now') - julianday(touched_at) > ?", (SEEDLING_EXPIRY_DAYS,)).fetchall()
+            "julianday('now') - julianday(touched_at) > ? AND "
+            "NOT EXISTS (SELECT 1 FROM topic kid WHERE kid.parent_id = topic.id "
+            "            AND kid.state IN ('open', 'seedling', 'discussed'))",
+            (SEEDLING_EXPIRY_DAYS,)).fetchall()
         for r in rows:
             _conn.execute(
                 "UPDATE topic SET state='expired', state_changed_at=datetime('now'), "
