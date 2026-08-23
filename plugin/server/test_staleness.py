@@ -248,8 +248,17 @@ class StalenessE2E(unittest.TestCase):
 
     def test_12_groom_gains_counts_and_honest_hints(self):
         g = call("/api/topics/groom")
+        # 0.55.5: the stale-OPEN population keeps its own honest name. This assertion used to
+        # read expiry_candidates_count, which is what let the two populations be confused: the
+        # field promised "what expiry will take" and was green on stale opens, so the test
+        # PINNED the mislabel instead of catching it.
+        self.assertIn("stale_open_candidates_count", g)
+        self.assertGreaterEqual(g["stale_open_candidates_count"], 5)
+        # nothing in this fixture is 21 days untouched, so the EXPIRY lens must be empty here.
+        # An expiry field that is non-zero on a fresh store is reporting somebody else's rows.
         self.assertIn("expiry_candidates_count", g)
-        self.assertGreaterEqual(g["expiry_candidates_count"], 5)
+        self.assertEqual(g["expiry_candidates_count"], 0,
+                         "no seedling here is past the expiry clock - candidates must be 0")
         coh = g["coherence"]
         self.assertIn("root_orphan_hints", coh)
         self.assertEqual(coh["root_orphan_hints"], [],
@@ -258,6 +267,40 @@ class StalenessE2E(unittest.TestCase):
                       "the emptiness must be labeled honest-unavailable")
 
     # -- reconcile --------------------------------------------------------
+    def test_12b_expiry_candidates_name_what_the_sweep_would_take(self):
+        """The leg that was missing on 2026-08-23 (quantum-concepts field incident).
+
+        expire_seedlings takes state='seedling' past touched_at + SEEDLING_EXPIRY_DAYS. The
+        report's expiry lens used to query state='open' on engaged_at instead - a DISJOINT
+        population, so it could never name a single topic the sweep would take, and four hubs
+        holding 46 live children sat ~18h from the clock while the operator's one expiry-facing
+        surface named an 'open' hub that was never eligible.
+
+        Two legs: the candidate list must MATCH the sweep's own population, and a candidate that
+        has quietly become structure must be called out - that shape orphaned 12 live topics on
+        2026-08-21 and is the reason the guard in expire_seedlings exists.
+        """
+        doomed = self._capture("an aging seedling that became a hub", state="seedling")
+        self._capture("a live child standing on it", parent=doomed)
+        childless = self._capture("an aging seedling nobody stands on", state="seedling")
+        self._backdate(doomed, 40, "touched_at")
+        self._backdate(childless, 40, "touched_at")
+
+        g = call("/api/topics/groom")
+        names = {r["slug"] for r in g["expiry_candidates_full_topics"]}
+        self.assertGreaterEqual(g["expiry_candidates_count"], 2)
+        self.assertIn(childless, names, "a plain aged seedling is a candidate")
+        self.assertIn(doomed, names, "an aged seedling is a candidate even holding children")
+
+        holding = {r["slug"]: r["live_children"] for r in g["expiry_candidates_holding_children"]}
+        self.assertIn(doomed, holding, "a candidate holding live children must be flagged")
+        self.assertEqual(holding[doomed], 1)
+        self.assertNotIn(childless, holding, "a childless candidate is not the hazard shape")
+
+        # and the two populations must not be the same number under two names
+        self.assertNotEqual(g["expiry_candidates_count"], g["stale_open_candidates_count"],
+                            "expiry and stale-open are different populations, not aliases")
+
     def test_13_reconcile_bulk_dispositions(self):
         r1 = self._capture("reconcile me discussed")
         r2 = self._capture("reconcile me pruned childless")

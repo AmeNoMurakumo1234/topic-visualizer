@@ -2519,6 +2519,24 @@ def groom_report(verbose: bool = True) -> dict:
             "SELECT COUNT(*) c FROM topic WHERE state='open' AND "
             "julianday('now') - julianday(COALESCE(engaged_at, created_at)) > ?",
             (STALE_DAYS,)).fetchone()["c"]
+        # 0.55.5: the EXPIRY-candidate lens must describe the population expire_seedlings
+        # actually takes - state='seedling' past the touched_at clock. It used to report the
+        # STALE-OPEN rows instead (state='open', engaged_at, STALE_DAYS), which is a disjoint
+        # population: the field could never name a single topic expiry would take, and its
+        # count was just stale_open_count under a second name. Field incident 2026-08-23
+        # (quantum-concepts): four hubs holding 46 live children sat ~18h from the clock while
+        # this field named an 'open' hub that was never eligible, so the operator's one
+        # expiry-facing surface pointed away from the hazard. live_children is carried because
+        # a candidate holding children is the shape that orphaned 12 topics in the 08-21
+        # incident - it is spared by expire_seedlings now, and an operator still wants to SEE
+        # that a node has quietly become structure while its own clock reads untouched.
+        expiry_rows = _conn.execute(
+            "SELECT t.slug, t.title, ("
+            "  SELECT COUNT(*) FROM topic k WHERE k.parent_id = t.id"
+            "   AND k.state IN ('seedling','open','discussed')) AS live_children "
+            "FROM topic t WHERE t.state='seedling' AND "
+            "julianday('now') - julianday(t.touched_at) > ? ORDER BY live_children DESC, t.slug",
+            (SEEDLING_EXPIRY_DAYS,)).fetchall()
         # fan-out lens: the widest nodes are where SHAPE work concentrates. A node with many
         # children means merge (they're dupes) and/or nest (missing sub-structure); target ~3-7.
         wide = _conn.execute(
@@ -2692,8 +2710,12 @@ def groom_report(verbose: bool = True) -> dict:
             # and the numbers were plausible - an absent premise is not reassurance, it
             # fails toward a FALSE PASS, which is the worst direction available.
             "store": _conn_store(),
-            "expiry_candidates_count": stale_total,
-            "expiry_candidates_full_topics": [dict(r) for r in stale]}
+            "expiry_candidates_count": len(expiry_rows),
+            "expiry_candidates_full_topics": [dict(r) for r in expiry_rows[:3]],
+            "expiry_candidates_holding_children": [
+                dict(r) for r in expiry_rows if r["live_children"]],
+            "stale_open_candidates_count": stale_total,
+            "stale_open_candidates_sample": [dict(r) for r in stale]}
     if not verbose:   # 0.45: the guidance paragraphs never change - drop them on request
         report["fan_out"].pop("target", None)
         report["coherence"].pop("note", None)
