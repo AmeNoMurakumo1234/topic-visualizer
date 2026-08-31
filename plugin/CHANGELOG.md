@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.55.5 - 2026-08-23 - The expiry lens described a population the sweep never touches
+
+`expire_seedlings` takes `state='seedling'` past `touched_at + SEEDLING_EXPIRY_DAYS`. The groom
+report's `expiry_candidates_*` fields queried `state='open'` on `engaged_at` past `STALE_DAYS`
+instead - a DISJOINT population. So the one expiry-facing surface an operator has could never name
+a single topic the sweep would actually take, and its count was `stale_open_count` under a second
+name.
+
+This is a species of its own. Every other defect this file records was an instrument that was
+WRONG; this one was accurate about the wrong subject, and its NAME did the lying. A field called
+`expiry_candidates` is the last place anyone looks for expiry's absence, so it filled the hole with
+apparent coverage for eighteen grooming runs.
+
+Field incident 2026-08-23 (quantum-concepts): four hubs holding 46 live children sat ~18h from the
+clock while this field named an 'open' hub that was never eligible. Advancing the clock 24h on a
+snapshot: the old field named 13 rows with ZERO overlap against the 42 topics the sweep would take;
+the new field names 42 of 42 and flags the 4 holding children.
+
+`expiry_candidates_*` now report the sweep's own population and carry `live_children`. The stale-OPEN
+population keeps its own honest name rather than borrowing this one.
+
+Tests: `test_staleness.py`, mutation control red on the right line. `test_12` had been pinning the
+defect - green only because the field reported the wrong population, the third time a test in this
+repo has held a bug in place.
+
+RELEASE NOTE, recorded because it cost a later run: this version shipped half-stamped on 2026-08-23.
+`plugin/.claude-plugin/plugin.json` moved to 0.55.5 while `server/server.py` VERSION and
+`.claude-plugin/marketplace.json` stayed at 0.55.4, and no changelog entry was written. The three
+stamps and the changelog move TOGETHER or `topic_doctor` reports a version the code does not match -
+which is exactly the check this project relies on to notice that a fix has not reached the machine.
+Corrected 2026-08-31.
+
 ## 0.55.4 - 2026-08-21 - The noise valve was expiring the structure people were standing on
 
 A groom of the quantum-concepts tree found twelve LIVE topics unreachable from any live root.
