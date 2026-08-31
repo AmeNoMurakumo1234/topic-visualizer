@@ -84,6 +84,28 @@ Each topic is self-contained - written for a future session with zero context:
   theme gets extra avenues LATER via `topic_attach` (topics form a DAG), not at capture
   time. Never force a hierarchy at capture time.
 - **Provenance**: date + which conversation/work surfaced it.
+- **Project**: which STORE it belongs in - `project: F--writing-qc-game`. Omit it and the
+  topic lands in the store your session's working directory keys, which is the right answer
+  most of the time and the wrong one exactly when it matters.
+
+### File by SUBJECT, not by where you are sitting
+
+Stores are per-project, and the question is always "which project is this idea ABOUT?" -
+never "which repo am I in?". A conversation that crosses a project boundary is the cue to
+capture on the other side of it.
+
+This is not a hypothetical tidiness rule. Measured on one tree, 2026-08-30: 22 of 31 live
+topics were about other projects, and the two repos the team was actually committing to had
+no store at all, because every capture reflex drained into whichever store the session
+happened to key. Two costs follow, and the second is the one that bites. Re-homing later is
+a copy-verify-prune dance, because there is still no per-topic move. And duplicate detection
+is PER-STORE, so a misfiled topic is invisible to the one mechanism that would otherwise
+have said "already asked" - a twin planted in the wrong tree cannot be seen by the tree that
+holds its sibling.
+
+Passing a `project` key that has no store yet CREATES it. That is intended: capture is one
+of the two verbs that bring a store into existence, so a new project gets its tree the first
+time somebody has an idea about it.
 
 ## The beacon (use sparingly)
 

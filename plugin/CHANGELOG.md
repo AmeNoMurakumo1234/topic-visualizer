@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.56.0 - 2026-08-31 - An agent could not file a topic where it belonged, only where it was standing
+
+`topic_add` bound the store from the session's working directory once, at startup, and
+stamped that key onto every capture. There was no way to say otherwise. So an agent working
+in one repo, who knew perfectly well that the idea in front of it was about a different one,
+had no move available except to file it in the wrong tree and leave a note asking a groom to
+move it by hand.
+
+MEASURED, on the quantum-concepts tree, 2026-08-30: 22 of its 31 live topics were other
+projects' work - 9 qc-game, 11 messageboard, 2 book-by-codex. The two repos the team was
+actually committing to had NO STORE AT ALL, because every capture reflex in the house was
+draining into the store whichever session happened to key. Three topics said so in their own
+bodies. This is not agents being careless; it is the tool offering exactly one destination.
+
+THE SECOND COST, which is the one that compounds. Duplicate detection is PER-STORE. A topic
+filed in the wrong tree is therefore invisible to the single mechanism that would have said
+"somebody already asked this" - and it reproduced live during the run that found it, when a
+topic re-homed into its proper store immediately matched a twin at 0.652 that the store had
+held all along. Misfiling does not just misplace a question, it hides it from its own siblings.
+
+`topic_add` now takes an optional `project`, threaded to the POST the same way
+`topic_groom_report` took this override at 0.51 (issue 0798). Omitted, behaviour is unchanged.
+A key with no store yet CREATES one, which is intended rather than tolerated: capture is one
+of the two verbs that bring a store into existence, so a new project gets its tree the first
+time anyone has an idea about it.
+
+TWO DELIBERATE CHOICES, both learned from this repo's own scars. The override is a per-CALL
+parameter and never rebinds the backend's project - the same discipline the per-call `actor`
+already keeps, and there is now a test asserting the leak does not happen, which the actor fix
+wishes it had had. And when the server is unreachable, the sqlite fallback REFUSES an override
+loudly and stores nothing, rather than quietly writing to the local store: a capture that
+silently lands in the wrong tree is the exact defect being fixed, so falling back to it would
+be the bug wearing the fix's clothes.
+
+The `topics-capture` skill now carries the rule the parameter exists to serve - file by
+SUBJECT, not by where you are sitting - with the measurement above, because a capability
+nobody knows about changes no behaviour.
+
+Tests: `test_mcp.py`, four unit legs (schema, the wire, the unchanged default, the no-leak
+assertion) plus an end-to-end leg that captures into a store that does not exist yet and
+asserts it was created, readable there, and ABSENT from the session store. The isolation half
+is load-bearing and seeds the session store first on purpose, so it cannot pass against an
+empty list for the wrong reason. Two mutation controls, each cutting a different link -
+dropping the argument at the dispatch, and having `_p` ignore it - both red, restored green.
+Full suite 230 tests green.
+
 ## 0.55.5 - 2026-08-23 - The expiry lens described a population the sweep never touches
 
 `expire_seedlings` takes `state='seedling'` past `touched_at + SEEDLING_EXPIRY_DAYS`. The groom

@@ -333,6 +333,45 @@ class TestMCPServerBackendHTTP(unittest.TestCase):
         g, _ = self.mcp.tool("topic_get", {"slug": out["results"][0]["slug"]})
         self.assertEqual(g["topic"]["title"], "single form rescue")
 
+    def test_10_capture_reaches_another_projects_store_and_creates_it(self):
+        """1424, end to end rather than at the wire: a capture aimed at a project key that
+        has NO store yet must create that store and land the topic there, while the session
+        store is left completely alone. Capture is one of the two verbs server.py allows to
+        create a store ("they are how a project comes to exist"), so store-creation is the
+        intended behaviour and is asserted, not guarded against.
+
+        The ISOLATION half is the load-bearing assertion. The defect being fixed is topics
+        landing in the wrong tree, so a test that only proved the topic appears in the target
+        would pass just as happily if the capture were written to both. It seeds the session
+        store first, deliberately, so the isolation check reads a real populated list rather
+        than a 404 that would also 'pass' for the wrong reason."""
+        local, err = self.mcp.tool("topic_add", {
+            "items": [{"title": "stays in the session store", "state": "open"}]})
+        self.assertFalse(err, local)
+
+        out, err = self.mcp.tool("topic_add", {
+            "items": [{"title": "filed where its subject lives", "state": "open",
+                       "body": "aimed at a store that does not exist yet"}],
+            "project": "zz-elsewhere-store"})
+        self.assertFalse(err, out)
+        slug = out["results"][0].get("slug")
+        self.assertTrue(slug, out)
+
+        # it is READABLE in the target store, which the capture had to create
+        got = json.load(urllib.request.urlopen(
+            f"http://127.0.0.1:{PORT}/api/topics/{slug}?project=zz-elsewhere-store"))
+        self.assertEqual(got["topic"]["title"], "filed where its subject lives")
+
+        # ...and ABSENT from the session store, which is the actual defect
+        listed, _ = self.mcp.tool("topic_list", {"limit": 500})
+        titles = [t["title"] for t in listed.get("topics", [])]
+        self.assertIn("stays in the session store", titles,
+                      "session store did not receive the ordinary capture - the isolation "
+                      "assertion below would be vacuous")
+        self.assertNotIn("filed where its subject lives", titles,
+                         "the capture also landed in the session store - an override that "
+                         "writes to both is not an override")
+
 
 class McpOpenVisualizerScoping(unittest.TestCase):
     """0653: open_visualizer handed back a BARE url, so the web UI opened on the SERVER's
@@ -394,6 +433,85 @@ class McpGroomReportProjectOverride(unittest.TestCase):
         import mcp_tools
         self.assertIn("project=" + mcp_tools.ServerBackend().project, self._url_for({}))
 
+
+
+class McpAddProjectOverride(unittest.TestCase):
+    """1424: topic_add binds the store from the session cwd ONCE and offers no override, so
+    an agent working in another repo cannot file a topic where it belongs even knowing
+    exactly where that is. Measured 2026-08-30 on the quantum-concepts tree: 22 of 31 live
+    topics were other projects' work - 9 qc-game, 11 messageboard, 2 book-by-codex - and
+    the two repos the house was actually committing to had no store at all, because every
+    capture reflex drained into the store the session happened to key.
+
+    Two consequences beyond the misfiling, both measured. A topic in the wrong store is
+    invisible to duplicate detection, which is PER-STORE - so the one mechanism that would
+    have said "already asked" cannot see it. And re-homing afterwards is a copy-verify-prune
+    dance, because there is still no per-topic move.
+
+    The HTTP layer has always scoped on ?project= and server.py explicitly allows capture to
+    CREATE a store ("only CAPTURE and IMPORT may create a store - they are how a project
+    comes to exist"). It was simply unreachable from MCP. topic_groom_report took exactly
+    this override at 0.51 (issue 0798); this is the same treatment for the capture verb.
+    """
+
+    def _sent(self, args):
+        """Return the (url, body) topic_add actually put on the wire."""
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        seen = {}
+
+        def fake_http(method, url, body=None, headers=None):
+            seen["url"], seen["body"] = url, body
+            return {"results": []}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            mcp_tools._call("topic_add", args)
+        return seen
+
+    def test_tool_declares_a_project_argument(self):
+        import mcp_tools
+        tool = next(t for t in mcp_tools.TOOLS if t["name"] == "topic_add")
+        self.assertIn("project", tool["inputSchema"]["properties"],
+                      "no way to file a capture into the store it is ABOUT")
+
+    def test_explicit_project_reaches_the_wire(self):
+        sent = self._sent({"items": [{"title": "filed across a repo boundary"}],
+                           "project": "F--writing-qc-game"})
+        self.assertEqual(sent["body"].get("project"), "F--writing-qc-game",
+                         "the override never reached the POST body - the capture would "
+                         "land in the session store, which is the whole defect")
+
+    def test_omitting_it_keeps_the_session_project(self):
+        import mcp_tools
+        sent = self._sent({"items": [{"title": "an ordinary local capture"}]})
+        self.assertEqual(sent["body"].get("project"), mcp_tools.ServerBackend().project,
+                         "an omitted project must be byte-identical to today's behaviour")
+
+    def test_the_override_does_not_leak_into_later_calls(self):
+        """The per-CALL actor bug's shape, one field over: a capture aimed at another store
+        must not rebind the backend's project and silently redirect every later op in the
+        session. This is the assertion the actor fix wishes it had had."""
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        session_project = mcp_tools.ServerBackend().project
+        seen = []
+
+        def fake_http(method, url, body=None, headers=None):
+            seen.append(body)
+            return {"results": []}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            b = mcp_tools._backend()
+            b.add([{"title": "aimed elsewhere"}], project="F--writing-somewhere-else")
+            b.add([{"title": "back to normal"}])
+        self.assertEqual(seen[0].get("project"), "F--writing-somewhere-else")
+        self.assertEqual(seen[1].get("project"), session_project,
+                         "the override leaked - every later capture in this session would "
+                         "have been redirected to another project's store")
 
 class TestMCPServerBackendDirect(unittest.TestCase):
     """Shape 2: no HTTP server -> the in-process sqlite fallback must carry it."""

@@ -158,10 +158,15 @@ class ServerBackend:
         self.project = os.environ.get("TOPICS_PROJECT") or project_key_from_cwd()
         self._direct = None
 
-    def _p(self, body=None):
-        """Stamp the project onto a POST body (the server reads project from body or query)."""
+    def _p(self, body=None, project=None):
+        """Stamp the project onto a POST body (the server reads project from body or query).
+
+        1424: `project` overrides the session store for ONE call. It is a parameter rather
+        than a rebind of self.project on purpose - see the per-CALL actor comment in the
+        board backend's add(): a write aimed at another store must not redirect every later
+        op in the process."""
         b = dict(body or {})
-        b["project"] = self.project
+        b["project"] = project or self.project
         return b
 
     def _q(self, url):
@@ -408,12 +413,31 @@ class ServerBackend:
                 "hint": "Started a one-off server so you can view the tree now. Run the /topics-setup "
                         "skill to make the visualizer persist across restarts."}
 
-    def add(self, items, actor=None):
+    def add(self, items, actor=None, project=None):
+        # 1424: `project` lets an agent file a capture into the store the topic is ABOUT
+        # rather than the one its cwd happens to key. Measured 2026-08-30: 22 of 31 live
+        # topics in the quantum-concepts tree were other projects' work, and the two repos
+        # the house was actually committing to had no store at all - every capture reflex
+        # drained into whichever store the session keyed. The HTTP layer has always scoped
+        # on project, and server.py deliberately lets CAPTURE create a store ("they are how
+        # a project comes to exist"), so an unknown key creating one is the intent, not an
+        # accident to guard against. Omitted = the session project, unchanged.
         act = actor or ACTOR
         try:
             return _http("POST", f"{self.base}/api/topics",
-                         self._p({"topics": items, "actor": act}))
+                         self._p({"topics": items, "actor": act}, project))
         except Unreachable:
+            # The sqlite fallback opens THIS session's store and cannot honour an override.
+            # Capturing into the wrong tree is the exact defect 1424 is about, and a capture
+            # that silently lands elsewhere is worse than one that fails - so refuse loudly
+            # rather than quietly writing locally. Same call as groom's 0798 override.
+            if project and project != self.project:
+                return {"error": "project override needs the topics server",
+                        "detail": (f"the server at {self.base} is unreachable, and the direct "
+                                   f"sqlite fallback can only write this session's store "
+                                   f"({self.project}), not {project}. NOTHING was stored - "
+                                   f"start the server and retry, so the capture is not "
+                                   f"silently filed in the wrong tree.")}
             return {"results": self._fallback().add_topics(items, act)}
 
     def get(self, slug):
@@ -716,9 +740,10 @@ class BoardBackend:
         return {"error": "the board backend cannot edit a topic's title/body - board post bodies are "
                          "immutable (reply a correction, or edit on the sqlite backend)."}
 
-    def add(self, items, actor=None):
+    def add(self, items, actor=None, project=None):
         author = actor or self.author    # per-CALL actor; do NOT rebind self.author (it would leak
                                          # this actor onto every later board op in the process)
+        proj = project or self.project   # 1424: same per-CALL discipline, one field over
         existing = self._load()
         results = []
         for it in items:
@@ -739,7 +764,7 @@ class BoardBackend:
             body = ("\n".join(lines) + "\n\n" if lines else "") + \
                    str(it.get("body") or "captured via the topics MCP tools")
             r = _http("POST", f"{self.base}/api/post",
-                      {"project": self.project, "author": author,
+                      {"project": proj, "author": author,
                        "type": "topic",                     # 0524: first-class topic lane; no `to` -> no ball
                        "title": f"{self.PREFIX}: {title}"[:200], "body": body},
                       self.hdrs)
@@ -1147,7 +1172,13 @@ TOOLS = [
          }, "required": ["title"]}},
          "actor": {"type": "string", "description": "who is capturing - pass a STABLE label "
                    "(same string every session) so per-actor calibration can learn; "
-                   "defaults to TOPICS_ACTOR"}},
+                   "defaults to TOPICS_ACTOR"},
+         "project": {"type": "string", "description":
+                     "the project store to capture INTO, e.g. F--writing-qc-game - file a "
+                     "topic where its SUBJECT belongs rather than where your cwd happens to "
+                     "point. Omit for the session project. An unknown key CREATES that "
+                     "project's store, because capture is one of the two verbs that bring a "
+                     "store into existence"}},
        "required": ["items"]}},
     {"name": "topic_get",
      "description": "FULL detail for ONE topic by slug: title, body (the QUESTION), state, "
@@ -1562,7 +1593,7 @@ def _call(name: str, args: dict) -> dict:
         # here. An explicit parent_slug still wins, and role='hub' is never auto-filed.
         items = [dict(it, autofile=it.get("autofile", True)) if isinstance(it, dict) else it
                  for it in items]
-        return b.add(items, args.get("actor"))
+        return b.add(items, args.get("actor"), args.get("project") or None)
     if name == "topic_get":
         return b.get(str(args.get("slug") or ""))
     if name == "topic_list":
