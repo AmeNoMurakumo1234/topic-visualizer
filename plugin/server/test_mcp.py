@@ -620,10 +620,6 @@ class TestMCPBoardBackend(unittest.TestCase):
         self.assertIn("cannot merge", mg.get("error", ""))
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class McpConfirmCarriesTheActor(unittest.TestCase):
     """0.52.1 field catch, minutes after arming: the FIRST live confirm recorded actor 'unknown'.
     confirm() wrapped its payload in _p(), which stamps project but not actor - every other verb
@@ -652,3 +648,35 @@ class McpConfirmCarriesTheActor(unittest.TestCase):
         self.assertEqual(body.get("actor"), actor,
                          "the ruling arrives at the server with no actor and records as "
                          "'unknown' - the attribution the verb exists for")
+
+
+class RunnerBlockIsLast(unittest.TestCase):
+    """1465, Iris: `unittest.main()` sat at line 624 with a TestCase class defined at 627, so the
+    DOCUMENTED command collected 25 of 26 tests and stayed green through a planted regression -
+    the orphaned class was the guard for topic_confirm's actor, unarmed and invisible in the OK.
+    unittest.main() collects the module namespace as it stands and then sys.exit()s, so anything
+    below it never executes. Appending a class to the end of a file is the natural thing to do and
+    was silently wrong, which is why this is a structural guard and not a note in the file."""
+
+    def test_no_definition_follows_the_runner_block(self):
+        import ast
+        source = Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        runner_line = None
+        for node in tree.body:
+            if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'":
+                runner_line = node.lineno
+        self.assertIsNotNone(runner_line, "no `if __name__ == \"__main__\"` block found")
+        stragglers = [
+            n.name for n in tree.body
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.lineno > runner_line
+        ]
+        self.assertEqual(
+            stragglers, [],
+            "these are defined AFTER unittest.main() and can never be collected by "
+            "`python test_mcp.py`: " + ", ".join(stragglers))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
