@@ -1069,18 +1069,28 @@ class BoardBackend:
                          "Confirm placements on the sqlite backend."}
 
     def duplicates(self, band="kin"):
-        from server import near_duplicates_in
+        # Band handling MUST match server.find_duplicates - this is a second inline copy
+        # of that loop, and until 0.56.1 it accepted `band` and discarded it, so all three
+        # bands returned one list. Change both or neither.
+        from server import near_duplicates_in, _DUP_FLOOR, _DUP_FLOOR_WEAK
+        rank = {"weak": 0, "kin": 1, "dup_likely": 2}
+        thr = rank.get(band, 1)
+        floors = _DUP_FLOOR_WEAK if thr == 0 else _DUP_FLOOR
         topics = self._load()
         seen, pairs = set(), []
         for t in topics:
             others = [x for x in topics if x["slug"] != t["slug"]]
-            for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5):
+            for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5,
+                                          floors=floors):
+                if rank.get(dpl.get("band", "weak"), 0) < thr:
+                    continue
                 key = tuple(sorted((t["slug"], dpl["slug"])))
                 if key in seen:
                     continue
                 seen.add(key)
                 pairs.append({"a": key[0], "b": key[1], "score": dpl["score"],
                               "mode": dpl["mode"], "band": dpl["band"]})
+        pairs.sort(key=lambda p: -p["score"])
         return {"pairs": pairs, "count": len(pairs)}
 
     def doctor(self):
@@ -1481,7 +1491,10 @@ TOOLS = [
      "description": "List candidate near-duplicate PAIRS across the live tree (the reconcile "
                     "worklist), semantic when the local embedder is up. band: 'kin' (default) "
                     "| 'dup_likely' | 'weak'. Above the band is a candidate to REVIEW, never "
-                    "an instruction to merge.",
+                    "an instruction to merge. 'weak' lowers the EMISSION floor to look below "
+                    "the capture-time dedup bar - reach for it when you suspect a twin the "
+                    "default did not surface, e.g. two captures that open with the same "
+                    "boilerplate preamble and diverge only later in the body.",
      "inputSchema": {"type": "object", "properties": {
          "band": {"type": "string", "enum": ["weak", "kin", "dup_likely"]}}}},
 ]

@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.56.0"
+VERSION = "0.56.1"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -1090,11 +1090,13 @@ def find_duplicates(min_band="kin") -> dict:
     otherwise). min_band: 'weak' | 'kin' (default) | 'dup_likely'."""
     rank = {"weak": 0, "kin": 1, "dup_likely": 2}
     thr = rank.get(min_band, 1)
+    floors = _DUP_FLOOR_WEAK if thr == 0 else _DUP_FLOOR
     topics = _load_topics()
     seen, pairs = set(), []
     for t in topics:
         others = [x for x in topics if x["slug"] != t["slug"]]
-        for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5):
+        for dpl in near_duplicates_in(t["title"], t["body"], others, limit=5,
+                                      floors=floors):
             if rank.get(dpl.get("band", "weak"), 0) < thr:
                 continue
             key = tuple(sorted((t["slug"], dpl["slug"])))
@@ -1629,6 +1631,21 @@ def _score(query_toks: list[str], text: str) -> float:
     return hit / math.sqrt(len(toks) + 8)
 
 
+# Emission floors for the dedup ranker, named so the EMITTER and the BAND LABELS below
+# cannot drift apart. The default floor is the capture-time guard's own bar and sits a
+# hair above the kin cutoff. The WEAK floor is what makes the weak band mean anything:
+# before 0.56.1 nothing below the default was ever emitted, so every surviving hit was
+# already kin-or-better and find_duplicates("weak") returned a list byte-identical to
+# ("kin"). That failed in the REASSURING direction - an agent who suspects a missed
+# duplicate widens the band, gets the same list, and reads a repeated measurement as a
+# second opinion. The semantic weak floor is set to surface a real observed miss with
+# margin (a true twin pair measured at 0.576 in the quantum-concepts store, invisible
+# at 0.62) without dropping into noise. Keyword scores are unbounded, so its numbers
+# are heuristic, exactly as the band cutoffs are.
+_DUP_FLOOR = {"semantic": 0.62, "keyword": 0.55}
+_DUP_FLOOR_WEAK = {"semantic": 0.45, "keyword": 0.25}
+
+
 def _dup_band(score, mode):
     """A readable confidence band beside the raw score - the caller shouldn't have to
     guess where 'same territory, plant no twin' begins. Semantic scores are cosine (0..1);
@@ -1638,21 +1655,26 @@ def _dup_band(score, mode):
     return "dup_likely" if score >= 1.2 else "kin" if score >= 0.55 else "weak"
 
 
-def near_duplicates_in(title, body, topics, limit=3):
+def near_duplicates_in(title, body, topics, limit=3, floors=None):
     """Write-time dedup guard over a given topic list (store-agnostic; the MCP board
     backend reuses this). Semantic when the embedder is up, keyword otherwise. Each hit
-    carries `mode` + a `band` (dup_likely | kin | weak) beside the raw score."""
+    carries `mode` + a `band` (dup_likely | kin | weak) beside the raw score.
+
+    `floors` overrides the emission bar - pass _DUP_FLOOR_WEAK to look BELOW the default,
+    which is the only way a weak-band hit can ever be produced. Default is unchanged, so
+    capture-time dedup keeps its existing bar."""
+    floors = floors or _DUP_FLOOR
     ranked = semantic_rank(title + " " + body[:200], topics)
     out = []
     if ranked is not None:
         out = [{"slug": x["slug"], "title": x["title"], "score": round(s, 3),
                 "mode": "semantic", "band": _dup_band(s, "semantic")}
-               for s, x in ranked if s > 0.62]
+               for s, x in ranked if s > floors["semantic"]]
     else:
         q = _tokens(title + " " + body[:200])
         for x in topics:
             s = _score(q, x["title"] + " " + x["body"][:200])
-            if s > 0.55:
+            if s > floors["keyword"]:
                 out.append({"slug": x["slug"], "title": x["title"], "score": round(s, 3),
                             "mode": "keyword", "band": _dup_band(s, "keyword")})
         out.sort(key=lambda y: -y["score"])

@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.56.1 - 2026-09-05 - The weak duplicate band could never return anything, and it failed in the reassuring direction
+
+`topic_duplicates` offers three bands - dup_likely, kin, weak. The weak one was unreachable.
+
+`near_duplicates_in` emitted only above a hardcoded floor (0.62 semantic, 0.55 keyword)
+while `_dup_band` labels anything below 0.6 / 0.55 "weak", so every hit that survived the
+floor was already kin-or-better. `find_duplicates("weak")` returned a list byte-identical to
+`find_duplicates("kin")`, in both ranking modes.
+
+WHY THAT IS WORSE THAN A DEAD OPTION. It fails in the REASSURING direction. An agent who
+suspects a missed duplicate widens the band, gets the same answer back, and reads a repeated
+measurement as a second opinion - when the tool never looked below the floor at all. A
+control that names a capability it does not have fills the hole with apparent coverage.
+
+FOUND BY BEING BITTEN BY IT, in the quantum-concepts store on 2026-09-05. Two topics asking
+the identical question (what durable, privacy-preserving backing should an agent's private
+memory have) scored 0.576 and were silent, while a topic asking a DIFFERENT question scored
+0.802 and was surfaced as the top pair. The instrument inverted the pair, and widening the
+band to check returned the same two rows.
+
+THE MEASURED CAUSE of that inversion is worth recording even though it is not fixed here:
+the ranker compares `title + body[:200]` against `title + body[:400]`, and both of the
+false-pair topics open with the same house-style provenance preamble ("Noticed <date>
+(<who>) ... memory_store_check reports ..."). The window landed on the shared boilerplate
+and a proper noun instead of on either question. Widening or re-weighting that window
+changes every score in every store, including the thresholds recorded on past decline
+notes, so it is filed as a question rather than taken as a unilateral change.
+
+FIXED. Emission floors are now named constants beside the band cutoffs they must agree
+with (`_DUP_FLOOR`, `_DUP_FLOOR_WEAK`), and `near_duplicates_in` takes a `floors` override.
+The default is unchanged, so capture-time dedup keeps its existing bar; only an explicit
+weak-band query looks lower. The semantic weak floor (0.45) is set to surface the observed
+0.576 miss with margin without dropping into noise.
+
+THE SIBLING, fixed in the same commit. `BoardBackend.duplicates` re-implements the same
+loop inline and accepted `band` while never applying it - so on the board backend ALL THREE
+bands returned one list, including `dup_likely`. That is the "one inline copy implies
+siblings" pattern the house has recorded before; the two copies now carry a comment naming
+each other.
+
+Tests: `server/test_dup_bands.py`, 3 cases. Both load-bearing legs have a mutation control
+(the weak floor reverted through its NAME, and the board band filter removed); each reddens
+exactly one case, on the right assertion.
+
+
 ## 0.56.0 - 2026-08-31 - An agent could not file a topic where it belonged, only where it was standing
 
 `topic_add` bound the store from the session's working directory once, at startup, and
