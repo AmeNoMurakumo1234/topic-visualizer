@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.57.0 - 2026-09-06 - Capture could route to another store; nothing else could follow it there
+
+`topic_add` has taken a `project` override since 1424, and `topic_groom_report` since 0798.
+The other twenty store-scoped verbs never got it. So the tool could file a topic where its
+SUBJECT belongs and then could not read, edit, link, merge, prune or checkpoint it - a
+one-way door into a tree the session cannot reach.
+
+THE SHARPEST PART, and the reason this is a defect rather than a missing nicety: `topic_add`
+runs its duplicate scan against the TARGET store and returns the near-duplicates it finds,
+with the instruction not to plant a twin but to fold into the existing topic. That is the
+right advice, and until now no available verb could take it. The tool detected the duplicate,
+told the caller what to do about it, and then offered nothing that could do it.
+
+FOUR INDEPENDENT ARRIVALS IN FOUR DAYS, each measured by the agent who walked into it:
+
+  2026-09-01  Codex   - add(project=...) succeeded; merge and get on the returned slug both
+                        answered "not found".
+  2026-09-02  Polaris - captured cross-store correctly, then edit could not reach it.
+  2026-09-04  Codex   - was told to fold rather than plant a twin, and had no verb to do it.
+  2026-09-04  Lemma   - could not READ the kin she was told to judge, nor attach the see_also.
+  2026-09-06  Tare    - could not checkpoint or dedup-scan the plugin's own store from a
+                        quantum-concepts session, and hand-wrote an HTTP client to groom it.
+
+THE FIX IS THE PARAMETER, THREADED, NOT NEW MACHINERY. The HTTP layer has scoped on project
+all along - every route resolves it from the query or body and pins the connection with
+`_use_project` - and the MCP layer already had exactly two seams to thread it through, `_q`
+for GET and `_p` for POST. `_q` gained the per-call override `_p` already had; twenty verbs
+gained `project=None`; the dispatcher hands it down; nineteen tool schemas declare it. An
+override the schema hides is unreachable by a client, so the declaration is half the fix.
+
+WHAT IT DELIBERATELY DOES NOT DO. Unlike `topic_add`, an aimed verb never CREATES a store -
+only capture and import bring a project into existence, so an unknown key is an error rather
+than a new phantom board. `topic_doctor` is excluded on purpose: it reports THIS session's
+resolved config and liveness, so aiming it elsewhere is a category error. `topic_open` is
+excluded because it builds a browser URL and never crosses the transport.
+
+AND THE GUARD THAT KEEPS THE FIX FROM BEING WORSE THAN THE BUG. With the server down, the
+sqlite fallback can only reach the session store. An aimed call must therefore REFUSE loudly
+rather than quietly apply itself to the wrong tree - which is what add() and groom() have
+done since 1424/0798. That refusal is now one shared `_offline_refusal` helper instead of
+twenty copies that would drift, and it short-circuits before the fallback is ever opened.
+
+VERIFIED end to end, not just at the seam: from a quantum-concepts cwd, against the live
+server, a probe ran add -> get -> edit -> merge -> duplicates -> checkpoints -> prune
+entirely in the plugin's own store, with a control proving the same read WITHOUT the override
+returns "not found". `test_project_override.py` pins all five legs, both mutation-controlled
+(reverting `_q` reddens all seven GET verbs; neutering the refusal reddens the offline leg).
+The compatibility invariant - omitting `project` keeps the session store for every verb - is
+its own test, and was green before the change as well as after.
+
 ## 0.56.1 - 2026-09-05 - The weak duplicate band could never return anything, and it failed in the reassuring direction
 
 `topic_duplicates` offers three bands - dup_likely, kin, weak. The weak one was unreachable.

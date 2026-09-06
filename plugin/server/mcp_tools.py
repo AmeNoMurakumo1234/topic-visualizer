@@ -169,9 +169,31 @@ class ServerBackend:
         b["project"] = project or self.project
         return b
 
-    def _q(self, url):
-        """Append the project to a GET query string."""
-        return url + ("&" if "?" in url else "?") + "project=" + self.project
+    def _q(self, url, project=None):
+        """Append the project to a GET query string.
+
+        Takes the same per-CALL override as _p, for the same reason: a read aimed at
+        another store must not redirect every later op in the process."""
+        return url + ("&" if "?" in url else "?") + "project=" + (project or self.project)
+
+    def _offline_refusal(self, project):
+        """The refusal an AIMED call gets when the server is down, else None.
+
+        The sqlite fallback opens THIS session's store and cannot honour an override, so a
+        cross-store call would silently read or write the WRONG TREE - the exact defect the
+        override exists to fix. add() and groom() have refused this since 1424/0798; this
+        is that same guard, factored out so all twenty verbs share one copy rather than
+        twenty that drift. Returns a dict (truthy) to refuse, or None to proceed - so the
+        call site reads `return self._offline_refusal(project) or self._fallback()...`,
+        which short-circuits before the fallback is ever opened."""
+        if project and project != self.project:
+            return {"error": "project override needs the topics server",
+                    "detail": (f"the server at {self.base} is unreachable, and the direct "
+                               f"sqlite fallback can only reach this session's store "
+                               f"({self.project}), not {project}. NOTHING was read or "
+                               f"written - start the server and retry, so the call is not "
+                               f"silently applied to the wrong tree.")}
+        return None
 
     def _fallback(self):
         if self._direct is None:
@@ -440,87 +462,94 @@ class ServerBackend:
                                    f"silently filed in the wrong tree.")}
             return {"results": self._fallback().add_topics(items, act)}
 
-    def get(self, slug):
+    def get(self, slug, project=None):
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/{slug}"))
+            return _http("GET", self._q(f"{self.base}/api/topics/{slug}", project))
         except Unreachable:
-            return self._fallback().get_topic(slug)
+            return self._offline_refusal(project) or self._fallback().get_topic(slug)
 
-    def list_(self, include_archive=False, limit=500, offset=0):
+    def list_(self, include_archive=False, limit=500, offset=0, project=None):
         u = f"{self.base}/api/topics/list?limit={int(limit)}&offset={int(offset)}"
         if include_archive:
             u += "&include=archive"
         try:
-            return _http("GET", self._q(u))
+            return _http("GET", self._q(u, project))
         except Unreachable:
-            return self._fallback().list_topics(include_archive, limit, offset)
+            return (self._offline_refusal(project)
+                    or self._fallback().list_topics(include_archive, limit, offset))
 
-    def priority(self, slug, critical):
+    def priority(self, slug, critical, project=None):
         # reuse edit_topic's beacon path (sets priority + logs beacon_set/cleared)
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/edit",
-                         self._p({"critical": bool(critical), "actor": ACTOR}))
+                         self._p({"critical": bool(critical), "actor": ACTOR}, project))
         except Unreachable:
-            return self._fallback().edit_topic(slug, ACTOR, critical=bool(critical))
+            return (self._offline_refusal(project)
+                    or self._fallback().edit_topic(slug, ACTOR, critical=bool(critical)))
 
-    def serve(self, context):
+    def serve(self, context, project=None):
         from urllib.parse import quote
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/serve?context={quote(context)}"))
+            return _http("GET", self._q(f"{self.base}/api/topics/serve?context={quote(context)}", project))
         except Unreachable:
-            return self._fallback().serve_card(context)
+            return self._offline_refusal(project) or self._fallback().serve_card(context)
 
-    def search(self, query):
+    def search(self, query, project=None):
         from urllib.parse import quote
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/search?q={quote(query)}"))
+            return _http("GET", self._q(f"{self.base}/api/topics/search?q={quote(query)}", project))
         except Unreachable:
-            return {"results": self._fallback().search(query)}
+            return self._offline_refusal(project) or {"results": self._fallback().search(query)}
 
-    def state(self, slug, state, note, preview=False):
+    def state(self, slug, state, note, preview=False, project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/state",
                          self._p({"state": state, "actor": ACTOR, "note": note,
-                                  "preview": preview}))
+                                  "preview": preview}, project))
         except Unreachable:
-            return self._fallback().set_state(slug, state, ACTOR, note, preview=preview)
+            return (self._offline_refusal(project)
+                    or self._fallback().set_state(slug, state, ACTOR, note, preview=preview))
 
-    def convert(self, slug, kind, ref, note):
+    def convert(self, slug, kind, ref, note, project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/links",
                          self._p({"links": [{"kind": kind, "ref": ref, "note": note}],
-                                  "actor": ACTOR, "note": note}))
+                                  "actor": ACTOR, "note": note}, project))
         except Unreachable:
-            return self._fallback().convert(
+            return self._offline_refusal(project) or self._fallback().convert(
                 slug, [{"kind": kind, "ref": ref, "note": note}], ACTOR, note)
 
-    def attach(self, slug, parent_slug, note, remove=False, kind="co_parent"):
+    def attach(self, slug, parent_slug, note, remove=False, kind="co_parent", project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/attach",
                          self._p({"parent_slug": parent_slug, "actor": ACTOR,
-                                  "note": note, "remove": remove, "kind": kind}))
+                                  "note": note, "remove": remove, "kind": kind}, project))
         except Unreachable:
-            return self._fallback().attach_parent(slug, parent_slug, ACTOR, note, remove, kind)
+            return (self._offline_refusal(project)
+                    or self._fallback().attach_parent(slug, parent_slug, ACTOR, note,
+                                                      remove, kind))
 
-    def reparent(self, slug, parent_slug):
+    def reparent(self, slug, parent_slug, project=None):
         # move the PRIMARY parent (the tree spine), via edit_topic; "" -> detach to root.
         # cycle-guarded server-side, collapses a now-redundant avenue into the new primary edge.
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/edit",
-                         self._p({"parent_slug": parent_slug, "actor": ACTOR}))
+                         self._p({"parent_slug": parent_slug, "actor": ACTOR}, project))
         except Unreachable:
-            return self._fallback().edit_topic(slug, ACTOR, parent_slug=parent_slug)
+            return (self._offline_refusal(project)
+                    or self._fallback().edit_topic(slug, ACTOR, parent_slug=parent_slug))
 
-    def edit(self, slug, title=None, body=None):
+    def edit(self, slug, title=None, body=None, project=None):
         payload = {"actor": ACTOR}
         if title is not None:
             payload["title"] = title
         if body is not None:
             payload["body"] = body
         try:
-            return _http("POST", f"{self.base}/api/topics/{slug}/edit", self._p(payload))
+            return _http("POST", f"{self.base}/api/topics/{slug}/edit", self._p(payload, project))
         except Unreachable:
-            return self._fallback().edit_topic(slug, ACTOR, title=title, body=body)
+            return (self._offline_refusal(project)
+                    or self._fallback().edit_topic(slug, ACTOR, title=title, body=body))
 
     def groom(self, verbose=True, project=None):
         # 0.51 (issue 0798): `project` lets a VERIFIER aim the report at the store the
@@ -544,12 +573,12 @@ class ServerBackend:
                                    f"({self.project}), not {project}. Start the server and retry.")}
             return self._fallback().groom_report(verbose=verbose)
 
-    def reconcile(self, items, decision=None):
+    def reconcile(self, items, decision=None, project=None):
         try:
             payload = {"items": items, "actor": ACTOR}
             if decision:
                 payload["decision"] = decision
-            res = _http("POST", f"{self.base}/api/topics/reconcile", self._p(payload))
+            res = _http("POST", f"{self.base}/api/topics/reconcile", self._p(payload, project))
             # 0.42.1 (audit): a pre-0.42 RUNNING server has no /reconcile route and answers
             # 404, which reads like a routing bug. Name the actual fix (version skew).
             if isinstance(res, dict) and res.get("error") == "HTTP 404":
@@ -557,75 +586,75 @@ class ServerBackend:
                                "code still in memory) - restart the topics server, then retry")
             return res
         except Unreachable:
-            return self._fallback().reconcile(items, ACTOR, decision=decision)
+            return self._offline_refusal(project) or self._fallback().reconcile(items, ACTOR, decision=decision)
 
-    def buckets(self, max_buckets=8):
+    def buckets(self, max_buckets=8, project=None):
         try:
-            res = _http("GET", self._q(f"{self.base}/api/topics/buckets") +
+            res = _http("GET", self._q(f"{self.base}/api/topics/buckets", project) +
                         f"&max={int(max_buckets or 8)}")
             if isinstance(res, dict) and res.get("error") == "HTTP 404":
                 res["hint"] = ("the running topics server predates topic_buckets (pre-0.45 "
                                "code still in memory) - restart the topics server, then retry")
             return res
         except Unreachable:
-            return self._fallback().topic_buckets(max_buckets=max_buckets)
+            return self._offline_refusal(project) or self._fallback().topic_buckets(max_buckets=max_buckets)
 
-    def checkpoint(self, label=""):
+    def checkpoint(self, label="", project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/checkpoint",
-                         self._p({"label": label, "actor": ACTOR}))
+                         self._p({"label": label, "actor": ACTOR}, project))
         except Unreachable:
-            return self._fallback().create_checkpoint(ACTOR, label)
+            return self._offline_refusal(project) or self._fallback().create_checkpoint(ACTOR, label)
 
-    def checkpoints(self):
+    def checkpoints(self, project=None):
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/checkpoints"))
+            return _http("GET", self._q(f"{self.base}/api/topics/checkpoints", project))
         except Unreachable:
-            return self._fallback().list_checkpoints()
+            return self._offline_refusal(project) or self._fallback().list_checkpoints()
 
-    def restore(self, cid=None):
+    def restore(self, cid=None, project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/restore",
-                         self._p({"id": cid, "actor": ACTOR}))
+                         self._p({"id": cid, "actor": ACTOR}, project))
         except Unreachable:
-            return self._fallback().restore_checkpoint(ACTOR, cid)
+            return self._offline_refusal(project) or self._fallback().restore_checkpoint(ACTOR, cid)
 
-    def export(self, dir=None, mode="mirror", scope=None):
+    def export(self, dir=None, mode="mirror", scope=None, project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/export",
-                         self._p({"dir": dir, "mode": mode, "scope": scope}))
+                         self._p({"dir": dir, "mode": mode, "scope": scope}, project))
         except Unreachable:
-            return self._fallback().export_topics(dir, mode, scope)
+            return self._offline_refusal(project) or self._fallback().export_topics(dir, mode, scope)
 
-    def import_(self, dir=None):
+    def import_(self, dir=None, project=None):
         try:
-            return _http("POST", f"{self.base}/api/topics/import", self._p({"dir": dir}))
+            return _http("POST", f"{self.base}/api/topics/import", self._p({"dir": dir}, project))
         except Unreachable:
-            return self._fallback().import_topics(dir)
+            return self._offline_refusal(project) or self._fallback().import_topics(dir)
 
-    def merge(self, into, from_, body=None):
+    def merge(self, into, from_, body=None, project=None):
         try:
             return _http("POST", f"{self.base}/api/topics/merge",
-                         self._p({"into": into, "from": from_, "body": body}))
+                         self._p({"into": into, "from": from_, "body": body}, project))
         except Unreachable:
-            return self._fallback().merge_topics(into, from_, ACTOR, body)
+            return self._offline_refusal(project) or self._fallback().merge_topics(into, from_, ACTOR, body)
 
-    def confirm(self, slug, note=None):
+    def confirm(self, slug, note=None, project=None):
         try:
             # actor EXPLICIT (0.52.2): _p stamps project only, and the server defaults an absent
             # actor to 'unknown'. The first live confirm after 0.52.1 armed recorded exactly that
             # - an anonymous ruling in the one verb whose entire purpose is per-actor attribution.
             # Same attribution-vanishes-in-transport class as the per-item actor fix, one seam over.
             return _http("POST", f"{self.base}/api/topics/confirm",
-                         self._p({"slug": slug, "note": note, "actor": ACTOR}))
+                         self._p({"slug": slug, "note": note, "actor": ACTOR}, project))
         except Unreachable:
-            return self._fallback().confirm_placement(slug, ACTOR, note or "")
+            return self._offline_refusal(project) or self._fallback().confirm_placement(slug, ACTOR, note or "")
 
-    def duplicates(self, band="kin"):
+    def duplicates(self, band="kin", project=None):
         try:
-            return _http("GET", self._q(f"{self.base}/api/topics/duplicates?band={band}"))
+            return _http("GET", self._q(f"{self.base}/api/topics/duplicates?band={band}", project))
         except Unreachable:
-            return self._fallback().find_duplicates(band)
+            return self._offline_refusal(project) or self._fallback().find_duplicates(band)
 
 
 # -------------------------------------------------------- board backend ----
@@ -1197,12 +1226,30 @@ TOOLS = [
                     "backend; the board backend returns the core fields only). Read this "
                     "before deciding convert/prune/keep - search returns only slug/score/state.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string"}}, "required": ["slug"]}},
     {"name": "topic_list",
      "description": "ENUMERATE the store (compact rows: slug, title, state, priority, "
                     "parent) - the inventory a groom needs. Paginated (limit/offset; "
                     "returns total). include_archive adds pruned/expired.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "include_archive": {"type": "boolean"},
          "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
     {"name": "topic_serve",
@@ -1214,6 +1261,15 @@ TOOLS = [
          "(TOPICS_SERVE_COOLDOWN_DAYS), so re-serving after the human defers simply "
          "advances to the next card - no defer verb needed."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "context": {"type": "string",
                      "description": "what we're working on right now (for territory fit)"}}}},
     {"name": "topic_search",
@@ -1221,6 +1277,15 @@ TOOLS = [
                     "up, keyword otherwise). Use before adding: the dup you merge into "
                     "is better than the twin you plant.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "query": {"type": "string"}}, "required": ["query"]}},
     {"name": "topic_state",
      "description": "Change a topic in place (no re-planting, so edges/notes/history "
@@ -1238,6 +1303,15 @@ TOOLS = [
                     "items:[{slug,state?,priority?,note?}, ...] to change many in one call "
                     "(per-item results) instead of a call each.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string"},
          "state": {"type": "string", "enum": ["open", "discussed", "pruned"]},
          "priority": {"type": "string", "enum": ["normal", "critical"]},
@@ -1270,6 +1344,15 @@ TOOLS = [
          "topic_state for ad-hoc changes; use THIS when closing topics because tracker "
          "work shipped or a bucket ruling landed."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "items": {"type": "array", "items": {"type": "object", "properties": {
              "slug": {"type": "string"},
              "disposition": {"type": "string",
@@ -1294,6 +1377,15 @@ TOOLS = [
          "bucket, the human rules, then topic_reconcile (decision + leave_open) "
          "bulk-applies. Workflow: skill topics-triage. sqlite backend only."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "max_buckets": {"type": "integer", "description":
                          "bucket cap 2-20 (default 8); the smallest clusters pool "
                          "into an 'other' bucket"}}}},
@@ -1305,6 +1397,15 @@ TOOLS = [
          "topic and links it. Never convert silently mid-conversation; do it at the "
          "moment the human ratifies. BATCH: pass items:[{slug,kind,ref?,note?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string"},
          "kind": {"type": "string", "enum": ["decision", "work_item", "document"]},
          "ref": {"type": "string", "description": "existing artifact ref; empty on the "
@@ -1330,6 +1431,15 @@ TOOLS = [
          "reference; similarity can't tell a complement from noise, so don't outsource it. "
          "Re-attaching with a kind reclassifies. BATCH: items:[{slug,parent_slug,note?,remove?,kind?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string", "description": "the existing topic"},
          "parent_slug": {"type": "string", "description": "the additional parent"},
          "note": {"type": "string",
@@ -1355,6 +1465,15 @@ TOOLS = [
          "edge. Primary-parent edits need the sqlite backend (the board's parent lives in an "
          "immutable post body). BATCH: pass items:[{slug,parent_slug}, ...] to move many at once."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string", "description": "the topic to move"},
          "parent_slug": {"type": "string",
                          "description": "new PRIMARY parent slug; \"\" = detach to root"},
@@ -1370,6 +1489,15 @@ TOOLS = [
          "state/beacon -> topic_state, extra avenue -> topic_attach. sqlite backend only (board post "
          "bodies are immutable). BATCH: items:[{slug,title?,body?}, ...]."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string"},
          "title": {"type": "string", "description": "new title (the question/tension)"},
          "body": {"type": "string", "description": "new body (self-contained context + THE QUESTION)"},
@@ -1383,11 +1511,29 @@ TOOLS = [
          "of a groom, before any merge/reparent/prune, so the human can undo a reshape they dislike. "
          "Cheap; the newest 15 are kept. Returns {id, created_at, topics}. sqlite backend only."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "label": {"type": "string", "description": "e.g. 'pre-groom 2026-07-13'"}}}},
     {"name": "topic_checkpoints",
      "description": "List restore points (newest first): id, when, label, topic count, and "
                     "whether each was already used to restore. Use before topic_restore to pick one.",
-     "inputSchema": {"type": "object", "properties": {}}},
+     "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},}}},
     {"name": "topic_restore",
      "description": (
          "Undo a groom: roll the tree back to a checkpoint (omit id = the most recent). RECONCILE, "
@@ -1399,6 +1545,15 @@ TOOLS = [
          "preserved_since, recovered, removed_hubs}. Tell the human what reverts and what is kept "
          "before you call it. sqlite backend only."),
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "id": {"type": "integer", "description": "checkpoint id; omit for the latest"}}}},
     {"name": "topic_groom_report",
      "description": "The grooming round's evidence: STALENESS-FIRST health (stale-open "
@@ -1448,6 +1603,15 @@ TOOLS = [
                     "only adds. scope: omit for all live, 'critical' for beacons only, or a "
                     "slug for that subtree. sqlite = full; board = read-only snapshot.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "dir": {"type": "string", "description": "target dir (default <repo>/.topics)"},
          "mode": {"type": "string", "enum": ["mirror", "snapshot"]},
          "scope": {"type": "string", "description": "'critical' | a subtree slug | omit for all"}}}},
@@ -1459,6 +1623,15 @@ TOOLS = [
                     "candidate near-duplicate pairs touching the imported topics - walk it "
                     "next with the topics-reconcile skill (topic_get -> topic_merge/attach).",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "dir": {"type": "string", "description": "source dir (default <repo>/.topics)"}}}},
     {"name": "topic_merge",
      "description": "Fold topic `from` into topic `into`: re-parent from's children onto "
@@ -1468,6 +1641,15 @@ TOOLS = [
                     "rewritten body. The reconcile MERGE decision - always a judgment with "
                     "both bodies in view, never automatic. sqlite only. Cycle/self-guarded.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "into": {"type": "string", "description": "the survivor slug"},
          "from": {"type": "string", "description": "the slug to fold away"},
          "body": {"type": "string", "description": "optional rewritten combined body"}},
@@ -1484,6 +1666,15 @@ TOOLS = [
                     "already moved records a ruling that agreed with the HUMAN. Your ruling is "
                     "recorded under your actor and reported separately from a human's, never merged.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "slug": {"type": "string", "description": "the topic whose placement you are ruling on"},
          "note": {"type": "string", "description": "optional: why you agree (what you checked)"}},
        "required": ["slug"]}},
@@ -1496,6 +1687,15 @@ TOOLS = [
                     "default did not surface, e.g. two captures that open with the same "
                     "boilerplate preamble and diverge only later in the body.",
      "inputSchema": {"type": "object", "properties": {
+         "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
+                                    "aim this call at the tree the topic BELONGS to rather than "
+                                    "the one your cwd keys. Omit for the session project. Pair "
+                                    "it with topic_add's `project`: a capture routed by SUBJECT "
+                                    "can then be read, edited, linked, merged and pruned from "
+                                    "the same session that made it. Unlike topic_add, this "
+                                    "never CREATES a store - an unknown key is an error, "
+                                    "because only capture and import bring a project into "
+                                    "existence", "type": "string"},
          "band": {"type": "string", "enum": ["weak", "kin", "dup_likely"]}}}},
 ]
 
@@ -1511,9 +1711,9 @@ def _state_one(b, a: dict) -> dict:
     if a.get("preview"):
         if state != "pruned":
             return {"error": "preview only applies to state='pruned'", "slug": slug}
-        return b.state(slug, state, note, preview=True)
-    pres = b.priority(slug, priority == "critical") if priority else None
-    sres = b.state(slug, state, note) if state else None
+        return b.state(slug, state, note, preview=True, project=a.get("project"))
+    pres = b.priority(slug, priority == "critical", project=a.get("project")) if priority else None
+    sres = b.state(slug, state, note, project=a.get("project")) if state else None
     if sres is not None and pres is None:
         return sres
     if pres is not None and sres is None:
@@ -1529,13 +1729,14 @@ def _state_one(b, a: dict) -> dict:
 
 def _convert_one(b, a: dict) -> dict:
     return b.convert(str(a.get("slug") or ""), a.get("kind"),
-                     str(a.get("ref") or ""), str(a.get("note") or ""))
+                     str(a.get("ref") or ""), str(a.get("note") or ""),
+                     project=a.get("project"))
 
 
 def _attach_one(b, a: dict) -> dict:
     return b.attach(str(a.get("slug") or ""), str(a.get("parent_slug") or ""),
                     str(a.get("note") or ""), bool(a.get("remove")),
-                    str(a.get("kind") or "co_parent"))
+                    str(a.get("kind") or "co_parent"), project=a.get("project"))
 
 
 def _reparent_one(b, a: dict) -> dict:
@@ -1544,14 +1745,24 @@ def _reparent_one(b, a: dict) -> dict:
     slug = str(a.get("slug") or "")
     if "parent_slug" not in a:
         return {"error": 'reparent needs parent_slug ("" to detach to root)', "slug": slug}
-    return b.reparent(slug, str(a.get("parent_slug") or ""))
+    return b.reparent(slug, str(a.get("parent_slug") or ""), project=a.get("project"))
 
 
 def _edit_one(b, a: dict) -> dict:
     slug, title, body = str(a.get("slug") or ""), a.get("title"), a.get("body")
     if title is None and body is None:
         return {"error": "topic_edit needs a title and/or a body", "slug": slug}
-    return b.edit(slug, title, body)
+    return b.edit(slug, title, body, project=a.get("project"))
+
+
+def _proj(args):
+    """The per-call store override, or None for the session store.
+
+    An empty string means "not given" rather than a project named "" - the MCP
+    layer receives JSON from a client, and a client that fills every declared
+    property with a blank would otherwise aim every call at a store that cannot
+    exist."""
+    return args.get("project") or None
 
 
 def _single_or_batch(b, args, one, inherit=()):
@@ -1608,32 +1819,32 @@ def _call(name: str, args: dict) -> dict:
                  for it in items]
         return b.add(items, args.get("actor"), args.get("project") or None)
     if name == "topic_get":
-        return b.get(str(args.get("slug") or ""))
+        return b.get(str(args.get("slug") or ""), project=_proj(args))
     if name == "topic_list":
         return b.list_(bool(args.get("include_archive")),
-                       args.get("limit", 500), args.get("offset", 0))
+                       args.get("limit", 500), args.get("offset", 0), project=_proj(args))
     if name == "topic_serve":
-        return b.serve(str(args.get("context") or ""))
+        return b.serve(str(args.get("context") or ""), project=_proj(args))
     if name == "topic_search":
-        return b.search(str(args.get("query") or ""))
+        return b.search(str(args.get("query") or ""), project=_proj(args))
     if name == "topic_state":
         # preview inherits: a top-level preview must reach every item, or the batch form
         # silently writes the prune it was asked to only describe (see _single_or_batch).
-        return _single_or_batch(b, args, _state_one, inherit=("preview",))
+        return _single_or_batch(b, args, _state_one, inherit=("preview", "project"))
     if name == "topic_convert":
-        return _single_or_batch(b, args, _convert_one)
+        return _single_or_batch(b, args, _convert_one, inherit=("project",))
     if name == "topic_attach":
-        return _single_or_batch(b, args, _attach_one)
+        return _single_or_batch(b, args, _attach_one, inherit=("project",))
     if name == "topic_reparent":
-        return _single_or_batch(b, args, _reparent_one)
+        return _single_or_batch(b, args, _reparent_one, inherit=("project",))
     if name == "topic_edit":
-        return _single_or_batch(b, args, _edit_one)
+        return _single_or_batch(b, args, _edit_one, inherit=("project",))
     if name == "topic_checkpoint":
-        return b.checkpoint(str(args.get("label") or ""))
+        return b.checkpoint(str(args.get("label") or ""), project=_proj(args))
     if name == "topic_checkpoints":
-        return b.checkpoints()
+        return b.checkpoints(project=_proj(args))
     if name == "topic_restore":
-        return b.restore(args.get("id"))
+        return b.restore(args.get("id"), project=_proj(args))
     if name == "topic_groom_report":
         return b.groom(verbose=args.get("verbose") is not False,
                        project=args.get("project") or None)
@@ -1642,20 +1853,23 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_open":
         return b.open_visualizer()
     if name == "topic_export":
-        return b.export(args.get("dir"), str(args.get("mode") or "mirror"), args.get("scope"))
+        return b.export(args.get("dir"), str(args.get("mode") or "mirror"),
+                        args.get("scope"), project=_proj(args))
     if name == "topic_import":
-        return b.import_(args.get("dir"))
+        return b.import_(args.get("dir"), project=_proj(args))
     if name == "topic_merge":
-        return b.merge(str(args.get("into") or ""), str(args.get("from") or ""), args.get("body"))
+        return b.merge(str(args.get("into") or ""), str(args.get("from") or ""),
+                       args.get("body"), project=_proj(args))
     if name == "topic_confirm":
-        return b.confirm(str(args.get("slug") or ""), args.get("note"))
+        return b.confirm(str(args.get("slug") or ""), args.get("note"), project=_proj(args))
     if name == "topic_duplicates":
-        return b.duplicates(str(args.get("band") or "kin"))
+        return b.duplicates(str(args.get("band") or "kin"), project=_proj(args))
     if name == "topic_reconcile":
         return b.reconcile(args.get("items") or [],
-                           decision=str(args.get("decision") or "") or None)
+                           decision=str(args.get("decision") or "") or None,
+                           project=_proj(args))
     if name == "topic_buckets":
-        return b.buckets(max_buckets=args.get("max_buckets") or 8)
+        return b.buckets(max_buckets=args.get("max_buckets") or 8, project=_proj(args))
     return {"error": f"unknown tool {name!r}"}
 
 
