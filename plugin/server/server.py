@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.0"
+VERSION = "0.57.1"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -36,6 +36,11 @@ LAUNCHED_BY = os.environ.get("TOPICS_LAUNCHED_BY") or "manual"  # "autostart" if
 SEEDLING_EXPIRY_DAYS = 21
 BEACON_WARN_RATIO = 0.10
 MERGED_TOMBSTONE_DAYS = 14      # a merge tombstone is hard-removed by the prune sweep after this
+# The LIVE partition, in one place. NOTE: ~18 SQL strings in this file still spell it
+# inline as IN ('seedling','open','discussed'); they agree with this today. Prefer this
+# constant in new Python-side code, and if one of those SQL copies ever has to change,
+# change them together - a concept with many inline definitions drifts one copy at a time.
+_LIVE_STATES = ("seedling", "open", "discussed")
 
 _lock = threading.RLock()     # single-writer discipline; REENTRANT so a request can
                               # pin its project's connection and still call locked helpers
@@ -869,8 +874,16 @@ def get_topic(slug: str) -> dict:
                      "SELECT tp.note, tp.added_by, tp.added_at, tp.rel, p.slug AS parent_slug "
                      "FROM topic_parent tp JOIN topic p ON p.id=tp.parent_id "
                      "WHERE tp.topic_id=?", (tid,))]
-        children = [x["slug"] for x in _conn.execute(
-            "SELECT slug FROM topic WHERE parent_id=?", (tid,))]
+        # `children` is LIVE-only, matching list_topics and the groom report's over_wide.
+        # It used to be unfiltered, so the detail view counted merge tombstones and pruned
+        # rows that every width rule in this file excludes - two instruments, two numbers,
+        # no marker. That put a row merged away three days earlier into a groom's frozen
+        # member list, and the hub it described read 13 here against 12 everywhere else.
+        # Archived children stay reachable under their own key rather than being dropped.
+        _kids = [(x["slug"], x["state"]) for x in _conn.execute(
+            "SELECT slug, state FROM topic WHERE parent_id=?", (tid,))]
+        children = [s for s, st in _kids if st in _LIVE_STATES]
+        children_archived = [s for s, st in _kids if st not in _LIVE_STATES]
         events = [{"event": x["event"], "actor": x["actor"], "note": x["note"], "at": x["at"]}
                   for x in _conn.execute(
                       "SELECT event, actor, note, at FROM topic_event WHERE topic_id=? "
@@ -878,7 +891,7 @@ def get_topic(slug: str) -> dict:
     t = _row_to_topic(r)
     t.pop("id", None)
     t.update({"extra_parents": extra, "links": links, "children": children,
-              "history": events})
+              "children_archived": children_archived, "history": events})
     return {"topic": t}
 
 
@@ -1106,7 +1119,42 @@ def find_duplicates(min_band="kin") -> dict:
             pairs.append({"a": key[0], "b": key[1], "score": dpl["score"],
                           "mode": dpl["mode"], "band": dpl["band"]})
     pairs.sort(key=lambda p: -p["score"])
+    _annotate_judged(pairs)
     return {"pairs": pairs, "count": len(pairs)}
+
+
+def _annotate_judged(pairs: list) -> None:
+    """Mark pairs that already carry an EDGE between them, in place.
+
+    The ranker reads titles and bodies and nothing else, so a pair a groom has already
+    examined and deliberately declined comes back at the identical score every single run.
+    The verdict IS recorded - the convention is a see_also carrying the reasoning - but
+    nothing read it, so the judgment was re-derived from scratch each time. One live pair
+    had resurfaced across four consecutive grooms that way.
+
+    ANNOTATE, NEVER SUPPRESS. A decline is a judgment, not a deletion: the bodies can
+    change, and a pair that silently stopped being reported would be an instrument that
+    cannot go red. The groom still sees the candidate; it now also sees that someone
+    looked, when, and why - and can skip it in one glance instead of re-reading two bodies.
+    """
+    if not pairs:
+        return
+    edges = {}
+    with _lock:
+        for x in _conn.execute(
+                "SELECT a.slug AS child, b.slug AS parent, tp.rel, tp.note, "
+                "tp.added_by, tp.added_at FROM topic_parent tp "
+                "JOIN topic a ON a.id=tp.topic_id "
+                "JOIN topic b ON b.id=tp.parent_id"):
+            edges[(x["child"], x["parent"])] = {
+                "kind": x["rel"] or "co_parent", "note": x["note"] or "",
+                "added_by": x["added_by"], "added_at": x["added_at"]}
+    for p in pairs:
+        for src, dst in ((p["a"], p["b"]), (p["b"], p["a"])):
+            e = edges.get((src, dst))
+            if e:
+                p["judged"] = dict(e, direction=f"{src} -> {dst}")
+                break
 
 
 def _worklist_for(slugs: set) -> list:

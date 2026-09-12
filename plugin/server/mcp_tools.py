@@ -1224,7 +1224,12 @@ TOOLS = [
                     "priority, tags, provenance, ALL parents + extra avenues with their "
                     "notes, children, recorded conversions, and recent history (sqlite "
                     "backend; the board backend returns the core fields only). Read this "
-                    "before deciding convert/prune/keep - search returns only slug/score/state.",
+                    "before deciding convert/prune/keep - search returns only slug/score/state. "
+                    "`children` is LIVE children only (seedling/open/discussed), so it agrees "
+                    "with topic_list and the groom report's width rules; pruned children and "
+                    "merge tombstones are listed separately under `children_archived`. It was "
+                    "unfiltered before 0.57.1, which put a merged-away row into a groom's "
+                    "frozen member list and made one hub read 13 here against 12 everywhere else.",
      "inputSchema": {"type": "object", "properties": {
          "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
                                     "aim this call at the tree the topic BELONGS to rather than "
@@ -1685,7 +1690,12 @@ TOOLS = [
                     "an instruction to merge. 'weak' lowers the EMISSION floor to look below "
                     "the capture-time dedup bar - reach for it when you suspect a twin the "
                     "default did not surface, e.g. two captures that open with the same "
-                    "boilerplate preamble and diverge only later in the body.",
+                    "boilerplate preamble and diverge only later in the body. A pair that "
+                    "already carries an EDGE between its two topics arrives with a `judged` "
+                    "block (the edge's kind, note, author and date): somebody has looked at "
+                    "this pair and recorded a verdict, so read that note before re-deriving "
+                    "the comparison from two long bodies. Judged pairs are still REPORTED, "
+                    "never suppressed - bodies change and a decline is revisitable.",
      "inputSchema": {"type": "object", "properties": {
          "project": {"description": "the project store to act on, e.g. F--writing-myrepo - "
                                     "aim this call at the tree the topic BELONGS to rather than "

@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.57.1 - 2026-09-12 - Two instruments that quietly disagreed with the groom
+
+Both found by a groom being misled by them, both in the same shape this tool exists to catch:
+a number that does not mean what its label says, and a judgment nothing reads back.
+
+### `topic_get`'s children counted rows every width rule excludes
+
+`get_topic` returned children as a bare `SELECT slug FROM topic WHERE parent_id=?` with no
+state predicate, while `list_topics` and the groom report's `over_wide` both restrict to live
+states. Same concept, three inline definitions, one of them unfiltered - so the detail view
+counted merge tombstones and pruned rows that every width instrument ignores, with no marker
+on either side to say they were counting different things.
+
+IT MISLED A REAL GROOM, which is how it surfaced. A hub in the quantum-concepts tree read 13
+children in the detail view against 12 everywhere else, and a row that had been merged away
+three days earlier was carried into a frozen member list as though it were live. The groom had
+enumerated membership from the detail view, which is the natural place to look.
+
+`children` is now live-only (seedling/open/discussed), matching the other two definitions.
+Archived children are not dropped - they move to `children_archived`, so nothing that wanted
+the full set has lost it. A `_LIVE_STATES` constant now names the partition once on the Python
+side; the ~18 SQL strings that still spell it inline are noted there, deliberately not
+rewritten in a patch release.
+
+### `topic_duplicates` could not see that a pair had already been judged
+
+The ranker reads titles and bodies and nothing else, so a pair a groom examined and
+deliberately declined came back at the identical score every single run. The verdict was being
+recorded correctly - the convention is a `see_also` edge carrying the reasoning - and nothing
+ever read it. One live pair resurfaced across FOUR consecutive grooms at 0.638, each time
+inviting a re-derivation from two long bodies that had already been done and written down.
+
+A pair that carries an edge between its two topics now arrives with a `judged` block: the
+edge's kind, note, author and date, and which direction it was recorded in (the edge is
+one-directional and a cycle guard can make the mutual form impossible, so both directions are
+checked).
+
+ANNOTATE, NEVER SUPPRESS, and the distinction is the whole design. A declined pair is still
+reported. Bodies change, a decline is revisitable, and a pair that silently stopped appearing
+would be exactly the instrument-that-cannot-go-red this tool is built to expose. The groom
+still sees the candidate; it now also sees that somebody looked, when, and why.
+
+### Tests
+
+Eight new tests across `test_detail_children.py` and `test_dup_judged.py`, each verified to
+FAIL against the unfixed server and pass against the fixed one rather than merely passing.
+Two of the eight pass in both states by design - they pin "must still be reported" - and say
+so. Suite: 299 pass, 3 skipped.
+
 ## 0.57.0 - 2026-09-06 - Capture could route to another store; nothing else could follow it there
 
 `topic_add` has taken a `project` override since 1424, and `topic_groom_report` since 0798.
