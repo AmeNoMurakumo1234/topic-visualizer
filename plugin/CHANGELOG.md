@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.57.2 - 2026-09-13 - The fix for "nothing reads the verdict" read one of the two tables that hold one
+
+0.57.1 taught `topic_duplicates` to report that a pair had already been judged, so a decline
+recorded on an edge would stop being re-derived from two long bodies every groom. It shipped
+one day ago and it was half a fix.
+
+### `_annotate_judged` never looked at the spine
+
+The function's own docstring says it marks "pairs that already carry an EDGE between them",
+and it queried `topic_parent` - the avenues - and nothing else. A direct parent/child pair on
+the spine (`topic.parent_id`) came back completely unannotated.
+
+THE BLIND HALF IS THE DANGEROUS HALF. A real sub-question shares maximal vocabulary with its
+parent, so spine pairs rank HIGH - the top-scoring pair in the live quantum-concepts store,
+at 0.718, was a parent and its own child - and merging a child INTO its parent is the most
+destructive merge available, because it collapses a deliberate nesting and dissolves the
+sub-question that earned its own row. The annotated case (a weak-band aside) was the safe one.
+
+MEASURED ON THE LIVE STORE before the fix, one call, two arms differing in one thing:
+avenue pairs 3 of 3 annotated, spine pairs 0 of 5. The instrument worked exactly where it
+looked and was silent everywhere else.
+
+A spine edge carries no authored reasoning, so it is not dressed up as one. It is reported
+with `kind: "parent"`, the actor and date taken from the topic's own `reparented`/`created`
+event, and a note that says plainly what it is - structural nesting, not a recorded verdict -
+and what a merge there would destroy. An authored decline still reads as `see_also` with the
+author's own words.
+
+### A precedence rule was written for a case two guards make impossible
+
+The first draft ranked avenues above the spine, with a comment explaining the subtlety of
+checking both directions per table. The branch was unreachable. For any pair the two tables
+are disjoint: `attach_parent` in the same direction as the spine returns `already: true` and
+writes no row, and the reverse direction is refused by the cycle guard. The tie-break is gone;
+`test_dup_judged_spine` now pins the disjointness instead, so relaxing either guard reddens
+there and whoever relaxes it inherits the precedence question rather than inheriting a silent
+tie-break nobody chose.
+
+Six tests, verified red against the unfixed server (3 failing for the missing annotation, the
+two controls green), plus a mutation control on the precedence ordering that is what exposed
+the branch as dead.
+
 ## 0.57.1 - 2026-09-12 - Two instruments that quietly disagreed with the groom
 
 Both found by a groom being misled by them, both in the same shape this tool exists to catch:

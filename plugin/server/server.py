@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.1"
+VERSION = "0.57.2"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -1139,7 +1139,7 @@ def _annotate_judged(pairs: list) -> None:
     """
     if not pairs:
         return
-    edges = {}
+    edges, spine = {}, {}
     with _lock:
         for x in _conn.execute(
                 "SELECT a.slug AS child, b.slug AS parent, tp.rel, tp.note, "
@@ -1149,9 +1149,39 @@ def _annotate_judged(pairs: list) -> None:
             edges[(x["child"], x["parent"])] = {
                 "kind": x["rel"] or "co_parent", "note": x["note"] or "",
                 "added_by": x["added_by"], "added_at": x["added_at"]}
+        # THE SPINE IS AN EDGE TOO. This function was written for the avenue case and
+        # queried one of the two tables that hold edges, so a direct parent/child pair
+        # came back unannotated - and that is the dangerous half, because a real
+        # sub-question shares maximal vocabulary with its parent (the top-scoring pair
+        # in a live store, 0.718, was one) and merging a child INTO its parent collapses
+        # a deliberate nesting. Measured before this fix: avenues 3/3 annotated, spine 0/5.
+        for x in _conn.execute(
+                "SELECT a.slug AS child, b.slug AS parent, "
+                "  (SELECT e.actor FROM topic_event e WHERE e.topic_id=a.id "
+                "     AND e.event IN ('reparented','created') ORDER BY e.id DESC LIMIT 1) AS actor, "
+                "  (SELECT e.at FROM topic_event e WHERE e.topic_id=a.id "
+                "     AND e.event IN ('reparented','created') ORDER BY e.id DESC LIMIT 1) AS at "
+                "FROM topic a JOIN topic b ON b.id=a.parent_id"):
+            spine[(x["child"], x["parent"])] = {
+                "kind": "parent",
+                # A spine edge carries no authored reasoning, so say what it IS rather
+                # than borrowing the avenue arm's voice of a recorded verdict.
+                "note": ("SPINE: this topic's primary parent is the other. Structural "
+                         "nesting, not a recorded verdict - but a merge here would "
+                         "collapse a deliberate parent/child nesting and dissolve the "
+                         "sub-question. Reparent or cross-link instead."),
+                "added_by": x["actor"], "added_at": x["at"]}
+    # NO PRECEDENCE RULE IS NEEDED, and that is measured rather than assumed: for any
+    # given pair the two tables are DISJOINT, kept so by two independent guards.
+    # attach_parent in the SAME direction as the spine returns {"already": True,
+    # "note": "already the primary parent"} and writes no row; the REVERSE direction is
+    # refused by the cycle guard. A first draft here ranked avenues above the spine -
+    # unreachable code wearing a comment about its own subtlety. test_dup_judged_spine
+    # pins the disjointness, so relaxing either guard reddens there and whoever does it
+    # inherits the precedence question honestly.
     for p in pairs:
         for src, dst in ((p["a"], p["b"]), (p["b"], p["a"])):
-            e = edges.get((src, dst))
+            e = edges.get((src, dst)) or spine.get((src, dst))
             if e:
                 p["judged"] = dict(e, direction=f"{src} -> {dst}")
                 break
