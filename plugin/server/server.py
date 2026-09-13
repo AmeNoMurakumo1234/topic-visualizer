@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.2"
+VERSION = "0.57.3"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -1311,6 +1311,22 @@ def merge_topics(into_slug: str, from_slug: str, actor: str, body: str | None = 
         fparents += [r["parent_id"] for r in _conn.execute(
             "SELECT parent_id FROM topic_parent WHERE topic_id=?", (from_id,))]
         into_prim = _conn.execute("SELECT parent_id FROM topic WHERE id=?", (into_id,)).fetchone()["parent_id"]
+        # PROMOTE, don't demote: when the survivor has NO primary parent there is nothing for
+        # the absorbed topic's primary edge to conflict with, and filing it as a "merged avenue"
+        # strands the survivor at ROOT. The primary parent is the tree spine, so that silently
+        # inflates leaf_root_count and breadth_warning while the hub the survivor belongs under
+        # reads thinner than it is - invisible at the call site, since moved_children counts
+        # CHILDREN and the parent edge moves with no marker at all. quantum-concepts 1524.
+        # Deliberately narrow: when the survivor ALREADY has a primary, current behaviour is
+        # correct (the absorbed topic's parent is a genuine second avenue) and is left alone.
+        if into_prim is None:
+            from_prim = _conn.execute("SELECT parent_id FROM topic WHERE id=?",
+                                      (from_id,)).fetchone()["parent_id"]
+            if from_prim is not None and from_prim != into_id and from_prim not in into_desc:
+                _conn.execute("UPDATE topic SET parent_id=? WHERE id=?", (from_prim, into_id))
+                _event(into_id, "reparented", actor,
+                       f"promoted the absorbed topic's primary parent on merge from {from_slug}")
+                into_prim = from_prim
         for pid in fparents:
             if pid in into_desc or pid == into_prim:
                 continue

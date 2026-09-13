@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.57.3 - 2026-09-13 - A merge could strand the survivor at root and inflate the breadth alarm
+
+`topic_merge` promises to "transfer its parent/extra edges". Step 3 folded EVERY parent of the
+absorbed topic into the survivor's extra_parents as a "merged avenue" - its PRIMARY parent included.
+
+When the survivor already has a primary parent that is right: the absorbed topic's parent is a
+genuine second avenue. When the survivor has NO primary there is nothing to conflict with, and
+demoting that edge to an avenue left the survivor sitting at ROOT.
+
+WHY IT IS NOT COSMETIC. The primary parent is the tree spine, so the survivor kept counting as an
+un-nested LEAF ROOT while the hub it belonged under read thinner than it is. Measured in the test:
+merging a parented topic into a root survivor moved leaf_root_count 1 -> 2 - the wrong direction,
+twice over, because the hub also lost its only child to the tombstone. So every merge of this shape
+pushed `breadth_warning` toward tripping, and the next groom would see a new un-nested leaf root it
+could not distinguish from organic sprawl. All of it invisible at the call site: `ok: true`, no
+warning, and `moved_children` counts CHILDREN, never the parent edge.
+
+The fix is deliberately narrow. Only when the survivor has no primary parent is the absorbed
+topic's primary promoted (cycle- and self-guarded), and it is then not also inserted as a duplicate
+avenue. A survivor that already has a primary is untouched; a root-into-root merge still leaves the
+survivor at root, because there is nothing to promote and nothing should be invented.
+
+Five tests, verified red against the unfixed code (3 failures) with two controls green - existing
+primary never overwritten, root-to-root unchanged. One of them was corrected mid-flight: its first
+draft filtered `list_topics` on `parent_slug`, a key that payload does not carry (it is `parent`),
+so every row read as a root and the test could not have passed on correct code either. It now
+asserts on `leaf_root_count` - the alarm's own input, which is the surface the defect corrupts -
+and was re-proven red by disabling the fix. Suite 310 green.
+
+Filed as quantum-concepts 1524 with the repro.
+
 ## 0.57.2 - 2026-09-13 - The fix for "nothing reads the verdict" read one of the two tables that hold one
 
 0.57.1 taught `topic_duplicates` to report that a pair had already been judged, so a decline
