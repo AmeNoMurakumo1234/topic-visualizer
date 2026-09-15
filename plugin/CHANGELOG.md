@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.57.4 - 2026-09-15 - topic_search answered a call whose query never arrived
+
+`topic_search` coerced a missing or blank `query` to `""`, ran it, and returned `{"results": []}`.
+No error, no warning, rc fine.
+
+WHY THAT IS NOT COSMETIC. An empty result from a MALFORMED call is byte-identical to an empty
+result meaning nothing matched, and there is nothing in the payload to tell them apart. The failure
+direction is the expensive one, because of what this verb is FOR - its own description says to run
+it before adding, since "the dup you merge into is better than the twin you plant". So a caller
+whose query never arrived reads `[]` as "no duplicate exists" and plants the duplicate it was
+checking for. The tool's one job is to prevent a twin, and the malformed call actively causes one.
+
+It now refuses by name - `topic_search needs a non-empty query` - with a detail line saying why it
+refuses instead of returning an empty set, in the same voice as `topic_add`'s 0653 degenerate-batch
+refusal and `topic_reparent`'s missing `parent_slug`. A whitespace-only query is refused too. The
+refused call never reaches the server.
+
+Two tests, both checked AGAINST the unfixed code first (3 subtest failures, the control already
+green). The second test is a control that pins the other side of the discrimination: a refusal
+that also swallowed valid queries would pass the first test while destroying the verb. Suite 312
+pass, 3 skipped.
+
+Captured as a topic in run 28 with a repro and carried unfixed for five runs.
+
 ## 0.57.3 - 2026-09-13 - A merge could strand the survivor at root and inflate the breadth alarm
 
 `topic_merge` promises to "transfer its parent/extra edges". Step 3 folded EVERY parent of the

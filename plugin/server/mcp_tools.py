@@ -1836,7 +1836,18 @@ def _call(name: str, args: dict) -> dict:
     if name == "topic_serve":
         return b.serve(str(args.get("context") or ""), project=_proj(args))
     if name == "topic_search":
-        return b.search(str(args.get("query") or ""), project=_proj(args))
+        # Refuse a blank query by name rather than running it. The server answers "" with
+        # {"results": []}, which is byte-identical to "nothing matched" - and this verb exists to
+        # be run BEFORE capture, so a caller whose query never arrived reads [] as "no duplicate
+        # exists" and plants the twin it was checking for.
+        q = str(args.get("query") or "").strip()
+        if not q:
+            return {"error": "topic_search needs a non-empty `query`",
+                    "detail": "refusing rather than returning an empty result set: [] from a "
+                              "malformed call cannot be told apart from [] meaning nothing "
+                              "matched, and this verb is what you run to find the duplicate "
+                              "you should merge into"}
+        return b.search(q, project=_proj(args))
     if name == "topic_state":
         # preview inherits: a top-level preview must reach every item, or the batch form
         # silently writes the prune it was asked to only describe (see _single_or_batch).

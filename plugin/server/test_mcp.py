@@ -678,5 +678,50 @@ class RunnerBlockIsLast(unittest.TestCase):
             "`python test_mcp.py`: " + ", ".join(stragglers))
 
 
+class McpSearchRefusesABlankQuery(unittest.TestCase):
+    """Captured topics run 28, fixed run 33 (Tare). `topic_search` coerced a missing or blank
+    query to "" and ran it, and the call returned `{"results": []}` - no error, no complaint.
+
+    An empty result from a MALFORMED call is byte-identical to an empty result meaning nothing
+    matched, and there is nothing in the payload to tell them apart. The failure direction is the
+    expensive one, because this verb's whole stated job is to be run BEFORE capture ("the dup you
+    merge into is better than the twin you plant"): a caller whose query never arrived reads []
+    as "no duplicate exists" and plants the twin. Refuse by name instead, the way topic_reparent
+    already refuses a missing parent_slug."""
+
+    def _search(self, args):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        calls = []
+
+        def fake_http(method, url, body=None, headers=None):
+            calls.append((method, url))
+            return {"results": []}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            out = mcp_tools._call("topic_search", args)
+        return out, calls
+
+    def test_blank_query_is_refused_and_never_reaches_the_server(self):
+        for args in ({"query": ""}, {"query": "   "}, {}):
+            with self.subTest(args=args):
+                out, calls = self._search(args)
+                self.assertIn("error", out,
+                              "a blank query returned a result set instead of refusing - [] here "
+                              "is indistinguishable from 'nothing matched'")
+                self.assertIn("query", out.get("error", ""),
+                              "the refusal must name the argument at fault, not just fail")
+                self.assertEqual(calls, [], "a refused call must not reach the server")
+
+    def test_a_real_query_still_reaches_the_server(self):
+        """The control. A refusal that also swallowed valid queries would pass the test above
+        while destroying the verb, so this pins the other side of the discrimination."""
+        out, calls = self._search({"query": "stdio seam"})
+        self.assertNotIn("error", out, "a real query must not be refused")
+        self.assertEqual(len(calls), 1, "a real query must still reach the server exactly once")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
