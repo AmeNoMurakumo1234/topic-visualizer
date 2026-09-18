@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.4"
+VERSION = "0.57.5"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -3031,8 +3031,19 @@ def _root_orphan_hints() -> tuple[list[dict], str]:
         f"COUNT(*) AS children FROM topic t JOIN topic p ON p.id = t.parent_id "
         f"WHERE t.state IN {LIVE} AND p.state IN {LIVE} "
         f"GROUP BY t.parent_id HAVING children >= 2")]
-    if not roots or not hubs:
+    # TWO empty sides, two different meanings - and they used to share one message that named
+    # only the hubs. Measured 2026-09-18 (Tare, run 36) on a scratch store with 2 populated hubs
+    # and ZERO un-nested leaf roots: the report said "no hubs (>=2 live children) to compare
+    # against - hints unavailable", which is false on both clauses and reports a DEGRADED
+    # instrument when the truth is a fully-nested tree with nothing left to place. It fails
+    # toward alarm exactly on the trees that have been groomed best, which is the inverse
+    # coupling this report warns about elsewhere: the better the structure, the more broken the
+    # instrument claims to be. Say which side is empty.
+    if not hubs:
         return [], "no hubs (>=2 live children) to compare against - hints unavailable"
+    if not roots:
+        return [], ("no un-nested leaf roots to place - every root is a hub, so there is nothing "
+                    "to hint. This is a NESTED tree, not a degraded instrument.")
     # parent map over BOTH edge kinds, for the own-subtree guard (walk UP from the hub;
     # reaching the orphan means the hub is the orphan's descendant)
     parents_of: dict = {}

@@ -766,6 +766,38 @@ class SeamTests(unittest.TestCase):
         hints = call(f"/api/topics/groom?project={proj}")["coherence"]["reparent_hints"]
         self.assertEqual([(h["child"], h["suggested_parent"]) for h in hints], [],
                          "a see_also between siblings is NOT a reparent hint")
+        # POSITIVE ARM, added run 36 (2026-09-18, Tare). The assertion above is one-sided: an empty
+        # hint list satisfies it whether see_also is being SUPPRESSED or reparent_hints is broken
+        # and never fires at all. Re-attaching the SAME pair as co_parent must make the hint appear,
+        # which is what makes the emptiness above mean something. Measured live before writing this:
+        # a scratch store with two blatantly misfiled topics drew NO hint (reparent_hints is purely
+        # structural - it reads topic_parent, never an embedding), and the hint appeared the instant
+        # a co_parent edge was drawn between two siblings.
+        call(f"/api/topics/{B}/attach?project={proj}",
+             {"actor": "ai", "parent_slug": A, "kind": "co_parent"})
+        hints = call(f"/api/topics/groom?project={proj}")["coherence"]["reparent_hints"]
+        self.assertEqual([(h["child"], h["suggested_parent"]) for h in hints], [(B, A)],
+                         "a co_parent between siblings IS a reparent hint - without this arm the "
+                         "see_also assertion above passes on a dead instrument")
+
+    def test_36b_root_orphan_note_says_which_side_is_empty(self):
+        """A fully-nested tree (every root is a hub, so no un-nested leaf roots) used to report
+        'no hubs (>=2 live children) to compare against - hints unavailable' - false on both
+        clauses, and it reports a DEGRADED instrument when the tree is simply well groomed.
+        Measured 2026-09-18 (Tare, run 36). The two empty sides mean opposite things and must
+        not share a message."""
+        proj = "ronote"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "ro: hub"}, {"title": "ro: A"}, {"title": "ro: B"}]})
+        r = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        for kid in ("ro: A", "ro: B"):
+            call(f"/api/topics/{r[kid]}/edit?project={proj}",
+                 {"actor": "ai", "parent_slug": r["ro: hub"]})
+        note = call(f"/api/topics/groom?project={proj}")["coherence"]["root_orphan_note"]
+        self.assertIn("leaf roots", note,
+                      f"a nested tree must say the ROOTS side is empty, got: {note!r}")
+        self.assertNotIn("no hubs", note,
+                         f"a tree WITH a populated hub must not claim it has none, got: {note!r}")
 
 
     def test_37_restore_is_itself_recoverable(self):

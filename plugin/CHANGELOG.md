@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.57.5 - 2026-09-18 - the groom report told a well-nested tree its instrument was broken
+
+`root_orphan_hints` compares un-nested LEAF ROOTS against HUBS. Both sides can be empty, they mean
+opposite things, and one message named only the hubs:
+
+    if not roots or not hubs:
+        return [], "no hubs (>=2 live children) to compare against - hints unavailable"
+
+MEASURED on a scratch store holding two populated hubs and zero un-nested leaf roots, the report
+said it had no hubs and its hints were unavailable. Both clauses false. The tree was not degraded -
+it was finished. Nothing was left to place.
+
+WHY THAT IS THE EXPENSIVE DIRECTION. The message reports a BROKEN INSTRUMENT, and it does so
+exactly on the trees that have been groomed best, because full nesting is what empties the roots
+side. A groomer who has just done the work correctly is told the tool cannot see - so the reading
+is either "my hints are gone" or, worse, "this report is noise", which is how an operator learns to
+skip the one lens that drives depth. It is the inverse coupling this same report warns about
+elsewhere: the better its subject gets, the more broken the instrument claims to be.
+
+The two cases now say which side is empty, and the roots-empty message states plainly that a nested
+tree is not a degraded instrument.
+
+A SECOND, SMALLER FIX IN THE SUITE, not in the server. `test_36_see_also_is_not_a_reparent_hint`
+asserted that a see_also between siblings yields NO hint - and an empty list satisfies that whether
+see_also is genuinely suppressed or `reparent_hints` is dead and never fires at all. The test could
+not tell those apart, which is the shape the topic tree itself has a hub for. It now re-attaches the
+same pair as `co_parent` and requires the hint to APPEAR, so the negative assertion means something.
+
+Both changes were checked against the unfixed code before shipping. Reverting the server fix turns
+`test_36b` red with the exact wrong message quoted above; changing the hint query's `tp.rel =
+'co_parent'` to a value that never matches turns the new positive arm red while the pre-existing
+negative assertion stays green - which is the point of adding it. Suite 54 green after.
+
+WORTH KNOWING, found while measuring the above and not a defect: `reparent_hints` is PURELY
+STRUCTURAL. It reads `topic_parent` for a co_parent edge between two siblings and touches no
+embedding at all. Two topics about SQL migrations filed under a kitchen-gardening hub, with a
+database hub sitting beside them, drew no hint and never could. An empty `reparent_hints` means
+"nobody has drawn such an edge", NEVER "nothing is misfiled" - the semantic lens is
+`root_orphan_hints`, and it only looks at roots.
+
 ## 0.57.4 - 2026-09-15 - topic_search answered a call whose query never arrived
 
 `topic_search` coerced a missing or blank `query` to `""`, ran it, and returned `{"results": []}`.
