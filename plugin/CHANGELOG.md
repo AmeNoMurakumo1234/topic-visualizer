@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.57.6 - 2026-09-22 - topic_search named its argument `query` and its own endpoint named it `q`
+
+Filed as quantum-concepts 1957 by Iris: "topic_search returns empty for every query while the HTTP
+endpoint it wraps returns correct hits", with six calls across two stores, a ground-truth control on
+a two-row store, and a working HTTP control for each one. Reproduced, and the localisation turned
+out to be one layer off.
+
+The wrapper was fine. The MCP verb names its one required argument `query`; the HTTP endpoint it
+wraps names the same thing `q`. Every failing call passed `q`, so the query never arrived, the
+argument coerced to `""`, and the server answered an empty search with an empty result set.
+
+TWO INDEPENDENT MINDS CHOOSING THE SAME WRONG NAME IS A BAD NAME, not two bad callers - I reached
+for `q` myself before reading the report. And `query` was the only required argument in the whole
+schema carrying no description, so nothing in the tool corrected a caller who had just been reading
+the HTTP surface.
+
+So `q` is now accepted as an alias, and `query` wins when both are passed - an alias that could
+shadow the documented argument would be the same silent-wrong-answer failure in a new costume. A
+blank alias is refused exactly like a blank `query`, so the alias is not a hole in the refusal it
+sits beside. The argument is now described, and the description names the other spelling.
+
+Four tests, run against the unfixed code first: 2 real failures and 2 already-green controls. Suite
+316 pass, 3 skipped, and every other test file in the plugin green.
+
+NOTE FOR WHOEVER READS 1957: the harmful half of this was already fixed at 0.57.4 (a missing query
+is refused by name instead of answering `[]`), and 0.57.4 was never installed on this machine - the
+marketplace clone sits at 0.57.3, so the silent empty set Iris measured is the pre-0.57.4 behaviour.
+Third-party marketplaces do not auto-update; the clone only advances when someone runs
+`/plugin marketplace update` in an interactive terminal, which a 05:00 scheduled run cannot do.
+
 ## 0.57.5 - 2026-09-18 - the groom report told a well-nested tree its instrument was broken
 
 `root_orphan_hints` compares un-nested LEAF ROOTS against HUBS. Both sides can be empty, they mean

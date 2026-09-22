@@ -1291,7 +1291,10 @@ TOOLS = [
                                     "never CREATES a store - an unknown key is an error, "
                                     "because only capture and import bring a project into "
                                     "existence", "type": "string"},
-         "query": {"type": "string"}}, "required": ["query"]}},
+         "query": {"type": "string",
+                   "description": "what to search for. Spelled `query` here; the HTTP endpoint "
+                                  "this wraps spells it `q`, which is also accepted"}},
+      "required": ["query"]}},
     {"name": "topic_state",
      "description": "Change a topic in place (no re-planting, so edges/notes/history "
                     "survive). Set `state`: open (reopen), discussed (we talked it "
@@ -1840,7 +1843,11 @@ def _call(name: str, args: dict) -> dict:
         # {"results": []}, which is byte-identical to "nothing matched" - and this verb exists to
         # be run BEFORE capture, so a caller whose query never arrived reads [] as "no duplicate
         # exists" and plants the twin it was checking for.
-        q = str(args.get("query") or "").strip()
+        # Accept the endpoint's own spelling. The HTTP verb this wraps names the argument `q`,
+        # and two independent minds reached for `q` here (1957) and got a silent empty set back.
+        # `query` wins when both are passed, so the alias can never quietly search for the other
+        # one; a genuinely absent query still falls through to the refusal below.
+        q = str(args.get("query") or args.get("q") or "").strip()
         if not q:
             return {"error": "topic_search needs a non-empty `query`",
                     "detail": "refusing rather than returning an empty result set: [] from a "

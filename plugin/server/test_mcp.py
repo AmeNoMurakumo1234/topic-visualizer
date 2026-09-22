@@ -723,5 +723,68 @@ class McpSearchRefusesABlankQuery(unittest.TestCase):
         self.assertEqual(len(calls), 1, "a real query must still reach the server exactly once")
 
 
+class McpSearchAcceptsTheHttpParameterName(unittest.TestCase):
+    """Filed as quantum-concepts 1957 by Iris, 2026-09-21, reproduced by Tare 2026-09-22.
+
+    The MCP verb names its one required argument `query`; the HTTP endpoint it wraps names the
+    same thing `q`. Two independent minds reached for `q` - Iris across six calls in two stores,
+    then me, before reading her report - and on the version installed at the time every one of
+    them came back `{"results": []}`. Iris localised it as a broken wrapper and filed it as a
+    read verb returning nothing; the wrapper was fine and the query had simply never arrived.
+
+    Two independent callers choosing the same wrong name is a bad NAME, not two bad callers, and
+    the argument is the only required one in the schema with no description to correct them.
+    So accept the HTTP spelling rather than documenting a trap: `q` is unambiguous here, and the
+    blank-query refusal above still catches a query that genuinely never arrived."""
+
+    def _search(self, args):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        calls = []
+
+        def fake_http(method, url, body=None, headers=None):
+            calls.append((method, url))
+            return {"results": []}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            out = mcp_tools._call("topic_search", args)
+        return out, calls
+
+    def test_q_is_accepted_as_an_alias_and_reaches_the_server(self):
+        out, calls = self._search({"q": "stdio seam"})
+        self.assertNotIn("error", out,
+                         "a query passed under the endpoint's own parameter name was refused")
+        self.assertEqual(len(calls), 1, "a q-named query must reach the server exactly once")
+        self.assertIn("stdio%20seam", calls[0][1],
+                      "the aliased query must arrive in the request, not an empty string: "
+                      + calls[0][1])
+
+    def test_query_still_wins_when_both_are_passed(self):
+        """The control on the alias. If `q` shadowed `query` the verb would silently search for
+        the wrong thing, which is the same silent-wrong-answer failure in a new costume."""
+        out, calls = self._search({"query": "stdio seam", "q": "something else"})
+        self.assertNotIn("error", out)
+        self.assertIn("stdio%20seam", calls[0][1],
+                      "the documented parameter must win over the alias: " + calls[0][1])
+
+    def test_a_blank_alias_is_refused_like_a_blank_query(self):
+        """The alias must not become a hole in the refusal it sits beside."""
+        out, calls = self._search({"q": "   "})
+        self.assertIn("error", out, "a blank alias returned a result set instead of refusing")
+        self.assertEqual(calls, [], "a refused call must not reach the server")
+
+    def test_the_required_argument_is_described(self):
+        """Every other required argument in this schema is either self-evident (`slug`, `items`)
+        or described; this one is neither, and it is the one that collides."""
+        import mcp_tools
+        schema = [t for t in mcp_tools.TOOLS if t["name"] == "topic_search"][0]["inputSchema"]
+        desc = (schema["properties"]["query"] or {}).get("description", "")
+        self.assertTrue(desc, "the one required argument carries no description")
+        self.assertIn("q", desc,
+                      "the description must name the endpoint spelling that callers reach for")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
