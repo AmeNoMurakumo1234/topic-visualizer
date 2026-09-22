@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.57.7 - 2026-09-22 - a reparent discarded the groom's reasoning and returned ok:true
+
+Found by walking into it during the 05:00 groom. I nested six leaf roots and wrote a paragraph on
+each saying what I had read in the body and which similarity hint I was declining and why. Every
+call returned `{"ok": true}`. Five of those six notes did not exist anywhere afterwards: the
+`reparented` event carried the machine-generated `-> <parent-slug>` and nothing else, and about
+3500 characters of reasoning were gone. The sixth only survived because that topic already had an
+unrelated note on a secondary edge, which is what made the loss visible at all.
+
+`note` was not declared on `topic_reparent` and `_reparent_one` never read it, so the argument was
+accepted by the caller's hand and dropped in silence. Its sibling `topic_attach` - the verb for the
+OTHER kind of edge - has taken a note all along, which is exactly why a caller expects this one to.
+
+WHY THIS IS NOT BOOKKEEPING. A groom's verdict is worth what its reasoning is worth, and the most
+valuable half of a reshape is the hint it DECLINED. The next groom is handed that same suggestion
+by the same embedder over the same corpus: with no record it re-derives the refusal from scratch,
+or takes the hint and undoes a judgement somebody already made properly. Three of today's six edges
+were explicit refusals of a scored suggestion.
+
+The spine edge is a COLUMN (topic.parent_id) and genuinely has nowhere to hold prose - that is the
+real reason the note had no home - but the reparent EVENT already has a note field and is already
+being written. So the reasoning goes there, after the arrow, separated by a pipe. The arrow stays
+exactly where it was and a note-less reparent logs byte-for-byte what it always logged, because
+the arrow is what every existing reader of that event parses.
+
+`note` is now declared on the tool (single and batch form) and its description says what a good one
+contains. Threaded MCP -> POST /api/topics/<slug>/edit -> edit_topic -> _event.
+
+Five tests, run against the unfixed code first: 3 real failures across the two layers and 2
+controls already green. The controls pin the other side - a note-less reparent still logs exactly
+the arrow, and still reaches the server. test_mcp 36 pass 3 skipped, test_server 56 pass, every
+other test file in the plugin green.
+
 ## 0.57.6 - 2026-09-22 - topic_search named its argument `query` and its own endpoint named it `q`
 
 Filed as quantum-concepts 1957 by Iris: "topic_search returns empty for every query while the HTTP

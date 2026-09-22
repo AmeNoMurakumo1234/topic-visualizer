@@ -786,5 +786,63 @@ class McpSearchAcceptsTheHttpParameterName(unittest.TestCase):
                       "the description must name the endpoint spelling that callers reach for")
 
 
+class ReparentKeepsTheGroomsReasoning(unittest.TestCase):
+    """Found by walking into it, topics run 40 (2026-09-22, Tare). I nested six leaf roots and
+    wrote a paragraph on each saying what I had read and which similarity hint I was declining and
+    why. Every call returned {"ok": true}. Five of the six notes did not exist anywhere afterwards
+    - the reparent event carried the machine-generated "-> <parent-slug>" and nothing else, and
+    about 3500 characters of reasoning were gone.
+
+    `note` was not declared on topic_reparent and `_reparent_one` never read it, so the argument
+    was accepted by the caller's hand and dropped in silence. Its sibling topic_attach - the verb
+    for the OTHER kind of edge - HAS taken a note all along, which is exactly why a caller expects
+    this one to.
+
+    WHY IT IS NOT COSMETIC. A groom's verdict is worth what its reasoning is worth. The hint an
+    edge DECLINED is the single most valuable thing about it, because the next groom is handed the
+    same hint again by the same embedder and re-derives the same decision from scratch, or worse,
+    takes it. The spine edge is a column and has nowhere to hold prose, but the reparent EVENT
+    already has a note field and is already being written, so the reasoning goes there."""
+
+    def _reparent(self, args):
+        import importlib
+        from unittest.mock import patch
+        import mcp_tools
+        importlib.reload(mcp_tools)
+        posted = []
+
+        def fake_http(method, url, body=None, headers=None):
+            posted.append((method, url, body))
+            return {"ok": True}
+
+        with patch.object(mcp_tools, "_http", side_effect=fake_http):
+            out = mcp_tools._call("topic_reparent", args)
+        return out, posted
+
+    def test_the_note_reaches_the_server(self):
+        out, posted = self._reparent({"slug": "a-topic", "parent_slug": "a-hub",
+                                      "note": "declined the 0.43 hint: nothing is out of scope"})
+        self.assertNotIn("error", out)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0][2].get("note"),
+                         "declined the 0.43 hint: nothing is out of scope",
+                         "the caller's reasoning was dropped between the tool and the server")
+
+    def test_the_note_is_declared_on_the_tool(self):
+        """An argument that works but is undeclared is a trap: nothing tells the next caller it
+        exists, and nothing tells them when it stops working."""
+        import mcp_tools
+        schema = [t for t in mcp_tools.TOOLS if t["name"] == "topic_reparent"][0]["inputSchema"]
+        self.assertIn("note", schema["properties"],
+                      "topic_attach declares a note and this verb does not, which is the whole "
+                      "reason a groom passes one here")
+
+    def test_a_reparent_without_a_note_still_works(self):
+        """The control. A change that made `note` load-bearing would pass the test above while
+        breaking every ordinary reshape."""
+        out, posted = self._reparent({"slug": "a-topic", "parent_slug": "a-hub"})
+        self.assertNotIn("error", out)
+        self.assertEqual(len(posted), 1, "a note-less reparent must still reach the server")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

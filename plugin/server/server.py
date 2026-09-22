@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.6"
+VERSION = "0.57.7"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2166,9 +2166,21 @@ def convert(slug: str, links: list[dict], actor: str, note: str = "") -> dict:
     return {"ok": True, "links": len(links)}
 
 
+def _reparent_note(dest: str, note: str = "") -> str:
+    """The arrow FIRST, always, then the groom's reasoning.
+
+    The arrow is what every existing reader of this event parses, so it stays exactly where it
+    was and a note-less reparent logs exactly what it always logged. The reasoning is appended
+    because a reshape's most valuable half is the hint it DECLINED - without it the next groom is
+    handed the same suggestion by the same embedder and re-derives the refusal, or takes it.
+    The spine edge is a column and cannot hold prose; this event can."""
+    note = (note or "").strip()
+    return f"-> {dest}" + (f" | {note}" if note else "")
+
+
 def edit_topic(slug: str, actor: str, title: str | None = None,
                body: str | None = None, parent_slug: str | None = None,
-               critical: bool | None = None) -> dict:
+               critical: bool | None = None, note: str = "") -> dict:
     over_wide_echo = None   # 0.45: set when a reparent pushes the new parent over-wide
     with _lock:
         row = _conn.execute("SELECT id, parent_id FROM topic WHERE slug=?", (slug,)).fetchone()
@@ -2190,7 +2202,7 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
         if parent_slug is not None:
             if parent_slug == "":
                 _conn.execute("UPDATE topic SET parent_id=NULL WHERE id=?", (tid,))
-                _event(tid, "reparented", actor, "-> root")
+                _event(tid, "reparented", actor, _reparent_note("root", note))
             else:
                 p = _conn.execute("SELECT id, state FROM topic WHERE slug=?",
                                   (parent_slug,)).fetchone()
@@ -2217,7 +2229,7 @@ def edit_topic(slug: str, actor: str, title: str | None = None,
                 # if the new primary was also an extra edge, collapse the duplicate
                 _conn.execute("DELETE FROM topic_parent WHERE topic_id=? AND parent_id=?",
                               (tid, p["id"]))
-                _event(tid, "reparented", actor, f"-> {parent_slug}")
+                _event(tid, "reparented", actor, _reparent_note(parent_slug, note))
                 # 0.45: echo an over-wide push IN the result - a batch reparent
                 # silently built a 15-child hub and the groom only learned from a follow-up
                 # report. Say it in the same motion so the re-split happens now.
@@ -3679,7 +3691,8 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "edit":
                     return self._json(200, edit_topic(
                         slug, actor, body.get("title"), body.get("body"),
-                        body.get("parent_slug"), body.get("critical")))
+                        body.get("parent_slug"), body.get("critical"),
+                        str(body.get("note") or "")))
                 if op == "attach":
                     return self._json(200, attach_parent(
                         slug, str(body.get("parent_slug") or ""), actor,

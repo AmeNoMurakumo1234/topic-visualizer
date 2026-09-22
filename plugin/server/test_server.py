@@ -875,6 +875,74 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(m[0]["keep_parent"], skip, "the nearer parent (skip) is kept")
 
 
+class ReparentNoteTests(unittest.TestCase):
+    """Topics run 40 (2026-09-22, Tare): a reparent discarded the groom's reasoning in silence.
+
+    The spine edge is a COLUMN (topic.parent_id) and has nowhere to hold prose, which is the real
+    reason the note had nowhere to go - but the `reparented` EVENT already has a note field and is
+    already being written, so the reasoning belongs there, beside the machine-generated arrow.
+
+    What is lost without it is the most valuable half of a groom decision: which similarity hint
+    the edge DECLINED and why. The next groom is handed that same hint by the same embedder, and
+    with no record it either re-derives the refusal from scratch or takes the hint."""
+
+    proc: subprocess.Popen | None = None
+    tmp: tempfile.TemporaryDirectory | None = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls.proc = subprocess.Popen(
+            [sys.executable, str(HERE / "server.py"),
+             "--db", str(Path(cls.tmp.name) / "topics.db"), "--port", str(PORT)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=_NO_WINDOW)
+        for _ in range(50):
+            try:
+                call("/api/topics")
+                break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("server did not start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(timeout=5)
+        cls.tmp.cleanup()
+
+    def test_a_reparent_note_lands_on_the_event(self):
+        proj = "rpnote"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "rpnote: hub"}, {"title": "rpnote: member"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        hub, member = rows["rpnote: hub"], rows["rpnote: member"]
+        reason = "declined the 0.43 hint: nothing here is out of scope, it is a denominator"
+        r = call(f"/api/topics/{member}/edit?project={proj}",
+                 {"actor": "ai", "parent_slug": hub, "note": reason})
+        self.assertTrue(r.get("ok"), r)
+        hist = call(f"/api/topics/{member}?project={proj}")["topic"]["history"]
+        rep = [h for h in hist if h["event"] == "reparented"]
+        self.assertEqual(len(rep), 1, "expected exactly one reparent event")
+        self.assertIn(hub, rep[0]["note"], "the destination must still be recorded")
+        self.assertIn(reason, rep[0]["note"],
+                      "the caller's reasoning was dropped: " + rep[0]["note"])
+
+    def test_a_reparent_without_a_note_records_the_destination_alone(self):
+        """The control. The arrow is what every existing reader of this event parses, so a change
+        that appended an empty note or replaced the arrow would break them while passing above."""
+        proj = "rpnote2"
+        call(f"/api/topics?project={proj}", {"actor": "ai", "topics": [
+            {"title": "rpnote2: hub"}, {"title": "rpnote2: member"}]})
+        rows = {t["title"]: t["slug"] for t in call(f"/api/topics?project={proj}")["topics"]}
+        hub, member = rows["rpnote2: hub"], rows["rpnote2: member"]
+        call(f"/api/topics/{member}/edit?project={proj}", {"actor": "ai", "parent_slug": hub})
+        hist = call(f"/api/topics/{member}?project={proj}")["topic"]["history"]
+        rep = [h for h in hist if h["event"] == "reparented"][0]
+        self.assertEqual(rep["note"], f"-> {hub}",
+                         "a note-less reparent must log exactly the arrow it always logged")
+
+
 class DegenerateAddTests(unittest.TestCase):
     """0653: POST /api/topics answered an ok-shaped 200 {"results": []} for a write that
     stored NOTHING (missing/empty/mis-shaped topics), teaching the capturing agent the

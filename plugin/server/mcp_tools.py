@@ -529,12 +529,13 @@ class ServerBackend:
                     or self._fallback().attach_parent(slug, parent_slug, ACTOR, note,
                                                       remove, kind))
 
-    def reparent(self, slug, parent_slug, project=None):
+    def reparent(self, slug, parent_slug, project=None, note=""):
         # move the PRIMARY parent (the tree spine), via edit_topic; "" -> detach to root.
         # cycle-guarded server-side, collapses a now-redundant avenue into the new primary edge.
         try:
             return _http("POST", f"{self.base}/api/topics/{slug}/edit",
-                         self._p({"parent_slug": parent_slug, "actor": ACTOR}, project))
+                         self._p({"parent_slug": parent_slug, "actor": ACTOR,
+                                  "note": note or ""}, project))
         except Unreachable:
             return (self._offline_refusal(project)
                     or self._fallback().edit_topic(slug, ACTOR, parent_slug=parent_slug))
@@ -760,7 +761,7 @@ class BoardBackend:
             return {"error": "reply failed", "detail": r}
         return {"ok": True, "attached": parent_slug}
 
-    def reparent(self, slug, parent_slug):
+    def reparent(self, slug, parent_slug, note=""):
         return {"error": "the board backend cannot change a topic's PRIMARY parent - it is set in "
                          "the immutable post body. Use topic_attach to add an avenue, or run the "
                          "reshape on the sqlite backend."}
@@ -1485,9 +1486,16 @@ TOOLS = [
          "slug": {"type": "string", "description": "the topic to move"},
          "parent_slug": {"type": "string",
                          "description": "new PRIMARY parent slug; \"\" = detach to root"},
-         "items": {"type": "array", "description": "batch form (each a {slug,parent_slug})",
+         "note": {"type": "string",
+                  "description": "why this edge - recorded on the reparent event. Say which "
+                                 "similarity hint you DECLINED and what you read that the score "
+                                 "did not see; without it the next groom is handed the same hint "
+                                 "and re-derives your refusal, or takes it"},
+         "items": {"type": "array",
+                   "description": "batch form (each a {slug,parent_slug} and optionally a note)",
                    "items": {"type": "object", "properties": {
-                       "slug": {"type": "string"}, "parent_slug": {"type": "string"}},
+                       "slug": {"type": "string"}, "parent_slug": {"type": "string"},
+                       "note": {"type": "string"}},
                        "required": ["slug", "parent_slug"]}}}}},
     {"name": "topic_edit",
      "description": (
@@ -1758,7 +1766,8 @@ def _reparent_one(b, a: dict) -> dict:
     slug = str(a.get("slug") or "")
     if "parent_slug" not in a:
         return {"error": 'reparent needs parent_slug ("" to detach to root)', "slug": slug}
-    return b.reparent(slug, str(a.get("parent_slug") or ""), project=a.get("project"))
+    return b.reparent(slug, str(a.get("parent_slug") or ""), project=a.get("project"),
+                      note=str(a.get("note") or ""))
 
 
 def _edit_one(b, a: dict) -> dict:
