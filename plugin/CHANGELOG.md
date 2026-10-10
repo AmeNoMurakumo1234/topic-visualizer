@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.57.8 - 2026-10-10 - topic_search on a large store was always keyword while the doctor said semantic
+
+Found while closing quantum-concepts 1957. Every `topic_search` on the 1226-row quantum-concepts store
+answered `mode: keyword`, with `topic_doctor` reporting the embedder reachable and semantic ranking on.
+A 7-row store on the same server, in the same minute, answered `mode: semantic`.
+
+Search embeds the whole store, archive included, and `_embed` sent it as ONE request. Measured against
+the real embedder: 600 texts in 4.2s, all 1226 in 8.51s, against an 8s timeout. So every search timed
+out and fell back to keyword without saying so. The failed batch cached nothing, so the next search paid
+the same cold cost and failed the same way, and the store could never warm itself. Each failure also
+latched the embedder "down" for 60 seconds, which put capture-time dedup in that minute on keyword too.
+
+`_embed` now sends bounded chunks of 128 and caches each one as it lands, so a late failure still leaves
+progress behind. On the real store the first search takes 8.7s cold and returns semantic hits, with the
+exact-title topic ranked first (it was fifth under keyword). A repeat search takes 0.07s. Two tests
+(`test_embed_chunking.py`) use a stub that refuses any request over 300 inputs. Both failed against the
+old code.
+
 ## 0.57.7 - 2026-09-22 - a reparent discarded the groom's reasoning and returned ok:true
 
 Found by walking into it during the 05:00 groom. I nested six leaf roots and wrote a paragraph on

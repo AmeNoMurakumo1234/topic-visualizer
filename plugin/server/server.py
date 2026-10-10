@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.7"
+VERSION = "0.57.8"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -1620,6 +1620,7 @@ EMBED_URL = (os.environ.get("TOPICS_EMBED_URL", "http://127.0.0.1:8082")).rstrip
 _embed_up = None
 _embed_failed_at = 0.0
 _embed_cache = {}
+_EMBED_CHUNK = 128   # ~0.9s per request on the local MiniLM; the timeout is per request, not per call
 
 
 def _embed(texts):
@@ -1630,16 +1631,21 @@ def _embed(texts):
         return None                      # re-probe after a minute, never latch forever
     if len(_embed_cache) > 4000:
         _embed_cache.clear()             # crude bound beats an unbounded leak
-    todo = [x for x in texts if x not in _embed_cache]
-    if todo:
+    todo = list(dict.fromkeys(x for x in texts if x not in _embed_cache))
+    # CHUNKED, because search embeds the whole store archive included: a 1226-row store took 8.51s in
+    # ONE request against the 8s timeout, so topic_search on it was always keyword while the doctor said
+    # semantic, and a failed batch cached nothing, so it could never warm itself (quantum-concepts,
+    # 2026-10-10). Each chunk is cached as it lands, so a late failure still leaves progress behind.
+    for i in range(0, len(todo), _EMBED_CHUNK):
+        chunk = todo[i:i + _EMBED_CHUNK]
         try:
             req = urllib.request.Request(
                 EMBED_URL + "/v1/embeddings",
-                data=json.dumps({"input": todo}).encode(),
+                data=json.dumps({"input": chunk}).encode(),
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=8) as r:
                 data = json.loads(r.read())["data"]
-            for txt, item in zip(todo, data):
+            for txt, item in zip(chunk, data):
                 _embed_cache[txt] = item["embedding"]
             _embed_up = True
         except Exception:
