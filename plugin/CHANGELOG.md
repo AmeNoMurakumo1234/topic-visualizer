@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.57.9 - 2026-11-07 - agent_correct counted endorsement and concordance as one number
+
+Found reading the groom report's `suggestion_scoreboard` on the quantum-concepts store (topic 37c581,
+diagnosed in run 54, shipped run 84). The operative agent ruling is the LATEST `reparented` or
+`placement_confirmed` event, and a non-human ruling counted as agreement whenever the topic's current
+parent equalled the guessed hub. It never asked which event the ruling was. So an explicit
+`confirm_placement`, which exists only to say "the machine was right", and an ordinary groom reparent
+that independently lands on the same hub were added together. The second is two meaning-clusterers
+converging on the same text. That is concordance, not evidence the suggestion was used or correct. The
+live store reports `agent_correct` 99, and it had been quoted as the filer's accuracy.
+
+`agent_correct` is unchanged, so no existing reader moves. Beside it, `agent_agreement` splits the sum
+into `confirmed` and `concordant_reparent`, and the note says which is which. One test
+(`test_20` in `test_autofile.py`) failed first against the old code. Its first draft used one of each
+kind, and a mutant that swapped the two labels survived it, so the counts are now asymmetric (2
+confirmed, 1 concordant, 1 disagreeing). Both the label-swap mutant and a count-disagreements-too
+mutant now fail it.
+
 ## 0.57.8 - 2026-10-10 - topic_search on a large store was always keyword while the doctor said semantic
 
 Found while closing quantum-concepts 1957. Every `topic_search` on the 1226-row quantum-concepts store

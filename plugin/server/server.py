@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.8"
+VERSION = "0.57.9"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2934,6 +2934,7 @@ def suggestion_scoreboard() -> dict:
     buckets: dict = {}
     labelled = unlabelled = hits = 0
     agent_ruled = agent_hits = 0
+    agent_agreement = {"confirmed": 0, "concordant_reparent": 0}
     by_actor: dict = {}
     misses: list = []
     placeholders = ",".join("?" for _ in _RULING_EVENTS)
@@ -2946,7 +2947,7 @@ def suggestion_scoreboard() -> dict:
         # Did anyone RULE after the machine spoke - by moving it, or by explicitly confirming it?
         # The LATEST ruling is the operative one; the classifier's own writes are never evidence.
         ruling = _conn.execute(
-            f"SELECT r.actor AS actor FROM topic_event r WHERE r.topic_id=? "
+            f"SELECT r.actor AS actor, r.event AS event FROM topic_event r WHERE r.topic_id=? "
             f"AND r.event IN ({placeholders}) AND r.actor != ? "
             f"ORDER BY r.id DESC LIMIT 1",
             (r["tid"], *_RULING_EVENTS, _CLASSIFIER_ACTOR)).fetchone()
@@ -2972,6 +2973,12 @@ def suggestion_scoreboard() -> dict:
         if actor != _HUMAN_ACTOR:
             agent_ruled += 1
             agent_hits += 1 if agreed else 0
+            # Split the sum by WHICH ruling it was: an explicit confirm is endorsement of the
+            # guess; a reparent that lands on the guessed hub is two meaning-clusterers converging
+            # on the same text - concordance, not evidence the suggestion was used or right.
+            if agreed:
+                agent_agreement["confirmed" if ruling["event"] == "placement_confirmed"
+                                else "concordant_reparent"] += 1
             continue
         labelled += 1
         b["labelled"] += 1
@@ -2985,13 +2992,17 @@ def suggestion_scoreboard() -> dict:
         "note": "score buckets vs where a ruling actually put the topic. A RULING is a later reparent "
                 "or an explicit confirm_placement; unlabelled = nobody has ruled at all, and an "
                 "unmoved auto-file is NOT a correct one. Agent rulings are reported separately and "
-                "never merged into the human counts. Counts, not percentages - n is small.",
+                "never merged into the human counts. agent_correct is the SUM in agent_agreement: "
+                "confirmed = an agent endorsed the guess; concordant_reparent = an agent's own "
+                "reparent landed on the guessed hub, which is concordance, not accuracy. "
+                "Counts, not percentages - n is small.",
         "suggestions_logged": len(rows),
         "labelled_by_a_human": labelled,
         "unlabelled": unlabelled,
         "correct": hits,
         "ruled_by_an_agent": agent_ruled,
         "agent_correct": agent_hits,
+        "agent_agreement": agent_agreement,
         "by_actor": dict(sorted(by_actor.items())),
         "buckets": dict(sorted(buckets.items())),
         "misses": misses[:12],

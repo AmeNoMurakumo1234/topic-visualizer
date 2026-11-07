@@ -482,6 +482,37 @@ class ConfirmPlacement(Base):
         self.assertEqual(board["correct"], 1)
         self.assertEqual(board["ruled_by_an_agent"], 0)
 
+    def test_20_agent_agreement_splits_ENDORSEMENT_from_CONCORDANCE(self):
+        """`agent_correct` sums two different claims, and a reader cannot tell them apart.
+
+        FIELD FINDING (Tare, topics run 54, re-confirmed run 84): the operative agent ruling is the
+        LATEST event of either kind, and a non-human ruling counts as agreement whenever the current
+        parent equals the guessed hub. So an explicit confirm_placement - which exists only to say
+        "the machine was right" - and an ordinary groom reparent that independently lands on the
+        same hub count identically. The second is two meaning-clusterers converging on the same
+        texts, which is concordance, not evidence the suggestion was used or was right. The live
+        QC store reports agent_correct 99 and it has been quoted as the filer's accuracy.
+
+        The sum is kept unchanged so no existing reader moves; the split is added beside it."""
+        # ASYMMETRIC counts on purpose (2 vs 1): with one of each, a mutant that swaps the two
+        # labels still reads {1, 1} and survives - measured on the first draft of this test.
+        _, a = self._guessed("Guards and gates", "guard")
+        _, c = self._guessed("Quilting circles", "quilt")
+        hub_b, b = self._guessed("Zebra husbandry", "zebra")
+        server.confirm_placement(a, "Tare")                         # endorsement
+        server.confirm_placement(c, "Tare")                         # endorsement
+        elsewhere = self._hub("Somewhere else entirely")
+        server.edit_topic(b, "Tare", None, None, elsewhere, None)   # moved away...
+        server.edit_topic(b, "Tare", None, None, hub_b, None)       # ...and back onto the guess
+        # and one agent ruling that DISAGREED, which must land in neither bucket
+        _, d = self._guessed("Lighthouse keeping", "lamp")
+        server.edit_topic(d, "Tare", None, None, elsewhere, None)
+        board = server.suggestion_scoreboard()
+        self.assertEqual(board["ruled_by_an_agent"], 4)
+        self.assertEqual(board["agent_correct"], 3, "the sum is unchanged")
+        self.assertEqual(board["agent_agreement"], {"confirmed": 2, "concordant_reparent": 1})
+        self.assertIn("concordance", board["note"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
