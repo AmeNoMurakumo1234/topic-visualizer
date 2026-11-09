@@ -73,6 +73,36 @@ class GroomCompositionTests(unittest.TestCase):
         self.assertEqual(f["leaf_root_count"], server.ROOT_WARN_COUNT + 2)
         self.assertTrue(f["breadth_warning"], "un-nested leaf roots are the real sprawl")
 
+    # -- (1b) the composite alarm names its live disjunct(s) ---------------
+    # breadth_warning is an OR of two conditions. A bare boolean lets the reader supply the
+    # cause from whatever they were working on (topic 6c3fb8: leaf roots driven 15 -> 6 and
+    # "the alarm is clear" published while two hubs at 13 and 12 still held it true).
+    def test_breadth_causes_empty_when_clear(self):
+        self._hub("one healthy hub", kids=3)
+        f = server.groom_report()["fan_out"]
+        self.assertFalse(f["breadth_warning"])
+        self.assertEqual(f["breadth_warning_causes"], [])
+
+    def test_breadth_causes_names_leaf_roots_only(self):
+        for i in range(server.ROOT_WARN_COUNT + 1):
+            self._add(f"loose leaf root {i}")
+        f = server.groom_report()["fan_out"]
+        self.assertTrue(f["breadth_warning"])
+        self.assertEqual(f["breadth_warning_causes"], ["leaf_roots"])
+
+    def test_breadth_causes_names_over_wide_hub_only(self):
+        self._hub("one very wide hub", kids=server.FANOUT_WARN_CHILDREN + 1)
+        f = server.groom_report()["fan_out"]
+        self.assertTrue(f["breadth_warning"])
+        self.assertEqual(f["breadth_warning_causes"], ["over_wide_hub"])
+
+    def test_breadth_causes_names_both_when_both_armed(self):
+        self._hub("one very wide hub", kids=server.FANOUT_WARN_CHILDREN + 1)
+        for i in range(server.ROOT_WARN_COUNT + 1):
+            self._add(f"loose leaf root {i}")
+        f = server.groom_report()["fan_out"]
+        self.assertEqual(f["breadth_warning_causes"], ["leaf_roots", "over_wide_hub"])
+
     # -- (2) hubs are never offered as orphans -----------------------------
     def test_hub_root_not_offered_as_orphan(self):
         big = self._hub("quantum computing research hub", kids=2)

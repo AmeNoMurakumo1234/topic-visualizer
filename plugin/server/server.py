@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-VERSION = "0.57.9"
+VERSION = "0.57.10"
 
 # Windows console flag. NOT DETACHED_PROCESS (0x8): that leaves a child with NO console, so the
 # first thing IT spawns makes Windows allocate a VISIBLE one - a flicker that steals focus and
@@ -2793,7 +2793,11 @@ def groom_report(verbose: bool = True) -> dict:
     # breadth is always real depth, never a depth limit.
     over_wide = [dict(r) for r in over_wide_rows]
     # 0.45: warn on LEAF-root sprawl, not raw root count (hub roots are healthy structure).
-    breadth_warning = leaf_root_count > ROOT_WARN_COUNT or bool(over_wide)
+    # 0.57.10: the flag is an OR of two conditions, and a bare boolean lets the reader supply
+    # the cause from whatever they were working on. Name the armed disjunct(s) beside it.
+    breadth_warning_causes = ([c for c, armed in (("leaf_roots", leaf_root_count > ROOT_WARN_COUNT),
+                                                 ("over_wide_hub", bool(over_wide))) if armed])
+    breadth_warning = bool(breadth_warning_causes)
     report = {"health": h,
             "fan_out": {"target": "BREADTH is the alarmed axis: UN-NESTED LEAF roots > "
                                   f"{ROOT_WARN_COUNT} or a hub > {FANOUT_WARN_CHILDREN} children "
@@ -2807,6 +2811,7 @@ def groom_report(verbose: bool = True) -> dict:
                         "hub_root_count": root_count - leaf_root_count,
                         "root_warn_at": ROOT_WARN_COUNT,
                         "breadth_warning": breadth_warning,
+                        "breadth_warning_causes": breadth_warning_causes,
                         "over_wide": over_wide,
                         "widest": [dict(r) for r in wide]},
             "coherence": {

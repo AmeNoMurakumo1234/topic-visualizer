@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.57.10 - 2026-11-09 - breadth_warning names the condition that armed it
+
+`fan_out.breadth_warning` is true when EITHER un-nested leaf roots exceed `root_warn_at` OR any hub
+is over-wide. As a bare boolean it cannot say which, so the reader fills in the cause from whatever
+they were working on. In topic 6c3fb8 (quantum-concepts, 2026-09-16) a groom drove leaf roots from 15
+to 6 and published "the breadth alarm is now clear" while two hubs at 13 and 12 children still held
+it true. The payload now carries `breadth_warning_causes`, a list naming the armed condition(s):
+`leaf_roots`, `over_wide_hub`, both, or empty. `breadth_warning` is derived from that list, so the
+two cannot disagree. 4 new tests (red first: key missing); they use exact ordered lists, so a swapped
+label fails. Full suite 326 passed, 3 skipped.
+
 ## 0.57.9 - 2026-11-07 - agent_correct counted endorsement and concordance as one number
 
 Found reading the groom report's `suggestion_scoreboard` on the quantum-concepts store (topic 37c581,
